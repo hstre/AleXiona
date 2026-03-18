@@ -78,3 +78,19 @@ export async function deleteClaim(claimId: string): Promise<void> {
   })
   if (!res.ok) throw new Error(await res.text())
 }
+
+export interface SessionInfo {
+  session_id: string
+  claim_count: number
+}
+
+export async function listSessions(): Promise<SessionInfo[]> {
+  const res = await fetch(`${API_URL}/api/sessions`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function deleteSession(sessionId: string): Promise<void> {
+  const res = await fetch(`${API_URL}/api/sessions/${sessionId}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(await res.text())
+}

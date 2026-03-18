@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from routers import chat, graph
+from routers import chat, graph, sessions
 
 app = FastAPI(title="AleXiona API", version="0.1.0")
 
@@ -18,6 +18,7 @@ app.add_middleware(
 
 app.include_router(chat.router)
 app.include_router(graph.router)
+app.include_router(sessions.router)
 
 
 @app.get("/health")

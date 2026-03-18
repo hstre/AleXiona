@@ -4,26 +4,27 @@ import { useState, useEffect, useCallback } from 'react'
 import { v4 as uuidv4 } from 'uuid'
 import ChatPanel from '@/components/ChatPanel'
 import GraphView from '@/components/GraphView'
+import SessionSidebar from '@/components/SessionSidebar'
 import { sendMessage, getGraph } from '@/lib/api'
 import type { ChatMessage, GraphData, Claim } from '@/lib/api'
 
 export default function Home() {
-  const [sessionId] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem('alexiona_session')
-      if (stored) return stored
-      const id = uuidv4()
-      localStorage.setItem('alexiona_session', id)
-      return id
-    }
-    return uuidv4()
-  })
-
+  const [sessionId, setSessionId] = useState<string | null>(null)
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], edges: [] })
   const [graphLoading, setGraphLoading] = useState(false)
   const [activePanel, setActivePanel] = useState<'chat' | 'graph'>('chat')
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+
+  // Resolve session only on client to avoid SSR mismatch
+  useEffect(() => {
+    const stored = localStorage.getItem('alexiona_session')
+    const id = stored || uuidv4()
+    if (!stored) localStorage.setItem('alexiona_session', id)
+    setSessionId(id)
+  }, [])
 
   const refreshGraph = useCallback(async () => {
+    if (!sessionId) return
     setGraphLoading(true)
     try {
       const data = await getGraph(sessionId)
@@ -36,37 +37,58 @@ export default function Home() {
   }, [sessionId])
 
   useEffect(() => {
-    refreshGraph()
-  }, [refreshGraph])
+    if (sessionId) refreshGraph()
+  }, [sessionId, refreshGraph])
 
   const handleSendMessage = async (
     message: string,
     history: ChatMessage[]
   ): Promise<{ reply: string; claims: Claim[] }> => {
+    if (!sessionId) throw new Error('Session not initialized')
     const result = await sendMessage(message, sessionId, history)
     return { reply: result.reply, claims: result.claims }
   }
 
+  const switchSession = (id: string) => {
+    localStorage.setItem('alexiona_session', id)
+    setSessionId(id)
+    setGraphData({ nodes: [], edges: [] })
+    setSidebarOpen(false)
+  }
+
   const newSession = () => {
-    if (confirm('Start a new session? Current graph will be preserved but chat will reset.')) {
-      const id = uuidv4()
-      localStorage.setItem('alexiona_session', id)
-      window.location.reload()
-    }
+    const id = uuidv4()
+    localStorage.setItem('alexiona_session', id)
+    setSessionId(id)
+    setGraphData({ nodes: [], edges: [] })
+    setSidebarOpen(false)
+  }
+
+  if (!sessionId) {
+    return (
+      <div className="flex items-center justify-center h-screen" style={{ background: 'var(--bg)' }}>
+        <div className="w-6 h-6 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: 'var(--brand)' }} />
+      </div>
+    )
   }
 
   return (
     <div className="flex flex-col h-screen" style={{ background: 'var(--bg)' }}>
       {/* Top nav */}
       <nav
-        className="flex items-center justify-between px-4 py-2 border-b shrink-0"
+        className="flex items-center justify-between px-4 py-2 border-b shrink-0 z-10"
         style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}
       >
         <div className="flex items-center gap-2">
-          <span
-            className="text-lg font-bold tracking-tight"
-            style={{ color: 'var(--brand-light)' }}
+          <button
+            onClick={() => setSidebarOpen((v) => !v)}
+            className="w-7 h-7 flex flex-col justify-center gap-1 mr-1 opacity-70 hover:opacity-100"
           >
+            <span className="block w-4 h-px" style={{ background: 'var(--text)' }} />
+            <span className="block w-4 h-px" style={{ background: 'var(--text)' }} />
+            <span className="block w-3 h-px" style={{ background: 'var(--text)' }} />
+          </button>
+          <span className="text-lg font-bold tracking-tight" style={{ color: 'var(--brand-light)' }}>
             Ale<span style={{ color: 'var(--accent)' }}>X</span>iona
           </span>
           <span
@@ -110,22 +132,41 @@ export default function Home() {
             disabled={graphLoading}
             className="text-xs px-2 py-1 rounded-lg transition-opacity hover:opacity-70 disabled:opacity-40"
             style={{ color: 'var(--text-muted)' }}
-            title="Refresh graph"
           >
             {graphLoading ? '↻' : '↺'} Refresh
           </button>
           <button
             onClick={newSession}
             className="text-xs px-2 py-1 rounded-lg transition-opacity hover:opacity-70"
-            style={{ color: 'var(--text-muted)' }}
+            style={{ background: 'var(--surface-2)', color: 'var(--text-muted)' }}
           >
-            New Session
+            + New
           </button>
         </div>
       </nav>
 
-      {/* Main layout */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden relative">
+        {/* Session Sidebar */}
+        {sidebarOpen && (
+          <>
+            <div
+              className="absolute inset-0 z-20 md:hidden"
+              style={{ background: 'rgba(0,0,0,0.5)' }}
+              onClick={() => setSidebarOpen(false)}
+            />
+            <div
+              className="absolute left-0 top-0 bottom-0 z-30 md:relative md:z-auto w-64 border-r shrink-0 overflow-y-auto"
+              style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}
+            >
+              <SessionSidebar
+                currentSessionId={sessionId}
+                onSwitch={switchSession}
+                onNew={newSession}
+              />
+            </div>
+          </>
+        )}
+
         {/* Chat Panel */}
         <div
           className={`
@@ -136,6 +177,7 @@ export default function Home() {
           style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
         >
           <ChatPanel
+            key={sessionId}
             sessionId={sessionId}
             onNewClaims={refreshGraph}
             onSendMessage={handleSendMessage}
@@ -151,7 +193,6 @@ export default function Home() {
           `}
           style={{ background: 'var(--bg)' }}
         >
-          {/* Graph header */}
           <div
             className="px-4 py-2 border-b flex items-center justify-between shrink-0"
             style={{ borderColor: 'var(--border)' }}
@@ -165,7 +206,9 @@ export default function Home() {
                   className="text-xs px-1.5 py-0.5 rounded-full"
                   style={{ background: 'var(--surface-2)', color: 'var(--text-muted)' }}
                 >
-                  {graphData.nodes.length} nodes · {graphData.edges.length} edges
+                  {graphData.nodes.filter(n => n.type === 'Claim').length} claims ·{' '}
+                  {graphData.nodes.filter(n => n.type === 'Entity').length} entities ·{' '}
+                  {graphData.edges.length} relations
                 </span>
               )}
             </div>
