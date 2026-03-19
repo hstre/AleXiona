@@ -2,20 +2,22 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { v4 as uuidv4 } from 'uuid'
-import ChatPanel from '@/components/ChatPanel'
+import DataPanel from '@/components/DataPanel'
 import GraphView from '@/components/GraphView'
-import SessionSidebar from '@/components/SessionSidebar'
+import ReviewPanel from '@/components/ReviewPanel'
 import { sendMessage, getGraph } from '@/lib/api'
-import type { ChatMessage, GraphData, Claim } from '@/lib/api'
+import type { ChatMessage, GraphData, Claim, AnalysisResult } from '@/lib/api'
 
 export default function Home() {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], edges: [] })
+  const [allClaims, setAllClaims] = useState<Claim[]>([])
+  const [analysis, setAnalysis] = useState<AnalysisResult | null>(null)
   const [graphLoading, setGraphLoading] = useState(false)
-  const [activePanel, setActivePanel] = useState<'chat' | 'graph'>('chat')
-  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [analysisLoading, setAnalysisLoading] = useState(false)
+  // mobile panel: 'data' | 'graph' | 'review'
+  const [activePanel, setActivePanel] = useState<'data' | 'graph' | 'review'>('graph')
 
-  // Resolve session only on client to avoid SSR mismatch
   useEffect(() => {
     const stored = localStorage.getItem('alexiona_session')
     const id = stored || uuidv4()
@@ -30,198 +32,208 @@ export default function Home() {
       const data = await getGraph(sessionId)
       setGraphData(data)
     } catch (err) {
-      console.error('Failed to load graph:', err)
+      console.error(err)
     } finally {
       setGraphLoading(false)
     }
   }, [sessionId])
 
-  useEffect(() => {
-    if (sessionId) refreshGraph()
-  }, [sessionId, refreshGraph])
+  useEffect(() => { if (sessionId) refreshGraph() }, [sessionId, refreshGraph])
 
   const handleSendMessage = async (
     message: string,
     history: ChatMessage[]
   ): Promise<{ reply: string; claims: Claim[] }> => {
     if (!sessionId) throw new Error('Session not initialized')
+    setAnalysisLoading(true)
     const result = await sendMessage(message, sessionId, history)
+    // Update claims list from the newly extracted ones
+    setAllClaims(prev => [...prev, ...result.claims])
+    if (result.analysis) setAnalysis(result.analysis)
+    setAnalysisLoading(false)
     return { reply: result.reply, claims: result.claims }
   }
 
-  const switchSession = (id: string) => {
-    localStorage.setItem('alexiona_session', id)
-    setSessionId(id)
-    setGraphData({ nodes: [], edges: [] })
-    setSidebarOpen(false)
-  }
+  const handleNewClaims = () => { refreshGraph() }
 
-  const newSession = () => {
-    const id = uuidv4()
-    localStorage.setItem('alexiona_session', id)
-    setSessionId(id)
-    setGraphData({ nodes: [], edges: [] })
-    setSidebarOpen(false)
+  const handleGenerateReport = () => {
+    if (!analysis) return
+    const lines = [
+      `AleXiona Knowledge Graph Report`,
+      `Session: ${sessionId}`,
+      `Date: ${new Date().toLocaleString()}`,
+      ``,
+      `PRIMARY HYPOTHESIS`,
+      analysis.primary_hypothesis,
+      `Confidence: ${Math.round(analysis.confidence * 100)}%`,
+      ``,
+      `ALTERNATIVES`,
+      ...analysis.alternatives.map(a => `- ${a.label} (${Math.round(a.confidence * 100)}%)`),
+      ``,
+      `MISSING EVIDENCE`,
+      ...analysis.missing_evidence.map(m => `- ${m}`),
+      ``,
+      `FOCUS POINTS`,
+      ...analysis.focus_points.map(f => `- ${f}`),
+      ``,
+      `CLAIMS (${allClaims.length})`,
+      ...allClaims.map(c => `- [${c.tag} ${Math.round(c.confidence * 100)}%] ${c.text}`),
+    ]
+    const blob = new Blob([lines.join('\n')], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `alexiona-report-${sessionId?.slice(0, 8)}.txt`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   if (!sessionId) {
     return (
       <div className="flex items-center justify-center h-screen" style={{ background: 'var(--bg)' }}>
-        <div className="w-6 h-6 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: 'var(--brand)' }} />
+        <div className="w-5 h-5 rounded-full border-2 border-t-transparent animate-spin"
+          style={{ borderColor: 'var(--brand)' }} />
       </div>
     )
   }
 
+  const claimCount = graphData.nodes.filter(n => n.type === 'Claim').length
+  const entityCount = graphData.nodes.filter(n => n.type === 'Entity').length
+
   return (
     <div className="flex flex-col h-screen" style={{ background: 'var(--bg)' }}>
-      {/* Top nav */}
+      {/* ── Top Nav ── */}
       <nav
-        className="flex items-center justify-between px-4 py-2 border-b shrink-0 z-10"
-        style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}
+        className="flex items-center justify-between px-4 py-2.5 border-b shrink-0"
+        style={{ background: 'var(--surface)', borderColor: 'var(--border)',
+                 boxShadow: 'var(--shadow-sm)' }}
       >
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setSidebarOpen((v) => !v)}
-            className="w-7 h-7 flex flex-col justify-center gap-1 mr-1 opacity-70 hover:opacity-100"
-          >
-            <span className="block w-4 h-px" style={{ background: 'var(--text)' }} />
-            <span className="block w-4 h-px" style={{ background: 'var(--text)' }} />
-            <span className="block w-3 h-px" style={{ background: 'var(--text)' }} />
-          </button>
-          <span className="text-lg font-bold tracking-tight" style={{ color: 'var(--brand-light)' }}>
-            Ale<span style={{ color: 'var(--accent)' }}>X</span>iona
-          </span>
-          <span
-            className="text-xs px-1.5 py-0.5 rounded"
-            style={{ background: 'var(--surface-2)', color: 'var(--text-muted)' }}
-          >
-            v0
-          </span>
+        {/* Logo */}
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+              <path d="M12 2L4 7v10l8 5 8-5V7L12 2z" stroke="var(--brand)" strokeWidth="1.5" fill="var(--brand-pale)" />
+              <path d="M12 2v20M4 7l8 5 8-5" stroke="var(--brand)" strokeWidth="1.5" />
+            </svg>
+            <span className="text-base font-bold tracking-tight" style={{ color: 'var(--text)' }}>
+              Ale<span style={{ color: 'var(--brand)' }}>X</span>iona
+            </span>
+          </div>
+          <div className="hidden sm:flex items-center gap-2 border-l pl-3"
+            style={{ borderColor: 'var(--border)' }}>
+            <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
+              AI Evidence Graph
+            </span>
+          </div>
+        </div>
+
+        {/* Center stats */}
+        <div className="hidden md:flex items-center gap-4 text-xs" style={{ color: 'var(--text-muted)' }}>
+          <span><strong style={{ color: 'var(--text)' }}>{claimCount}</strong> claims</span>
+          <span><strong style={{ color: 'var(--text)' }}>{entityCount}</strong> entities</span>
+          <span><strong style={{ color: 'var(--text)' }}>{graphData.edges.length}</strong> relations</span>
         </div>
 
         {/* Mobile tab switcher */}
-        <div
-          className="flex md:hidden rounded-lg overflow-hidden text-sm"
-          style={{ background: 'var(--surface-2)' }}
-        >
-          <button
-            className="px-3 py-1.5 transition-colors"
-            style={{
-              background: activePanel === 'chat' ? 'var(--brand)' : 'transparent',
-              color: activePanel === 'chat' ? 'white' : 'var(--text-muted)',
-            }}
-            onClick={() => setActivePanel('chat')}
-          >
-            Chat
-          </button>
-          <button
-            className="px-3 py-1.5 transition-colors"
-            style={{
-              background: activePanel === 'graph' ? 'var(--brand)' : 'transparent',
-              color: activePanel === 'graph' ? 'white' : 'var(--text-muted)',
-            }}
-            onClick={() => setActivePanel('graph')}
-          >
-            Graph {graphData.nodes.length > 0 && `(${graphData.nodes.length})`}
-          </button>
+        <div className="flex md:hidden rounded-lg overflow-hidden text-xs border"
+          style={{ borderColor: 'var(--border)' }}>
+          {(['data', 'graph', 'review'] as const).map(panel => (
+            <button key={panel}
+              onClick={() => setActivePanel(panel)}
+              className="px-2.5 py-1.5 capitalize"
+              style={{
+                background: activePanel === panel ? 'var(--brand)' : 'var(--surface)',
+                color: activePanel === panel ? 'white' : 'var(--text-muted)',
+              }}>
+              {panel}
+            </button>
+          ))}
         </div>
 
+        {/* Right actions */}
         <div className="flex items-center gap-2">
-          <button
-            onClick={refreshGraph}
-            disabled={graphLoading}
-            className="text-xs px-2 py-1 rounded-lg transition-opacity hover:opacity-70 disabled:opacity-40"
-            style={{ color: 'var(--text-muted)' }}
-          >
-            {graphLoading ? '↻' : '↺'} Refresh
+          <button onClick={refreshGraph} disabled={graphLoading}
+            className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors hover:bg-gray-100 disabled:opacity-40"
+            title="Refresh graph">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2"
+              className={graphLoading ? 'animate-spin' : ''}>
+              <path d="M23 4v6h-6M1 20v-6h6" /><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
+            </svg>
           </button>
           <button
-            onClick={newSession}
-            className="text-xs px-2 py-1 rounded-lg transition-opacity hover:opacity-70"
-            style={{ background: 'var(--surface-2)', color: 'var(--text-muted)' }}
-          >
-            + New
+            onClick={() => {
+              if (confirm('Start a new session?')) {
+                const id = uuidv4()
+                localStorage.setItem('alexiona_session', id)
+                setSessionId(id)
+                setGraphData({ nodes: [], edges: [] })
+                setAllClaims([])
+                setAnalysis(null)
+              }
+            }}
+            className="hidden sm:flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors hover:bg-gray-50"
+            style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}>
+            + New Session
           </button>
+          <div className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold text-white"
+            style={{ background: 'var(--brand)' }}>
+            {sessionId.slice(0, 1).toUpperCase()}
+          </div>
         </div>
       </nav>
 
-      <div className="flex flex-1 overflow-hidden relative">
-        {/* Session Sidebar */}
-        {sidebarOpen && (
-          <>
-            <div
-              className="absolute inset-0 z-20 md:hidden"
-              style={{ background: 'rgba(0,0,0,0.5)' }}
-              onClick={() => setSidebarOpen(false)}
-            />
-            <div
-              className="absolute left-0 top-0 bottom-0 z-30 md:relative md:z-auto w-64 border-r shrink-0 overflow-y-auto"
-              style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}
-            >
-              <SessionSidebar
-                currentSessionId={sessionId}
-                onSwitch={switchSession}
-                onNew={newSession}
-              />
-            </div>
-          </>
-        )}
-
-        {/* Chat Panel */}
+      {/* ── Main 3-column layout ── */}
+      <div className="flex flex-1 overflow-hidden gap-0">
+        {/* LEFT: Data Panel */}
         <div
-          className={`
-            flex-col border-r
-            md:flex md:w-[420px] md:shrink-0
-            ${activePanel === 'chat' ? 'flex flex-1' : 'hidden'}
-          `}
-          style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
+          className={`border-r shrink-0 md:flex flex-col overflow-hidden
+            ${activePanel === 'data' ? 'flex flex-1' : 'hidden'} md:w-72`}
+          style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}
         >
-          <ChatPanel
+          <DataPanel
             key={sessionId}
             sessionId={sessionId}
-            onNewClaims={refreshGraph}
             onSendMessage={handleSendMessage}
+            onNewClaims={handleNewClaims}
+            allClaims={allClaims}
           />
         </div>
 
-        {/* Graph Panel */}
+        {/* CENTER: Graph */}
         <div
-          className={`
-            flex-col flex-1 relative
-            md:flex
-            ${activePanel === 'graph' ? 'flex' : 'hidden'}
-          `}
-          style={{ background: 'var(--bg)' }}
+          className={`flex-col flex-1 overflow-hidden
+            md:flex ${activePanel === 'graph' ? 'flex' : 'hidden'}`}
         >
-          <div
-            className="px-4 py-2 border-b flex items-center justify-between shrink-0"
-            style={{ borderColor: 'var(--border)' }}
-          >
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
-                Knowledge Graph
-              </span>
-              {graphData.nodes.length > 0 && (
-                <span
-                  className="text-xs px-1.5 py-0.5 rounded-full"
-                  style={{ background: 'var(--surface-2)', color: 'var(--text-muted)' }}
-                >
-                  {graphData.nodes.filter(n => n.type === 'Claim').length} claims ·{' '}
-                  {graphData.nodes.filter(n => n.type === 'Entity').length} entities ·{' '}
-                  {graphData.edges.length} relations
-                </span>
-              )}
-            </div>
+          {/* Graph sub-header */}
+          <div className="px-4 py-2 border-b flex items-center justify-between shrink-0"
+            style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+            <span className="text-xs font-semibold uppercase tracking-wider"
+              style={{ color: 'var(--text-muted)' }}>
+              Clinical Evidence Graph
+            </span>
             {graphLoading && (
-              <span className="text-xs animate-pulse" style={{ color: 'var(--text-muted)' }}>
+              <span className="text-xs animate-pulse" style={{ color: 'var(--brand)' }}>
                 Updating...
               </span>
             )}
           </div>
-
           <div className="flex-1 overflow-hidden">
             <GraphView data={graphData} onRefresh={refreshGraph} />
           </div>
+        </div>
+
+        {/* RIGHT: Review Panel */}
+        <div
+          className={`border-l shrink-0 md:flex flex-col overflow-hidden
+            ${activePanel === 'review' ? 'flex flex-1' : 'hidden'} md:w-72`}
+          style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}
+        >
+          <ReviewPanel
+            analysis={analysis}
+            loading={analysisLoading}
+            onGenerateReport={handleGenerateReport}
+            onClear={() => setAnalysis(null)}
+          />
         </div>
       </div>
     </div>

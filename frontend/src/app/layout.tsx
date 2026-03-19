@@ -2,15 +2,11 @@ import type { Metadata } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'AleXiona – Knowledge Graph Assistant',
-  description: 'Turn text into structured knowledge',
+  title: 'AleXiona – AI Evidence Graph',
+  description: 'Turn text into structured, persistent knowledge graphs',
 }
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <body>{children}</body>

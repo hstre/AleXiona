@@ -12,14 +12,29 @@ class Claim(BaseModel):
     text: str
     entities: list[str]
     relations: list[Relation]
+    confidence: float = 0.8
+    tag: str = "Claim"
 
 
 class ClaimExtractionResult(BaseModel):
     claims: list[Claim]
 
 
+class Alternative(BaseModel):
+    label: str
+    confidence: float
+
+
+class AnalysisResult(BaseModel):
+    primary_hypothesis: str
+    confidence: float
+    alternatives: list[Alternative]
+    missing_evidence: list[str]
+    focus_points: list[str]
+
+
 class ChatMessage(BaseModel):
-    role: str  # "user" | "assistant"
+    role: str
     content: str
 
 
@@ -33,29 +48,11 @@ class ChatResponse(BaseModel):
     reply: str
     claims: list[Claim]
     session_id: str
+    analysis: Optional[AnalysisResult] = None
 
 
 class NodeUpdate(BaseModel):
     text: str
-
-
-class ClaimNode(BaseModel):
-    id: str
-    text: str
-    type: str = "Claim"
-
-
-class EntityNode(BaseModel):
-    id: str
-    name: str
-    type: str = "Entity"
-
-
-class GraphEdge(BaseModel):
-    id: str
-    source: str
-    target: str
-    relation_type: str
 
 
 class GraphData(BaseModel):

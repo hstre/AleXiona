@@ -10,6 +10,8 @@ export interface Claim {
   text: string
   entities: string[]
   relations: Relation[]
+  confidence: number
+  tag: string
 }
 
 export interface ChatMessage {
@@ -17,10 +19,19 @@ export interface ChatMessage {
   content: string
 }
 
+export interface AnalysisResult {
+  primary_hypothesis: string
+  confidence: number
+  alternatives: { label: string; confidence: number }[]
+  missing_evidence: string[]
+  focus_points: string[]
+}
+
 export interface ChatResponse {
   reply: string
   claims: Claim[]
   session_id: string
+  analysis: AnalysisResult | null
 }
 
 export interface GraphNode {
@@ -29,6 +40,8 @@ export interface GraphNode {
   type: 'Claim' | 'Entity'
   fullText?: string
   claimId?: string
+  confidence?: number
+  tag?: string
 }
 
 export interface GraphEdge {

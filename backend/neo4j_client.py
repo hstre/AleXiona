@@ -28,8 +28,9 @@ class Neo4jClient:
                 claim_ids.append(claim_id)
 
                 session.run(
-                    "CREATE (c:Claim {id: $id, text: $text, session_id: $session_id})",
+                    "CREATE (c:Claim {id: $id, text: $text, session_id: $session_id, confidence: $confidence, tag: $tag})",
                     id=claim_id, text=claim.text, session_id=session_id,
+                    confidence=claim.confidence, tag=claim.tag,
                 )
 
                 for entity_name in claim.entities:
@@ -83,6 +84,8 @@ class Neo4jClient:
                         "fullText": c["text"],
                         "type": "Claim",
                         "claimId": c["id"],
+                        "confidence": c.get("confidence", 0.8),
+                        "tag": c.get("tag", "Claim"),
                     }
                     claim_node_ids.add(c.element_id)
 
@@ -139,10 +142,12 @@ class Neo4jClient:
     def get_all_claims_for_session(self, session_id: str) -> list[dict]:
         with self.driver.session() as session:
             result = session.run(
-                "MATCH (c:Claim {session_id: $session_id}) RETURN c.id AS id, c.text AS text",
+                "MATCH (c:Claim {session_id: $session_id}) RETURN c.id AS id, c.text AS text, c.confidence AS confidence, c.tag AS tag",
                 session_id=session_id,
             )
-            return [{"id": r["id"], "text": r["text"]} for r in result]
+            return [{"id": r["id"], "text": r["text"],
+                     "confidence": r["confidence"] or 0.8,
+                     "tag": r["tag"] or "Claim"} for r in result]
 
     def list_sessions(self) -> list[dict]:
         with self.driver.session() as session:
