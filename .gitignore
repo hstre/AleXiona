@@ -8,3 +8,4 @@ __pycache__/
 *.log
 neo4j_data/
 neo4j_logs/
+*.tsbuildinfo
