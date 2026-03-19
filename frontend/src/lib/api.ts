@@ -97,6 +97,7 @@ export interface GraphNode {
   time_offset?:           string | null
   trend?:                 ClaimTrend
   created_at?:            string
+  derived_from?:          string[]   // claimIds this claim was derived from
 }
 
 export interface GraphEdge {

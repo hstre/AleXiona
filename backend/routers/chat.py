@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter, HTTPException
 from models import ChatRequest, ChatResponse
 from llm_client import extract_claims, answer_with_context, analyze_reasoning
-from neo4j_client import Neo4jClient
+from neo4j_client import get_db
 from conflict_engine import detect_conflicts
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -12,15 +12,18 @@ _executor = ThreadPoolExecutor()
 
 @router.post("", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    db = Neo4jClient()
+    db = get_db()
     loop = asyncio.get_event_loop()
     try:
         # 1. Extract claims from input
         extraction = extract_claims(request.message)
 
         # 2. Store in Neo4j
+        new_ids: list[str] = []
         if extraction.claims:
-            db.store_claims(extraction.claims, request.session_id)
+            new_ids = db.store_claims(extraction.claims, request.session_id)
+            # 2b. Heuristic derivation links to prior claims in same session
+            db.link_derived_from(new_ids, request.session_id)
 
         # 3. Fetch all claims once for context + analysis + conflicts
         all_claims = db.get_all_claims_for_session(request.session_id)
@@ -48,5 +51,3 @@ async def chat(request: ChatRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        db.close()

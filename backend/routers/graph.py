@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 from models import GraphData, NodeUpdate, CounterfactualResult, Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend
 from pydantic import BaseModel
 from typing import Optional
-from neo4j_client import Neo4jClient
+from neo4j_client import get_db
 from llm_client import run_counterfactual, analyze_reasoning
 from conflict_engine import detect_conflicts
 
@@ -22,7 +22,7 @@ router = APIRouter(prefix="/api/graph", tags=["graph"])
 
 @router.post("/{session_id}/claims")
 async def add_manual_claim(session_id: str, payload: ManualClaimPayload):
-    db = Neo4jClient()
+    db = get_db()
     try:
         claim = Claim(
             text=payload.text,
@@ -35,40 +35,33 @@ async def add_manual_claim(session_id: str, payload: ManualClaimPayload):
             time_offset=payload.time_offset,
             trend=payload.trend,
         )
-        db.store_claims([claim], session_id)
+        new_ids = db.store_claims([claim], session_id)
+        db.link_derived_from(new_ids, session_id)
         return {"status": "created"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        db.close()
 
 
 @router.get("/{session_id}", response_model=GraphData)
 async def get_graph(session_id: str):
-    db = Neo4jClient()
     try:
-        return db.get_graph(session_id)
+        return get_db().get_graph(session_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        db.close()
 
 
 @router.get("/{session_id}/conflicts")
 async def get_conflicts(session_id: str):
-    db = Neo4jClient()
     try:
-        claims = db.get_all_claims_for_session(session_id)
+        claims = get_db().get_all_claims_for_session(session_id)
         return detect_conflicts(claims)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        db.close()
 
 
 @router.post("/{session_id}/counterfactual/{claim_id}", response_model=CounterfactualResult)
 async def counterfactual(session_id: str, claim_id: str):
-    db = Neo4jClient()
+    db = get_db()
     try:
         all_claims = db.get_all_claims_for_session(session_id)
         original_reasoning = analyze_reasoning(all_claims)
@@ -82,41 +75,30 @@ async def counterfactual(session_id: str, claim_id: str):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        db.close()
 
 
 @router.patch("/claim/{claim_id}")
 async def update_claim(claim_id: str, update: NodeUpdate):
-    db = Neo4jClient()
     try:
-        db.update_claim(claim_id, update.text)
+        get_db().update_claim(claim_id, update.text)
         return {"status": "updated"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        db.close()
 
 
 @router.patch("/claim/{claim_id}/status")
 async def update_claim_status(claim_id: str, payload: dict):
-    db = Neo4jClient()
     try:
-        db.update_claim_status(claim_id, payload.get("status", "active"))
+        get_db().update_claim_status(claim_id, payload.get("status", "active"))
         return {"status": "updated"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        db.close()
 
 
 @router.delete("/claim/{claim_id}")
 async def delete_claim(claim_id: str):
-    db = Neo4jClient()
     try:
-        db.delete_claim(claim_id)
+        get_db().delete_claim(claim_id)
         return {"status": "deleted"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        db.close()

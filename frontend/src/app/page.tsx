@@ -8,23 +8,25 @@ import ReviewPanel  from '@/components/ReviewPanel'
 import AddNodeModal from '@/components/AddNodeModal'
 import TimeSlider, { parseOffset } from '@/components/TimeSlider'
 import { sendMessage, getGraph, seedDemo } from '@/lib/api'
-import type { ChatMessage, GraphData, Claim, ReasoningResult, Conflict, GraphNode } from '@/lib/api'
-import { SESSION_KEY, shortId, confPct, CONFLICT_SEVERITY_META } from '@/lib/utils'
+import type { ChatMessage, GraphData, Claim, ClaimType, ReasoningResult, Conflict, GraphNode } from '@/lib/api'
+import { SESSION_KEY, shortId, confPct, CONFLICT_SEVERITY_META, CLAIM_TYPE_META } from '@/lib/utils'
 
 export default function Home() {
   const [sessionId,   setSessionId]   = useState<string | null>(null)
   const [graphData,   setGraphData]   = useState<GraphData>({ nodes: [], edges: [] })
   const [reasoning,   setReasoning]   = useState<ReasoningResult | null>(null)
   const [conflicts,   setConflicts]   = useState<Conflict[]>([])
-  const [graphLoading,     setGraphLoading]     = useState(false)
-  const [analysisLoading,  setAnalysisLoading]  = useState(false)
-  const [activePanel,      setActivePanel]      = useState<'data' | 'graph' | 'review'>('graph')
+  const [graphLoading,       setGraphLoading]       = useState(false)
+  const [analysisLoading,    setAnalysisLoading]    = useState(false)
+  const [activePanel,        setActivePanel]        = useState<'data' | 'graph' | 'review'>('graph')
   const [showConflictBanner, setShowConflictBanner] = useState(true)
-  const [showAddNode,      setShowAddNode]      = useState(false)
-  const [searchQuery,      setSearchQuery]      = useState('')
-  const [showSearch,       setShowSearch]       = useState(false)
-  const [timeHours,        setTimeHours]        = useState<number>(999)   // 999 = show all
-  const [seeding,          setSeeding]          = useState(false)
+  const [showAddNode,        setShowAddNode]        = useState(false)
+  const [searchQuery,        setSearchQuery]        = useState('')
+  const [showSearch,         setShowSearch]         = useState(false)
+  const [timeHours,          setTimeHours]          = useState<number>(999)
+  const [seeding,            setSeeding]            = useState(false)
+  const [typeFilter,         setTypeFilter]         = useState<Set<ClaimType>>(new Set())
+  const [focusClaimIds,      setFocusClaimIds]      = useState<string[]>([])
 
   // ── Session ───────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -50,7 +52,7 @@ export default function Home() {
 
   useEffect(() => { if (sessionId) refreshGraph() }, [sessionId, refreshGraph])
 
-  // ── Derived: claims from graph nodes (survives reload) ────────────────────
+  // ── Derived: claims from graph nodes ─────────────────────────────────────
   const allClaims = useMemo<Claim[]>(() =>
     graphData.nodes
       .filter(n => n.type === 'Claim')
@@ -60,7 +62,7 @@ export default function Home() {
         claim_type:             n.claim_type  ?? 'finding',
         source_type:            n.source_type ?? 'llm',
         source_ref:             n.source_ref  ?? '',
-        derived_from:           [],
+        derived_from:           n.derived_from ?? [],
         status:                 n.status      ?? 'active',
         time_offset:            n.time_offset ?? null,
         trend:                  n.trend       ?? 'unknown',
@@ -70,24 +72,45 @@ export default function Home() {
     [graphData.nodes]
   )
 
-  // ── Time-filtered + search-filtered graph ──────────────────────────────────
+  // ── Build a node-id → node map for edge lookups ───────────────────────────
+  const nodeById = useMemo(() => {
+    const m = new Map<string, GraphNode>()
+    graphData.nodes.forEach(n => m.set(n.id, n))
+    return m
+  }, [graphData.nodes])
+
+  // ── Time-filtered + search-filtered + type-filtered graph ────────────────
   const filteredGraph = useMemo<GraphData>(() => {
-    const claimNodes  = graphData.nodes.filter(n => n.type === 'Claim')
-    const maxH        = Math.max(0, ...claimNodes.map(n => parseOffset(n.time_offset)))
-    const effectiveH  = timeHours >= maxH ? Infinity : timeHours
+    const claimNodes = graphData.nodes.filter(n => n.type === 'Claim')
+    const maxH       = Math.max(0, ...claimNodes.map(n => parseOffset(n.time_offset)))
+    const effectiveH = timeHours >= maxH ? Infinity : timeHours
 
-    const visibleNodeIds = new Set<string>()
-
+    // Pass 1: visible Claim node IDs
+    const visibleClaimIds = new Set<string>()
     graphData.nodes.forEach(n => {
-      if (n.type === 'Entity') { visibleNodeIds.add(n.id); return }
-      // Time filter
+      if (n.type !== 'Claim') return
       if (parseOffset(n.time_offset) > effectiveH) return
-      // Search filter
+      if (typeFilter.size > 0 && n.claim_type && !typeFilter.has(n.claim_type)) return
       if (searchQuery) {
         const q = searchQuery.toLowerCase()
         if (!n.fullText?.toLowerCase().includes(q) && !n.label.toLowerCase().includes(q)) return
       }
-      visibleNodeIds.add(n.id)
+      visibleClaimIds.add(n.id)
+    })
+
+    // Pass 2: add Entity nodes connected to visible Claim nodes
+    const visibleNodeIds = new Set<string>(visibleClaimIds)
+    graphData.edges.forEach(e => {
+      const srcVisible = visibleNodeIds.has(e.source)
+      const tgtVisible = visibleNodeIds.has(e.target)
+      if (srcVisible) {
+        const tgt = nodeById.get(e.target)
+        if (tgt?.type === 'Entity') visibleNodeIds.add(e.target)
+      }
+      if (tgtVisible) {
+        const src = nodeById.get(e.source)
+        if (src?.type === 'Entity') visibleNodeIds.add(e.source)
+      }
     })
 
     const nodes = graphData.nodes.filter(n => visibleNodeIds.has(n.id))
@@ -95,7 +118,7 @@ export default function Home() {
       e => visibleNodeIds.has(e.source) && visibleNodeIds.has(e.target)
     )
     return { nodes, edges }
-  }, [graphData, timeHours, searchQuery])
+  }, [graphData, timeHours, searchQuery, typeFilter, nodeById])
 
   // ── Conflict node IDs ─────────────────────────────────────────────────────
   const conflictNodeIds = useMemo(() => {
@@ -107,9 +130,17 @@ export default function Home() {
   // ── Time slider max ───────────────────────────────────────────────────────
   const claimNodes    = graphData.nodes.filter(n => n.type === 'Claim') as GraphNode[]
   const maxTimeOffset = Math.max(0, ...claimNodes.map(n => parseOffset(n.time_offset)))
-
-  // Init slider to max so all nodes visible
   useEffect(() => { setTimeHours(maxTimeOffset) }, [maxTimeOffset])
+
+  // ── Type filter toggle ────────────────────────────────────────────────────
+  const toggleTypeFilter = (ct: ClaimType) => {
+    setTypeFilter(prev => {
+      const next = new Set(prev)
+      if (next.has(ct)) next.delete(ct)
+      else next.add(ct)
+      return next
+    })
+  }
 
   // ── Send message ──────────────────────────────────────────────────────────
   const handleSendMessage = async (
@@ -195,6 +226,8 @@ export default function Home() {
     setGraphData({ nodes: [], edges: [] })
     setReasoning(null)
     setConflicts([])
+    setTypeFilter(new Set())
+    setFocusClaimIds([])
   }
 
   if (!sessionId) {
@@ -212,6 +245,8 @@ export default function Home() {
     ?? conflicts.find(c => c.severity === 'warning')
     ?? conflicts[0]
 
+  const CLAIM_TYPES = Object.keys(CLAIM_TYPE_META) as ClaimType[]
+
   return (
     <div className="flex flex-col h-screen" style={{ background: 'var(--bg)' }}>
 
@@ -228,17 +263,28 @@ export default function Home() {
       {showConflictBanner && conflicts.length > 0 && topConflict && (() => {
         const meta = CONFLICT_SEVERITY_META[topConflict.severity]
         return (
-          <div className="flex items-center justify-between px-4 py-2 shrink-0"
-            style={{ background: meta.bg, borderBottom: `1px solid ${meta.border}` }}>
+          <button
+            className="flex items-center justify-between px-4 py-2 shrink-0 w-full text-left"
+            style={{ background: meta.bg, borderBottom: `1px solid ${meta.border}` }}
+            onClick={() => {
+              // Focus affected nodes in graph and switch to graph tab
+              setFocusClaimIds([...topConflict.affected_claim_ids])
+              setActivePanel('graph')
+            }}>
             <div className="flex items-center gap-2 min-w-0">
               <span className="shrink-0">{meta.icon}</span>
               <span className="text-xs font-medium truncate" style={{ color: meta.text }}>
                 {conflicts.length > 1 ? `${conflicts.length} conflicts — ` : ''}{topConflict.message}
               </span>
+              <span className="text-xs shrink-0 opacity-60" style={{ color: meta.text }}>
+                (click to focus)
+              </span>
             </div>
-            <button onClick={() => setShowConflictBanner(false)} className="text-xs ml-3 shrink-0"
-              style={{ color: meta.text }}>✕</button>
-          </div>
+            <span className="text-xs ml-3 shrink-0" style={{ color: meta.text }}
+              onClick={e => { e.stopPropagation(); setShowConflictBanner(false) }}>
+              ✕
+            </span>
+          </button>
         )
       })()}
 
@@ -246,7 +292,6 @@ export default function Home() {
       <nav className="flex items-center justify-between px-4 py-2.5 border-b shrink-0"
         style={{ background: 'var(--surface)', borderColor: 'var(--border)', boxShadow: 'var(--shadow-sm)' }}>
 
-        {/* Logo */}
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
@@ -262,7 +307,6 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Center stats */}
         <div className="hidden md:flex items-center gap-4 text-xs" style={{ color: 'var(--text-muted)' }}>
           <span><strong style={{ color: 'var(--text)' }}>{claimCount}</strong> claims</span>
           <span><strong style={{ color: 'var(--text)' }}>{entityCount}</strong> entities</span>
@@ -274,7 +318,6 @@ export default function Home() {
           )}
         </div>
 
-        {/* Mobile tabs */}
         <div className="flex md:hidden rounded-lg overflow-hidden text-xs border"
           style={{ borderColor: 'var(--border)' }}>
           {(['data', 'graph', 'review'] as const).map(p => (
@@ -289,9 +332,7 @@ export default function Home() {
           ))}
         </div>
 
-        {/* Toolbar */}
         <div className="flex items-center gap-1.5">
-          {/* Demo seed */}
           {claimCount === 0 && (
             <button onClick={handleSeedDemo} disabled={seeding}
               className="hidden sm:flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-all disabled:opacity-50"
@@ -299,9 +340,8 @@ export default function Home() {
               {seeding ? '…' : '▶ Load Demo'}
             </button>
           )}
-          {/* Search toggle */}
           <button onClick={() => setShowSearch(v => !v)}
-            className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors`}
+            className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors"
             style={{
               background: showSearch ? 'var(--brand-pale)' : 'transparent',
               color: showSearch ? 'var(--brand)' : 'var(--text-muted)',
@@ -311,14 +351,12 @@ export default function Home() {
               <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
             </svg>
           </button>
-          {/* Add node */}
           <button onClick={() => setShowAddNode(true)}
-            className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors hover:opacity-70"
+            className="w-8 h-8 rounded-lg flex items-center justify-center hover:opacity-70"
             style={{ background: 'var(--brand)', color: 'white' }}
             title="Add evidence node">
             +
           </button>
-          {/* Refresh */}
           <button onClick={refreshGraph} disabled={graphLoading}
             className="w-8 h-8 rounded-lg flex items-center justify-center hover:opacity-70 disabled:opacity-40"
             title="Refresh">
@@ -328,7 +366,6 @@ export default function Home() {
               <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
             </svg>
           </button>
-          {/* New session */}
           <button onClick={newSession}
             className="hidden sm:flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg border hover:bg-gray-50"
             style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}>
@@ -388,23 +425,51 @@ export default function Home() {
         <div className={`flex-col flex-1 overflow-hidden md:flex
             ${activePanel === 'graph' ? 'flex' : 'hidden'}`}>
 
-          {/* Graph sub-header */}
-          <div className="px-4 py-2 border-b flex items-center justify-between shrink-0"
+          {/* Graph sub-header with type filter */}
+          <div className="border-b shrink-0"
             style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-            <span className="text-xs font-semibold uppercase tracking-wider"
-              style={{ color: 'var(--text-muted)' }}>
-              Clinical Evidence Graph
-            </span>
-            <div className="flex items-center gap-2">
-              {searchQuery && (
-                <span className="text-xs px-2 py-0.5 rounded-full"
-                  style={{ background: 'var(--brand-pale)', color: 'var(--brand)' }}>
-                  Filter active
-                </span>
-              )}
-              {graphLoading && (
-                <span className="text-xs animate-pulse" style={{ color: 'var(--brand)' }}>Updating…</span>
-              )}
+            <div className="px-4 py-2 flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wider"
+                style={{ color: 'var(--text-muted)' }}>
+                Clinical Evidence Graph
+              </span>
+              <div className="flex items-center gap-2">
+                {typeFilter.size > 0 && (
+                  <button onClick={() => setTypeFilter(new Set())}
+                    className="text-xs px-2 py-0.5 rounded-full"
+                    style={{ background: 'var(--brand-pale)', color: 'var(--brand)' }}>
+                    ✕ Clear filter
+                  </button>
+                )}
+                {searchQuery && (
+                  <span className="text-xs px-2 py-0.5 rounded-full"
+                    style={{ background: 'var(--brand-pale)', color: 'var(--brand)' }}>
+                    Search active
+                  </span>
+                )}
+                {graphLoading && (
+                  <span className="text-xs animate-pulse" style={{ color: 'var(--brand)' }}>Updating…</span>
+                )}
+              </div>
+            </div>
+            {/* Type filter chips */}
+            <div className="px-4 pb-2 flex items-center gap-1.5 overflow-x-auto">
+              {CLAIM_TYPES.map(ct => {
+                const meta    = CLAIM_TYPE_META[ct]
+                const active  = typeFilter.has(ct)
+                return (
+                  <button key={ct} onClick={() => toggleTypeFilter(ct)}
+                    className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs shrink-0 transition-colors"
+                    style={{
+                      background: active ? meta.color : 'var(--surface-2)',
+                      color:      active ? 'white'    : 'var(--text-muted)',
+                      border:     `1px solid ${active ? meta.color : 'var(--border)'}`,
+                    }}>
+                    <span>{meta.icon}</span>
+                    <span>{meta.label}</span>
+                  </button>
+                )
+              })}
             </div>
           </div>
 
@@ -414,10 +479,11 @@ export default function Home() {
               onRefresh={refreshGraph}
               conflictNodeIds={conflictNodeIds}
               sessionId={sessionId}
+              focusClaimIds={focusClaimIds}
             />
           </div>
 
-          {/* Time slider (shown only when there are claims with time offsets) */}
+          {/* Time slider */}
           {maxTimeOffset > 0 && (
             <div className="px-4 py-2 border-t shrink-0"
               style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>

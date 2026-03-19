@@ -1,10 +1,33 @@
 import os
 import json
 import uuid
+import re
 from datetime import datetime, timezone
 from neo4j import GraphDatabase
 from models import Claim, GraphData
 
+# ── Singleton ─────────────────────────────────────────────────────────────────
+
+_instance: "Neo4jClient | None" = None
+
+
+def get_db() -> "Neo4jClient":
+    global _instance
+    if _instance is None:
+        _instance = Neo4jClient()
+    return _instance
+
+
+# ── Key-term helper (mirrors conflict_engine, avoids circular import) ─────────
+
+_KEY_TERM_RE = re.compile(r'\b[a-zA-ZäöüÄÖÜß]{4,}\b')
+
+
+def _key_terms(text: str) -> set[str]:
+    return set(_KEY_TERM_RE.findall(text.lower()))
+
+
+# ── Client ────────────────────────────────────────────────────────────────────
 
 class Neo4jClient:
     def __init__(self):
@@ -80,6 +103,42 @@ class Neo4jClient:
                     )
 
         return claim_ids
+
+    def link_derived_from(self, new_claim_ids: list[str], session_id: str) -> None:
+        """Heuristic: link new claims to existing session claims with >= 2 shared key terms."""
+        if not new_claim_ids:
+            return
+        new_id_set = set(new_claim_ids)
+        with self.driver.session() as s:
+            rows = s.run(
+                "MATCH (c:Claim {session_id: $sid}) RETURN c.id AS id, c.text AS text",
+                sid=session_id,
+            ).data()
+            new_claims = [r for r in rows if r["id"] in new_id_set]
+            old_claims = [r for r in rows if r["id"] not in new_id_set]
+            if not old_claims:
+                return
+            for nc in new_claims:
+                nc_terms = _key_terms(nc["text"])
+                sources = [
+                    oc["id"] for oc in old_claims
+                    if len(nc_terms & _key_terms(oc["text"])) >= 2
+                ]
+                if not sources:
+                    continue
+                s.run(
+                    "MATCH (c:Claim {id: $id}) SET c.derived_from = $df",
+                    id=nc["id"], df=json.dumps(sources),
+                )
+                for src_id in sources:
+                    s.run(
+                        """
+                        MATCH (nc:Claim {id: $nc_id})
+                        MATCH (oc:Claim {id: $oc_id})
+                        MERGE (nc)-[:DERIVES_FROM]->(oc)
+                        """,
+                        nc_id=nc["id"], oc_id=src_id,
+                    )
 
     def update_claim(self, claim_id: str, new_text: str):
         with self.driver.session() as s:
@@ -162,6 +221,7 @@ class Neo4jClient:
                         "time_offset":            c.get("time_offset"),
                         "trend":                  c.get("trend", "unknown"),
                         "created_at":             c.get("created_at", ""),
+                        "derived_from":           json.loads(c.get("derived_from") or "[]"),
                     }
 
                 for e in record["entities"]:
@@ -202,6 +262,35 @@ class Neo4jClient:
                         "source": e1.element_id, "target": e2.element_id,
                         "label": r["type"],
                     }
+
+            # DERIVES_FROM edges between Claims
+            result3 = s.run(
+                """
+                MATCH (c1:Claim {session_id: $session_id})-[r:DERIVES_FROM]->(c2:Claim {session_id: $session_id})
+                RETURN c1.id AS c1_id, c2.id AS c2_id, r.element_id AS rid
+                """,
+                session_id=session_id,
+            )
+            for record in result3:
+                # Use the c1 element_id by looking it up in nodes
+                src_elem = next(
+                    (k for k, v in nodes.items()
+                     if v.get("type") == "Claim" and v.get("claimId") == record["c1_id"]),
+                    None,
+                )
+                tgt_elem = next(
+                    (k for k, v in nodes.items()
+                     if v.get("type") == "Claim" and v.get("claimId") == record["c2_id"]),
+                    None,
+                )
+                if src_elem and tgt_elem:
+                    eid = f"df-{record['c1_id']}-{record['c2_id']}"
+                    if eid not in edges:
+                        edges[eid] = {
+                            "id": eid,
+                            "source": src_elem, "target": tgt_elem,
+                            "label": "derives_from",
+                        }
 
         return GraphData(nodes=list(nodes.values()), edges=list(edges.values()))
 

@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -6,7 +7,20 @@ load_dotenv()
 
 from routers import chat, graph, sessions, demo
 
-app = FastAPI(title="AleXiona API", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    # Graceful shutdown: close the shared Neo4j driver
+    try:
+        from neo4j_client import _instance
+        if _instance is not None:
+            _instance.close()
+    except Exception:
+        pass
+
+
+app = FastAPI(title="AleXiona API", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

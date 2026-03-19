@@ -1,12 +1,17 @@
 import os
 import json
+import logging
+import time
 from openai import OpenAI
+from pydantic import ValidationError
 from models import (
     Claim, ClaimExtractionResult, ChatMessage,
     ReasoningResult, Alternative, MissingEvidence,
     CounterfactualResult, CounterfactualShift,
     Relation, ClaimType, SourceType, ClaimStatus, ClaimTrend,
 )
+
+log = logging.getLogger(__name__)
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 MODEL = "gpt-4o"
@@ -114,37 +119,67 @@ Respond ONLY with valid JSON:
 }"""
 
 
+# ── Retry helper ──────────────────────────────────────────────────────────────
+
+def _llm_json(messages: list[dict], temperature: float = 0.1, max_retries: int = 2) -> dict:
+    """Call OpenAI with JSON mode, retrying up to max_retries times on parse/schema errors."""
+    last_err: Exception | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            response = client.chat.completions.create(
+                model=MODEL,
+                messages=messages,
+                response_format={"type": "json_object"},
+                temperature=temperature,
+            )
+            return json.loads(response.choices[0].message.content)
+        except (json.JSONDecodeError, KeyError) as e:
+            last_err = e
+            if attempt < max_retries:
+                log.warning("LLM JSON attempt %d/%d failed (%s), retrying…", attempt + 1, max_retries + 1, e)
+                time.sleep(0.5 * (attempt + 1))
+        except Exception as e:
+            # Non-parsing errors (network, rate limit, etc.) propagate immediately
+            raise
+    log.error("LLM JSON call failed after %d attempts: %s", max_retries + 1, last_err)
+    return {}
+
+
 # ── Functions ─────────────────────────────────────────────────────────────────
 
 def extract_claims(text: str) -> ClaimExtractionResult:
-    response = client.chat.completions.create(
-        model=MODEL,
+    data = _llm_json(
         messages=[
             {"role": "system", "content": EXTRACTION_PROMPT},
             {"role": "user", "content": text},
         ],
-        response_format={"type": "json_object"},
         temperature=0.1,
     )
-    data = json.loads(response.choices[0].message.content)
+    if not data:
+        return ClaimExtractionResult(claims=[])
+
     claims = []
     for c in data.get("claims", []):
-        relations = [
-            Relation(from_entity=r["from_entity"], to_entity=r["to_entity"], type=r["type"])
-            for r in c.get("relations", [])
-        ]
-        claims.append(Claim(
-            text=c["text"],
-            entities=c.get("entities", []),
-            relations=relations,
-            evidence_support_score=float(c.get("evidence_support_score", 0.8)),
-            claim_type=c.get("claim_type", "finding"),
-            source_type=c.get("source_type", "llm"),
-            source_ref=c.get("source_ref", ""),
-            status=c.get("status", "active"),
-            time_offset=c.get("time_offset"),
-            trend=c.get("trend", "unknown"),
-        ))
+        try:
+            relations = [
+                Relation(from_entity=r["from_entity"], to_entity=r["to_entity"], type=r["type"])
+                for r in c.get("relations", [])
+            ]
+            claims.append(Claim(
+                text=c["text"],
+                entities=c.get("entities", []),
+                relations=relations,
+                evidence_support_score=float(c.get("evidence_support_score", 0.8)),
+                claim_type=c.get("claim_type", "finding"),
+                source_type=c.get("source_type", "llm"),
+                source_ref=c.get("source_ref", ""),
+                status=c.get("status", "active"),
+                time_offset=c.get("time_offset"),
+                trend=c.get("trend", "unknown"),
+            ))
+        except (ValidationError, KeyError, TypeError) as e:
+            log.warning("Skipping malformed claim from LLM: %s — %s", c, e)
+
     return ClaimExtractionResult(claims=claims)
 
 
@@ -158,16 +193,15 @@ def analyze_reasoning(claims: list[dict]) -> ReasoningResult | None:
         for c in claims
     )
     try:
-        response = client.chat.completions.create(
-            model=MODEL,
+        data = _llm_json(
             messages=[
                 {"role": "system", "content": REASONING_PROMPT},
                 {"role": "user", "content": f"Claims in knowledge graph:\n{claim_text}"},
             ],
-            response_format={"type": "json_object"},
             temperature=0.2,
         )
-        data = json.loads(response.choices[0].message.content)
+        if not data:
+            return None
         return ReasoningResult(
             leading_hypothesis=data["leading_hypothesis"],
             supporting_evidence=data.get("supporting_evidence", []),
@@ -211,8 +245,7 @@ def run_counterfactual(
     )
 
     try:
-        response = client.chat.completions.create(
-            model=MODEL,
+        data = _llm_json(
             messages=[
                 {"role": "system", "content": COUNTERFACTUAL_PROMPT},
                 {"role": "user", "content": (
@@ -222,10 +255,10 @@ def run_counterfactual(
                     f"Remaining claims:\n{remaining_text}"
                 )},
             ],
-            response_format={"type": "json_object"},
             temperature=0.2,
         )
-        data = json.loads(response.choices[0].message.content)
+        if not data:
+            return None
         return CounterfactualResult(
             excluded_claim_text=excluded["text"],
             changed_evidence=data.get("changed_evidence", []),
