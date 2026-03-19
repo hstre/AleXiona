@@ -1,7 +1,7 @@
 import os
 import json
 from openai import OpenAI
-from models import Claim, ClaimExtractionResult, ChatMessage, AnalysisResult, Alternative
+from models import Claim, ClaimExtractionResult, ChatMessage, AnalysisResult, Alternative, Relation
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -69,11 +69,7 @@ def extract_claims(text: str) -> ClaimExtractionResult:
     claims = []
     for c in data.get("claims", []):
         relations = [
-            __import__('models').Relation(
-                from_entity=r["from_entity"],
-                to_entity=r["to_entity"],
-                type=r["type"],
-            )
+            Relation(from_entity=r["from_entity"], to_entity=r["to_entity"], type=r["type"])
             for r in c.get("relations", [])
         ]
         claims.append(Claim(
@@ -83,6 +79,7 @@ def extract_claims(text: str) -> ClaimExtractionResult:
             confidence=float(c.get("confidence", 0.8)),
             tag=c.get("tag", "Claim"),
         ))
+
     return ClaimExtractionResult(claims=claims)
 
 

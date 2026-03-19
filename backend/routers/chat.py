@@ -1,14 +1,18 @@
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter, HTTPException
 from models import ChatRequest, ChatResponse
 from llm_client import extract_claims, answer_with_context, analyze_graph
 from neo4j_client import Neo4jClient
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
+_executor = ThreadPoolExecutor()
 
 
 @router.post("", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     db = Neo4jClient()
+    loop = asyncio.get_event_loop()
     try:
         # 1. Extract claims
         extraction = extract_claims(request.message)
@@ -17,19 +21,19 @@ async def chat(request: ChatRequest):
         if extraction.claims:
             db.store_claims(extraction.claims, request.session_id)
 
-        # 3. Get context for grounded reply
-        graph_context = db.get_context_for_query(request.session_id, request.message)
-
-        # 4. Grounded LLM reply
-        reply = answer_with_context(
-            user_message=request.message,
-            history=request.history,
-            graph_context=graph_context,
-        )
-
-        # 5. AI analysis of full graph
+        # 3. Fetch claims once — used for both LLM context and analysis
         all_claims = db.get_all_claims_for_session(request.session_id)
-        analysis = analyze_graph(all_claims) if all_claims else None
+        graph_context = "\n".join(f"- {c['text']}" for c in all_claims)
+
+        # 4. Run answer + analysis in parallel (both are sync OpenAI calls)
+        reply, analysis = await asyncio.gather(
+            loop.run_in_executor(
+                _executor,
+                answer_with_context,
+                request.message, request.history, graph_context,
+            ),
+            loop.run_in_executor(_executor, analyze_graph, all_claims),
+        )
 
         return ChatResponse(
             reply=reply,

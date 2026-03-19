@@ -2,6 +2,7 @@
 
 import { useState, useRef } from 'react'
 import type { Claim, ChatMessage } from '@/lib/api'
+import { confColor, confPct } from '@/lib/utils'
 
 const TAG_COLORS: Record<string, { bg: string; text: string; border: string }> = {
   Symptom:     { bg: '#fff3e0', text: '#e65100', border: '#ff9800' },
@@ -21,12 +22,6 @@ const TAG_ICONS: Record<string, string> = {
   Observation: '👁',
   Fact: '📌',
   Claim: '◈',
-}
-
-interface StoredMessage {
-  role: 'user' | 'assistant'
-  content: string
-  claims?: Claim[]
 }
 
 interface Props {
@@ -64,9 +59,6 @@ export default function DataPanel({ sessionId, onSendMessage, onNewClaims, allCl
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }
   }
 
-  const confColor = (c: number) =>
-    c >= 0.8 ? '#22c55e' : c >= 0.6 ? '#f59e0b' : '#ef4444'
-
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
@@ -94,7 +86,7 @@ export default function DataPanel({ sessionId, onSendMessage, onNewClaims, allCl
           const tag = claim.tag || 'Claim'
           const colors = TAG_COLORS[tag] || TAG_COLORS.Claim
           const icon = TAG_ICONS[tag] || '◈'
-          const pct = Math.round(claim.confidence * 100)
+          const pct = confPct(claim.confidence)
 
           return (
             <div key={i}

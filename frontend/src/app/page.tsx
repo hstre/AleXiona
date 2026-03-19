@@ -1,17 +1,17 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { v4 as uuidv4 } from 'uuid'
 import DataPanel from '@/components/DataPanel'
 import GraphView from '@/components/GraphView'
 import ReviewPanel from '@/components/ReviewPanel'
 import { sendMessage, getGraph } from '@/lib/api'
 import type { ChatMessage, GraphData, Claim, AnalysisResult } from '@/lib/api'
+import { SESSION_KEY, shortId, confPct } from '@/lib/utils'
 
 export default function Home() {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], edges: [] })
-  const [allClaims, setAllClaims] = useState<Claim[]>([])
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null)
   const [graphLoading, setGraphLoading] = useState(false)
   const [analysisLoading, setAnalysisLoading] = useState(false)
@@ -19,9 +19,9 @@ export default function Home() {
   const [activePanel, setActivePanel] = useState<'data' | 'graph' | 'review'>('graph')
 
   useEffect(() => {
-    const stored = localStorage.getItem('alexiona_session')
+    const stored = localStorage.getItem(SESSION_KEY)
     const id = stored || uuidv4()
-    if (!stored) localStorage.setItem('alexiona_session', id)
+    if (!stored) localStorage.setItem(SESSION_KEY, id)
     setSessionId(id)
   }, [])
 
@@ -47,8 +47,6 @@ export default function Home() {
     if (!sessionId) throw new Error('Session not initialized')
     setAnalysisLoading(true)
     const result = await sendMessage(message, sessionId, history)
-    // Update claims list from the newly extracted ones
-    setAllClaims(prev => [...prev, ...result.claims])
     if (result.analysis) setAnalysis(result.analysis)
     setAnalysisLoading(false)
     return { reply: result.reply, claims: result.claims }
@@ -65,10 +63,10 @@ export default function Home() {
       ``,
       `PRIMARY HYPOTHESIS`,
       analysis.primary_hypothesis,
-      `Confidence: ${Math.round(analysis.confidence * 100)}%`,
+      `Confidence: ${confPct(analysis.confidence)}%`,
       ``,
       `ALTERNATIVES`,
-      ...analysis.alternatives.map(a => `- ${a.label} (${Math.round(a.confidence * 100)}%)`),
+      ...analysis.alternatives.map(a => `- ${a.label} (${confPct(a.confidence)}%)`),
       ``,
       `MISSING EVIDENCE`,
       ...analysis.missing_evidence.map(m => `- ${m}`),
@@ -77,13 +75,13 @@ export default function Home() {
       ...analysis.focus_points.map(f => `- ${f}`),
       ``,
       `CLAIMS (${allClaims.length})`,
-      ...allClaims.map(c => `- [${c.tag} ${Math.round(c.confidence * 100)}%] ${c.text}`),
+      ...allClaims.map(c => `- [${c.tag} ${confPct(c.confidence)}%] ${c.text}`),
     ]
     const blob = new Blob([lines.join('\n')], { type: 'text/plain' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `alexiona-report-${sessionId?.slice(0, 8)}.txt`
+    a.download = `alexiona-report-${shortId(sessionId ?? '')}.txt`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -97,7 +95,21 @@ export default function Home() {
     )
   }
 
-  const claimCount = graphData.nodes.filter(n => n.type === 'Claim').length
+  // Derived — stays in sync with graph on refresh, survives page reload
+  const allClaims = useMemo<Claim[]>(() =>
+    graphData.nodes
+      .filter(n => n.type === 'Claim')
+      .map(n => ({
+        text: n.fullText || n.label,
+        confidence: n.confidence ?? 0.8,
+        tag: n.tag ?? 'Claim',
+        entities: [],
+        relations: [],
+      })),
+    [graphData.nodes]
+  )
+
+  const claimCount = allClaims.length
   const entityCount = graphData.nodes.filter(n => n.type === 'Entity').length
 
   return (
@@ -164,7 +176,7 @@ export default function Home() {
             onClick={() => {
               if (confirm('Start a new session?')) {
                 const id = uuidv4()
-                localStorage.setItem('alexiona_session', id)
+                localStorage.setItem(SESSION_KEY, id)
                 setSessionId(id)
                 setGraphData({ nodes: [], edges: [] })
                 setAllClaims([])

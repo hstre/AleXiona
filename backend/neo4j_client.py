@@ -16,6 +16,7 @@ class Neo4jClient:
         with self.driver.session() as session:
             session.run("CREATE CONSTRAINT claim_id IF NOT EXISTS FOR (c:Claim) REQUIRE c.id IS UNIQUE")
             session.run("CREATE CONSTRAINT entity_name IF NOT EXISTS FOR (e:Entity) REQUIRE e.name IS UNIQUE")
+            session.run("CREATE INDEX claim_session IF NOT EXISTS FOR (c:Claim) ON (c.session_id)")
 
     def close(self):
         self.driver.close()

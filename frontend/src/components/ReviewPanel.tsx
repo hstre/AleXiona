@@ -1,6 +1,7 @@
 'use client'
 
 import type { AnalysisResult } from '@/lib/api'
+import { confColor, confPct } from '@/lib/utils'
 
 interface Props {
   analysis: AnalysisResult | null
@@ -9,9 +10,9 @@ interface Props {
   onClear: () => void
 }
 
-function ConfidenceBar({ value, color = '#1a7ab3' }: { value: number; color?: string }) {
-  const pct = Math.round(value * 100)
-  const bg = value >= 0.7 ? '#22c55e' : value >= 0.5 ? '#f59e0b' : '#ef4444'
+function ConfidenceBar({ value }: { value: number }) {
+  const pct = confPct(value)
+  const bg = confColor(value)
   return (
     <div className="flex items-center gap-2">
       <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: 'var(--border)' }}>
@@ -127,7 +128,7 @@ export default function ReviewPanel({ analysis, loading, onGenerateReport, onCle
                         </span>
                         <span className="text-xs font-bold px-1.5 py-0.5 rounded-md"
                           style={{ background: 'var(--border)', color: 'var(--text-muted)' }}>
-                          {Math.round(alt.confidence * 100)}%
+                          {confPct(alt.confidence)}%
                         </span>
                       </div>
                       <ConfidenceBar value={alt.confidence} />
