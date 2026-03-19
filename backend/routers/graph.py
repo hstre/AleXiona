@@ -1,10 +1,46 @@
 from fastapi import APIRouter, HTTPException
-from models import GraphData, NodeUpdate, CounterfactualResult
+from models import GraphData, NodeUpdate, CounterfactualResult, Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend
+from pydantic import BaseModel
+from typing import Optional
 from neo4j_client import Neo4jClient
 from llm_client import run_counterfactual, analyze_reasoning
 from conflict_engine import detect_conflicts
 
+
+class ManualClaimPayload(BaseModel):
+    text:                   str
+    claim_type:             ClaimType   = ClaimType.finding
+    source_type:            SourceType  = SourceType.clinician
+    source_ref:             str         = ""
+    evidence_support_score: float       = 0.8
+    time_offset:            Optional[str] = None
+    trend:                  ClaimTrend  = ClaimTrend.unknown
+    status:                 ClaimStatus = ClaimStatus.active
+
 router = APIRouter(prefix="/api/graph", tags=["graph"])
+
+
+@router.post("/{session_id}/claims")
+async def add_manual_claim(session_id: str, payload: ManualClaimPayload):
+    db = Neo4jClient()
+    try:
+        claim = Claim(
+            text=payload.text,
+            entities=[], relations=[],
+            evidence_support_score=payload.evidence_support_score,
+            claim_type=payload.claim_type,
+            source_type=payload.source_type,
+            source_ref=payload.source_ref,
+            status=payload.status,
+            time_offset=payload.time_offset,
+            trend=payload.trend,
+        )
+        db.store_claims([claim], session_id)
+        return {"status": "created"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
 
 
 @router.get("/{session_id}", response_model=GraphData)

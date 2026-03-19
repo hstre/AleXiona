@@ -2,11 +2,13 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { v4 as uuidv4 } from 'uuid'
-import DataPanel   from '@/components/DataPanel'
-import GraphView   from '@/components/GraphView'
-import ReviewPanel from '@/components/ReviewPanel'
-import { sendMessage, getGraph } from '@/lib/api'
-import type { ChatMessage, GraphData, Claim, ReasoningResult, Conflict } from '@/lib/api'
+import DataPanel    from '@/components/DataPanel'
+import GraphView    from '@/components/GraphView'
+import ReviewPanel  from '@/components/ReviewPanel'
+import AddNodeModal from '@/components/AddNodeModal'
+import TimeSlider, { parseOffset } from '@/components/TimeSlider'
+import { sendMessage, getGraph, seedDemo } from '@/lib/api'
+import type { ChatMessage, GraphData, Claim, ReasoningResult, Conflict, GraphNode } from '@/lib/api'
 import { SESSION_KEY, shortId, confPct, CONFLICT_SEVERITY_META } from '@/lib/utils'
 
 export default function Home() {
@@ -14,12 +16,17 @@ export default function Home() {
   const [graphData,   setGraphData]   = useState<GraphData>({ nodes: [], edges: [] })
   const [reasoning,   setReasoning]   = useState<ReasoningResult | null>(null)
   const [conflicts,   setConflicts]   = useState<Conflict[]>([])
-  const [graphLoading,    setGraphLoading]    = useState(false)
-  const [analysisLoading, setAnalysisLoading] = useState(false)
-  const [activePanel, setActivePanel] = useState<'data' | 'graph' | 'review'>('graph')
+  const [graphLoading,     setGraphLoading]     = useState(false)
+  const [analysisLoading,  setAnalysisLoading]  = useState(false)
+  const [activePanel,      setActivePanel]      = useState<'data' | 'graph' | 'review'>('graph')
   const [showConflictBanner, setShowConflictBanner] = useState(true)
+  const [showAddNode,      setShowAddNode]      = useState(false)
+  const [searchQuery,      setSearchQuery]      = useState('')
+  const [showSearch,       setShowSearch]       = useState(false)
+  const [timeHours,        setTimeHours]        = useState<number>(999)   // 999 = show all
+  const [seeding,          setSeeding]          = useState(false)
 
-  // ── Session ──────────────────────────────────────────────────────────────
+  // ── Session ───────────────────────────────────────────────────────────────
   useEffect(() => {
     const stored = localStorage.getItem(SESSION_KEY)
     const id     = stored || uuidv4()
@@ -43,14 +50,14 @@ export default function Home() {
 
   useEffect(() => { if (sessionId) refreshGraph() }, [sessionId, refreshGraph])
 
-  // ── Derived: allClaims from graphData (survives page reload) ─────────────
+  // ── Derived: claims from graph nodes (survives reload) ────────────────────
   const allClaims = useMemo<Claim[]>(() =>
     graphData.nodes
       .filter(n => n.type === 'Claim')
       .map(n => ({
         text:                   n.fullText || n.label,
         evidence_support_score: n.evidence_support_score ?? 0.8,
-        claim_type:             n.claim_type ?? 'finding',
+        claim_type:             n.claim_type  ?? 'finding',
         source_type:            n.source_type ?? 'llm',
         source_ref:             n.source_ref  ?? '',
         derived_from:           [],
@@ -63,12 +70,46 @@ export default function Home() {
     [graphData.nodes]
   )
 
-  // ── Conflict node IDs for graph highlighting ──────────────────────────────
+  // ── Time-filtered + search-filtered graph ──────────────────────────────────
+  const filteredGraph = useMemo<GraphData>(() => {
+    const claimNodes  = graphData.nodes.filter(n => n.type === 'Claim')
+    const maxH        = Math.max(0, ...claimNodes.map(n => parseOffset(n.time_offset)))
+    const effectiveH  = timeHours >= maxH ? Infinity : timeHours
+
+    const visibleNodeIds = new Set<string>()
+
+    graphData.nodes.forEach(n => {
+      if (n.type === 'Entity') { visibleNodeIds.add(n.id); return }
+      // Time filter
+      if (parseOffset(n.time_offset) > effectiveH) return
+      // Search filter
+      if (searchQuery) {
+        const q = searchQuery.toLowerCase()
+        if (!n.fullText?.toLowerCase().includes(q) && !n.label.toLowerCase().includes(q)) return
+      }
+      visibleNodeIds.add(n.id)
+    })
+
+    const nodes = graphData.nodes.filter(n => visibleNodeIds.has(n.id))
+    const edges = graphData.edges.filter(
+      e => visibleNodeIds.has(e.source) && visibleNodeIds.has(e.target)
+    )
+    return { nodes, edges }
+  }, [graphData, timeHours, searchQuery])
+
+  // ── Conflict node IDs ─────────────────────────────────────────────────────
   const conflictNodeIds = useMemo(() => {
     const ids = new Set<string>()
     conflicts.forEach(c => c.affected_claim_ids.forEach(id => ids.add(id)))
     return ids
   }, [conflicts])
+
+  // ── Time slider max ───────────────────────────────────────────────────────
+  const claimNodes    = graphData.nodes.filter(n => n.type === 'Claim') as GraphNode[]
+  const maxTimeOffset = Math.max(0, ...claimNodes.map(n => parseOffset(n.time_offset)))
+
+  // Init slider to max so all nodes visible
+  useEffect(() => { setTimeHours(maxTimeOffset) }, [maxTimeOffset])
 
   // ── Send message ──────────────────────────────────────────────────────────
   const handleSendMessage = async (
@@ -80,13 +121,25 @@ export default function Home() {
     try {
       const result = await sendMessage(message, sessionId, history)
       if (result.reasoning) setReasoning(result.reasoning)
-      if (result.conflicts) {
-        setConflicts(result.conflicts)
-        setShowConflictBanner(true)
-      }
+      if (result.conflicts?.length) { setConflicts(result.conflicts); setShowConflictBanner(true) }
       return { reply: result.reply, claims: result.claims }
     } finally {
       setAnalysisLoading(false)
+    }
+  }
+
+  // ── Demo seed ─────────────────────────────────────────────────────────────
+  const handleSeedDemo = async () => {
+    if (!sessionId) return
+    setSeeding(true)
+    try {
+      const result = await seedDemo(sessionId)
+      if (result.seeded) await refreshGraph()
+      else alert(result.reason ?? 'Session already has data')
+    } catch (e: any) {
+      alert('Seed failed: ' + e.message)
+    } finally {
+      setSeeding(false)
     }
   }
 
@@ -162,31 +215,36 @@ export default function Home() {
   return (
     <div className="flex flex-col h-screen" style={{ background: 'var(--bg)' }}>
 
-      {/* ── Conflict Banner ─────────────────────────────────────────────── */}
+      {/* ── Add Node Modal ────────────────────────────────────────────────── */}
+      {showAddNode && (
+        <AddNodeModal
+          sessionId={sessionId}
+          onClose={() => setShowAddNode(false)}
+          onCreated={refreshGraph}
+        />
+      )}
+
+      {/* ── Conflict Banner ───────────────────────────────────────────────── */}
       {showConflictBanner && conflicts.length > 0 && topConflict && (() => {
         const meta = CONFLICT_SEVERITY_META[topConflict.severity]
         return (
           <div className="flex items-center justify-between px-4 py-2 shrink-0"
             style={{ background: meta.bg, borderBottom: `1px solid ${meta.border}` }}>
-            <div className="flex items-center gap-2">
-              <span>{meta.icon}</span>
-              <span className="text-xs font-medium" style={{ color: meta.text }}>
-                {conflicts.length > 1
-                  ? `${conflicts.length} conflicts detected — `
-                  : ''}
-                {topConflict.message}
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="shrink-0">{meta.icon}</span>
+              <span className="text-xs font-medium truncate" style={{ color: meta.text }}>
+                {conflicts.length > 1 ? `${conflicts.length} conflicts — ` : ''}{topConflict.message}
               </span>
             </div>
-            <button onClick={() => setShowConflictBanner(false)}
-              className="text-xs ml-4" style={{ color: meta.text }}>✕</button>
+            <button onClick={() => setShowConflictBanner(false)} className="text-xs ml-3 shrink-0"
+              style={{ color: meta.text }}>✕</button>
           </div>
         )
       })()}
 
-      {/* ── Top Nav ──────────────────────────────────────────────────────── */}
+      {/* ── Top Nav ───────────────────────────────────────────────────────── */}
       <nav className="flex items-center justify-between px-4 py-2.5 border-b shrink-0"
-        style={{ background: 'var(--surface)', borderColor: 'var(--border)',
-                 boxShadow: 'var(--shadow-sm)' }}>
+        style={{ background: 'var(--surface)', borderColor: 'var(--border)', boxShadow: 'var(--shadow-sm)' }}>
 
         {/* Logo */}
         <div className="flex items-center gap-3">
@@ -231,21 +289,50 @@ export default function Home() {
           ))}
         </div>
 
-        {/* Actions */}
-        <div className="flex items-center gap-2">
+        {/* Toolbar */}
+        <div className="flex items-center gap-1.5">
+          {/* Demo seed */}
+          {claimCount === 0 && (
+            <button onClick={handleSeedDemo} disabled={seeding}
+              className="hidden sm:flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-all disabled:opacity-50"
+              style={{ background: 'var(--brand-pale)', color: 'var(--brand)', border: '1px solid var(--brand)' }}>
+              {seeding ? '…' : '▶ Load Demo'}
+            </button>
+          )}
+          {/* Search toggle */}
+          <button onClick={() => setShowSearch(v => !v)}
+            className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors`}
+            style={{
+              background: showSearch ? 'var(--brand-pale)' : 'transparent',
+              color: showSearch ? 'var(--brand)' : 'var(--text-muted)',
+            }}
+            title="Search graph">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+          </button>
+          {/* Add node */}
+          <button onClick={() => setShowAddNode(true)}
+            className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors hover:opacity-70"
+            style={{ background: 'var(--brand)', color: 'white' }}
+            title="Add evidence node">
+            +
+          </button>
+          {/* Refresh */}
           <button onClick={refreshGraph} disabled={graphLoading}
             className="w-8 h-8 rounded-lg flex items-center justify-center hover:opacity-70 disabled:opacity-40"
-            title="Refresh graph">
+            title="Refresh">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)"
               strokeWidth="2" className={graphLoading ? 'animate-spin' : ''}>
               <path d="M23 4v6h-6M1 20v-6h6" />
               <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
             </svg>
           </button>
+          {/* New session */}
           <button onClick={newSession}
-            className="hidden sm:flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border hover:bg-gray-50"
+            className="hidden sm:flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg border hover:bg-gray-50"
             style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}>
-            + New Session
+            + New
           </button>
           <div className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold text-white"
             style={{ background: 'var(--brand)' }}>
@@ -253,6 +340,33 @@ export default function Home() {
           </div>
         </div>
       </nav>
+
+      {/* ── Search bar ────────────────────────────────────────────────────── */}
+      {showSearch && (
+        <div className="px-4 py-2 border-b shrink-0 flex items-center gap-2"
+          style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2">
+            <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          <input
+            autoFocus
+            type="text"
+            placeholder="Search claims and entities…"
+            className="flex-1 outline-none text-sm bg-transparent"
+            style={{ color: 'var(--text)' }}
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+          />
+          {searchQuery && (
+            <button onClick={() => setSearchQuery('')} style={{ color: 'var(--text-muted)' }}>✕</button>
+          )}
+          {searchQuery && (
+            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              {filteredGraph.nodes.filter(n => n.type === 'Claim').length} results
+            </span>
+          )}
+        </div>
+      )}
 
       {/* ── Main 3-column layout ──────────────────────────────────────────── */}
       <div className="flex flex-1 overflow-hidden">
@@ -273,24 +387,47 @@ export default function Home() {
         {/* CENTER: Graph */}
         <div className={`flex-col flex-1 overflow-hidden md:flex
             ${activePanel === 'graph' ? 'flex' : 'hidden'}`}>
+
+          {/* Graph sub-header */}
           <div className="px-4 py-2 border-b flex items-center justify-between shrink-0"
             style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
             <span className="text-xs font-semibold uppercase tracking-wider"
               style={{ color: 'var(--text-muted)' }}>
               Clinical Evidence Graph
             </span>
-            {graphLoading && (
-              <span className="text-xs animate-pulse" style={{ color: 'var(--brand)' }}>Updating…</span>
-            )}
+            <div className="flex items-center gap-2">
+              {searchQuery && (
+                <span className="text-xs px-2 py-0.5 rounded-full"
+                  style={{ background: 'var(--brand-pale)', color: 'var(--brand)' }}>
+                  Filter active
+                </span>
+              )}
+              {graphLoading && (
+                <span className="text-xs animate-pulse" style={{ color: 'var(--brand)' }}>Updating…</span>
+              )}
+            </div>
           </div>
+
           <div className="flex-1 overflow-hidden">
             <GraphView
-              data={graphData}
+              data={filteredGraph}
               onRefresh={refreshGraph}
               conflictNodeIds={conflictNodeIds}
               sessionId={sessionId}
             />
           </div>
+
+          {/* Time slider (shown only when there are claims with time offsets) */}
+          {maxTimeOffset > 0 && (
+            <div className="px-4 py-2 border-t shrink-0"
+              style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+              <TimeSlider
+                claimNodes={claimNodes}
+                currentHours={Math.min(timeHours, maxTimeOffset)}
+                onChange={setTimeHours}
+              />
+            </div>
+          )}
         </div>
 
         {/* RIGHT: Clinical Reasoning */}

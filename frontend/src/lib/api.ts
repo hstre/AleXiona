@@ -194,3 +194,29 @@ export async function deleteSession(sessionId: string): Promise<void> {
   const res = await fetch(`${API_URL}/api/sessions/${sessionId}`, { method: 'DELETE' })
   if (!res.ok) throw new Error(await res.text())
 }
+
+export async function seedDemo(sessionId: string): Promise<{ seeded: boolean; claim_count?: number; reason?: string }> {
+  const res = await fetch(`${API_URL}/api/demo/seed/${sessionId}`, { method: 'POST' })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export interface ManualClaim {
+  text:                   string
+  claim_type:             ClaimType
+  source_type:            SourceType
+  source_ref:             string
+  evidence_support_score: number
+  time_offset:            string
+  trend:                  ClaimTrend
+  status:                 ClaimStatus
+}
+
+export async function addManualClaim(sessionId: string, claim: ManualClaim): Promise<void> {
+  const res = await fetch(`${API_URL}/api/graph/${sessionId}/claims`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(claim),
+  })
+  if (!res.ok) throw new Error(await res.text())
+}
