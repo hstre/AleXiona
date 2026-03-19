@@ -1,0 +1,293 @@
+"""Unit tests for conflict_engine.detect_conflicts().
+
+All tests use in-memory claim dicts — no Neo4j or LLM required.
+"""
+import pytest
+from conflict_engine import detect_conflicts
+from models import ConflictType, ConflictSeverity
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+def make_claim(
+    id: str,
+    text: str,
+    claim_type: str = "finding",
+    status: str = "active",
+    evidence_support_score: float = 0.8,
+    derived_from: list[str] | None = None,
+) -> dict:
+    return {
+        "id": id,
+        "text": text,
+        "claim_type": claim_type,
+        "status": status,
+        "evidence_support_score": evidence_support_score,
+        "derived_from": derived_from or [],
+    }
+
+
+# ── Rule 1: Competing hypotheses ─────────────────────────────────────────────
+
+class TestCompetingHypotheses:
+    def test_two_diagnoses_triggers_conflict(self):
+        claims = [
+            make_claim("d1", "Community-acquired pneumonia", claim_type="diagnosis"),
+            make_claim("d2", "Pulmonary embolism", claim_type="diagnosis"),
+        ]
+        conflicts = detect_conflicts(claims)
+        types = [c.type for c in conflicts]
+        assert ConflictType.competing_hypothesis in types
+
+    def test_two_hypotheses_triggers_conflict(self):
+        claims = [
+            make_claim("h1", "Bacterial infection hypothesis", claim_type="hypothesis"),
+            make_claim("h2", "Viral infection hypothesis", claim_type="hypothesis"),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert any(c.type == ConflictType.competing_hypothesis for c in conflicts)
+
+    def test_mixed_diagnosis_hypothesis_triggers_conflict(self):
+        claims = [
+            make_claim("d1", "Pneumonia diagnosis", claim_type="diagnosis"),
+            make_claim("h1", "Sepsis hypothesis", claim_type="hypothesis"),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert any(c.type == ConflictType.competing_hypothesis for c in conflicts)
+
+    def test_single_hypothesis_no_conflict(self):
+        claims = [make_claim("h1", "Pneumonia hypothesis", claim_type="hypothesis")]
+        conflicts = detect_conflicts(claims)
+        assert not any(c.type == ConflictType.competing_hypothesis for c in conflicts)
+
+    def test_competing_conflict_is_warning(self):
+        claims = [
+            make_claim("d1", "Diagnosis A", claim_type="diagnosis"),
+            make_claim("d2", "Diagnosis B", claim_type="diagnosis"),
+        ]
+        comp = next(c for c in detect_conflicts(claims) if c.type == ConflictType.competing_hypothesis)
+        assert comp.severity == ConflictSeverity.warning
+
+    def test_superseded_hypothesis_excluded(self):
+        """A superseded hypothesis should not count toward competing_hypothesis."""
+        claims = [
+            make_claim("d1", "Active diagnosis", claim_type="diagnosis"),
+            make_claim("d2", "Old diagnosis", claim_type="diagnosis", status="superseded"),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert not any(c.type == ConflictType.competing_hypothesis for c in conflicts)
+
+    def test_affected_ids_include_both_claims(self):
+        claims = [
+            make_claim("d1", "Diagnosis A", claim_type="diagnosis"),
+            make_claim("d2", "Diagnosis B", claim_type="diagnosis"),
+        ]
+        comp = next(c for c in detect_conflicts(claims) if c.type == ConflictType.competing_hypothesis)
+        assert "d1" in comp.affected_claim_ids
+        assert "d2" in comp.affected_claim_ids
+
+
+# ── Rule 2: Negation clash ────────────────────────────────────────────────────
+
+class TestNegationClash:
+    def test_english_negation_detected(self):
+        claims = [
+            make_claim("c1", "Patient has fever"),
+            make_claim("c2", "Patient has no fever"),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert any(c.type == ConflictType.negation for c in conflicts)
+
+    def test_german_negation_detected(self):
+        claims = [
+            make_claim("c1", "Fieber vorhanden beim Patienten"),
+            make_claim("c2", "Kein Fieber beim Patienten"),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert any(c.type == ConflictType.negation for c in conflicts)
+
+    def test_negation_is_error_severity(self):
+        claims = [
+            make_claim("c1", "Infiltrate found in lung"),
+            make_claim("c2", "No infiltrate found in lung"),
+        ]
+        neg = next(c for c in detect_conflicts(claims) if c.type == ConflictType.negation)
+        assert neg.severity == ConflictSeverity.error
+
+    def test_both_negated_no_conflict(self):
+        """Two negated claims don't clash."""
+        claims = [
+            make_claim("c1", "No fever present in patient"),
+            make_claim("c2", "No fever detected in patient"),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert not any(c.type == ConflictType.negation for c in conflicts)
+
+    def test_insufficient_keyword_overlap_no_conflict(self):
+        """Less than 2 shared key terms → no negation conflict."""
+        claims = [
+            make_claim("c1", "Patient has fever"),
+            make_claim("c2", "No pneumonia detected"),  # only 1 shared token at most
+        ]
+        conflicts = detect_conflicts(claims)
+        assert not any(c.type == ConflictType.negation for c in conflicts)
+
+    def test_ruled_out_negation(self):
+        claims = [
+            make_claim("c1", "Pulmonary embolism suspected"),
+            make_claim("c2", "Pulmonary embolism ruled out"),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert any(c.type == ConflictType.negation for c in conflicts)
+
+    def test_negation_only_on_active_claims(self):
+        claims = [
+            make_claim("c1", "Patient has fever", status="active"),
+            make_claim("c2", "Patient has no fever", status="superseded"),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert not any(c.type == ConflictType.negation for c in conflicts)
+
+
+# ── Rule 3: Evidence mismatch ─────────────────────────────────────────────────
+
+class TestEvidenceMismatch:
+    def test_strong_evidence_weak_hypothesis_triggers(self):
+        claims = [
+            make_claim("e1", "CRP elevated 184 mg/L", claim_type="lab", evidence_support_score=0.90),
+            make_claim("h1", "Bacterial infection", claim_type="hypothesis", evidence_support_score=0.35),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert any(c.type == ConflictType.evidence_mismatch for c in conflicts)
+
+    def test_mismatch_is_info_severity(self):
+        claims = [
+            make_claim("e1", "Leukocytes elevated", claim_type="lab", evidence_support_score=0.92),
+            make_claim("h1", "Infection hypothesis", claim_type="hypothesis", evidence_support_score=0.30),
+        ]
+        mismatch = next(c for c in detect_conflicts(claims) if c.type == ConflictType.evidence_mismatch)
+        assert mismatch.severity == ConflictSeverity.info
+
+    def test_weak_evidence_no_mismatch(self):
+        claims = [
+            make_claim("e1", "Mild fever finding", claim_type="finding", evidence_support_score=0.60),
+            make_claim("h1", "Hypothesis", claim_type="hypothesis", evidence_support_score=0.30),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert not any(c.type == ConflictType.evidence_mismatch for c in conflicts)
+
+    def test_strong_hypothesis_no_mismatch(self):
+        claims = [
+            make_claim("e1", "Consolidation on CT", claim_type="imaging", evidence_support_score=0.95),
+            make_claim("h1", "Strong hypothesis", claim_type="hypothesis", evidence_support_score=0.80),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert not any(c.type == ConflictType.evidence_mismatch for c in conflicts)
+
+    def test_ess_boundary_at_085(self):
+        """Evidence at exactly 0.85 should count as strong."""
+        claims = [
+            make_claim("e1", "Lab finding", claim_type="lab", evidence_support_score=0.85),
+            make_claim("h1", "Hypothesis", claim_type="hypothesis", evidence_support_score=0.39),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert any(c.type == ConflictType.evidence_mismatch for c in conflicts)
+
+    def test_ess_just_below_boundary(self):
+        """Evidence at 0.84 should NOT count as strong."""
+        claims = [
+            make_claim("e1", "Lab finding", claim_type="lab", evidence_support_score=0.84),
+            make_claim("h1", "Hypothesis", claim_type="hypothesis", evidence_support_score=0.30),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert not any(c.type == ConflictType.evidence_mismatch for c in conflicts)
+
+
+# ── Rule 4: Timeline / stale derivation ───────────────────────────────────────
+
+class TestTimelineGap:
+    def test_derived_from_superseded_triggers(self):
+        claims = [
+            make_claim("sup1", "Viral pneumonia hypothesis", claim_type="hypothesis", status="superseded"),
+            make_claim("act1", "Follow-up therapy", claim_type="therapy", derived_from=["sup1"]),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert any(c.type == ConflictType.timeline_gap for c in conflicts)
+
+    def test_timeline_gap_is_warning(self):
+        claims = [
+            make_claim("sup1", "Old finding", status="superseded"),
+            make_claim("act1", "Current finding", derived_from=["sup1"]),
+        ]
+        gap = next(c for c in detect_conflicts(claims) if c.type == ConflictType.timeline_gap)
+        assert gap.severity == ConflictSeverity.warning
+
+    def test_derived_from_active_no_gap(self):
+        claims = [
+            make_claim("src1", "Source claim", status="active"),
+            make_claim("act1", "Derived claim", derived_from=["src1"]),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert not any(c.type == ConflictType.timeline_gap for c in conflicts)
+
+    def test_derived_from_resolved_no_gap(self):
+        """Only superseded triggers the gap rule, not resolved."""
+        claims = [
+            make_claim("res1", "Resolved finding", status="resolved"),
+            make_claim("act1", "Active claim", derived_from=["res1"]),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert not any(c.type == ConflictType.timeline_gap for c in conflicts)
+
+    def test_no_derivation_no_gap(self):
+        claims = [
+            make_claim("sup1", "Superseded claim", status="superseded"),
+            make_claim("act1", "Active independent claim"),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert not any(c.type == ConflictType.timeline_gap for c in conflicts)
+
+    def test_affected_ids_include_both(self):
+        claims = [
+            make_claim("sup1", "Old hypothesis", status="superseded"),
+            make_claim("act1", "New therapy", derived_from=["sup1"]),
+        ]
+        gap = next(c for c in detect_conflicts(claims) if c.type == ConflictType.timeline_gap)
+        assert "act1" in gap.affected_claim_ids
+        assert "sup1" in gap.affected_claim_ids
+
+
+# ── Edge cases ────────────────────────────────────────────────────────────────
+
+class TestEdgeCases:
+    def test_empty_claims_no_conflict(self):
+        assert detect_conflicts([]) == []
+
+    def test_single_claim_no_conflict(self):
+        claims = [make_claim("c1", "Patient has fever")]
+        assert detect_conflicts(claims) == []
+
+    def test_all_resolved_no_active_conflicts(self):
+        claims = [
+            make_claim("d1", "Diagnosis A", claim_type="diagnosis", status="resolved"),
+            make_claim("d2", "Diagnosis B", claim_type="diagnosis", status="resolved"),
+        ]
+        conflicts = detect_conflicts(claims)
+        # No active leads → no competing_hypothesis
+        assert not any(c.type == ConflictType.competing_hypothesis for c in conflicts)
+
+    def test_multiple_rules_can_fire_simultaneously(self):
+        """A set of claims can trigger more than one rule."""
+        claims = [
+            make_claim("d1", "Pneumonia diagnosis", claim_type="diagnosis"),
+            make_claim("d2", "Sepsis diagnosis", claim_type="diagnosis"),
+            make_claim("lab1", "CRP elevated lab result", claim_type="lab", evidence_support_score=0.95),
+            make_claim("h1", "Weak hypothesis candidate", claim_type="hypothesis", evidence_support_score=0.30),
+        ]
+        types = {c.type for c in detect_conflicts(claims)}
+        assert ConflictType.competing_hypothesis in types
+        assert ConflictType.evidence_mismatch in types
+
+    def test_returns_list_type(self):
+        result = detect_conflicts([make_claim("c1", "Some claim")])
+        assert isinstance(result, list)
