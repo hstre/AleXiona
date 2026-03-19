@@ -132,6 +132,14 @@ export interface SessionInfo {
   claim_count: number
 }
 
+// ── Streaming SSE types ───────────────────────────────────────────────────────
+
+export type StreamEvent =
+  | { type: 'claims';  claims: Claim[] }
+  | { type: 'token';   content: string }
+  | { type: 'done';    reply: string; claims: Claim[]; reasoning: ReasoningResult | null; conflicts: Conflict[]; session_id: string }
+  | { type: 'error';   message: string }
+
 // ── API calls ─────────────────────────────────────────────────────────────────
 
 export async function sendMessage(
@@ -144,6 +152,39 @@ export async function sendMessage(
   })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
+}
+
+export async function* streamMessage(
+  message: string, sessionId: string, history: ChatMessage[]
+): AsyncGenerator<StreamEvent> {
+  const res = await fetch(`${API_URL}/api/chat/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, session_id: sessionId, history }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+
+  const reader  = res.body!.getReader()
+  const decoder = new TextDecoder()
+  let   buf     = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += decoder.decode(value, { stream: true })
+    const lines = buf.split('\n')
+    buf = lines.pop() ?? ''
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue
+      const text = line.slice(6).trim()
+      if (!text) continue
+      try {
+        yield JSON.parse(text) as StreamEvent
+      } catch {
+        // malformed line — skip
+      }
+    }
+  }
 }
 
 export async function getGraph(sessionId: string): Promise<GraphData> {

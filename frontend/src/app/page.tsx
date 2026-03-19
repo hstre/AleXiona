@@ -2,13 +2,14 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { v4 as uuidv4 } from 'uuid'
-import DataPanel    from '@/components/DataPanel'
-import GraphView    from '@/components/GraphView'
-import ReviewPanel  from '@/components/ReviewPanel'
-import AddNodeModal from '@/components/AddNodeModal'
+import DataPanel      from '@/components/DataPanel'
+import GraphView      from '@/components/GraphView'
+import ReviewPanel    from '@/components/ReviewPanel'
+import AddNodeModal   from '@/components/AddNodeModal'
 import TimeSlider, { parseOffset } from '@/components/TimeSlider'
-import { sendMessage, getGraph, seedDemo } from '@/lib/api'
-import type { ChatMessage, GraphData, Claim, ClaimType, ReasoningResult, Conflict, GraphNode } from '@/lib/api'
+import TimelinePanel  from '@/components/TimelinePanel'
+import { getGraph, seedDemo } from '@/lib/api'
+import type { GraphData, Claim, ClaimType, ReasoningResult, Conflict, GraphNode } from '@/lib/api'
 import { SESSION_KEY, shortId, confPct, CONFLICT_SEVERITY_META, CLAIM_TYPE_META } from '@/lib/utils'
 
 export default function Home() {
@@ -17,7 +18,6 @@ export default function Home() {
   const [reasoning,   setReasoning]   = useState<ReasoningResult | null>(null)
   const [conflicts,   setConflicts]   = useState<Conflict[]>([])
   const [graphLoading,       setGraphLoading]       = useState(false)
-  const [analysisLoading,    setAnalysisLoading]    = useState(false)
   const [activePanel,        setActivePanel]        = useState<'data' | 'graph' | 'review'>('graph')
   const [showConflictBanner, setShowConflictBanner] = useState(true)
   const [showAddNode,        setShowAddNode]        = useState(false)
@@ -27,6 +27,7 @@ export default function Home() {
   const [seeding,            setSeeding]            = useState(false)
   const [typeFilter,         setTypeFilter]         = useState<Set<ClaimType>>(new Set())
   const [focusClaimIds,      setFocusClaimIds]      = useState<string[]>([])
+  const [centerView,         setCenterView]         = useState<'graph' | 'timeline'>('graph')
 
   // ── Session ───────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -140,23 +141,6 @@ export default function Home() {
       else next.add(ct)
       return next
     })
-  }
-
-  // ── Send message ──────────────────────────────────────────────────────────
-  const handleSendMessage = async (
-    message: string,
-    history: ChatMessage[]
-  ): Promise<{ reply: string; claims: Claim[] }> => {
-    if (!sessionId) throw new Error('Session not initialized')
-    setAnalysisLoading(true)
-    try {
-      const result = await sendMessage(message, sessionId, history)
-      if (result.reasoning) setReasoning(result.reasoning)
-      if (result.conflicts?.length) { setConflicts(result.conflicts); setShowConflictBanner(true) }
-      return { reply: result.reply, claims: result.claims }
-    } finally {
-      setAnalysisLoading(false)
-    }
   }
 
   // ── Demo seed ─────────────────────────────────────────────────────────────
@@ -415,8 +399,9 @@ export default function Home() {
           <DataPanel
             key={sessionId}
             sessionId={sessionId}
-            onSendMessage={handleSendMessage}
             onNewClaims={refreshGraph}
+            onReasoning={r => setReasoning(r)}
+            onConflicts={c => { setConflicts(c); setShowConflictBanner(true) }}
             allClaims={allClaims}
           />
         </div>
@@ -425,16 +410,27 @@ export default function Home() {
         <div className={`flex-col flex-1 overflow-hidden md:flex
             ${activePanel === 'graph' ? 'flex' : 'hidden'}`}>
 
-          {/* Graph sub-header with type filter */}
+          {/* Graph sub-header */}
           <div className="border-b shrink-0"
             style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
             <div className="px-4 py-2 flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-wider"
-                style={{ color: 'var(--text-muted)' }}>
-                Clinical Evidence Graph
-              </span>
+              {/* Graph / Timeline toggle */}
+              <div className="flex rounded-lg overflow-hidden border text-xs"
+                style={{ borderColor: 'var(--border)' }}>
+                {(['graph', 'timeline'] as const).map(v => (
+                  <button key={v} onClick={() => setCenterView(v)}
+                    className="px-3 py-1 capitalize"
+                    style={{
+                      background: centerView === v ? 'var(--brand)' : 'var(--surface)',
+                      color:      centerView === v ? 'white' : 'var(--text-muted)',
+                    }}>
+                    {v === 'graph' ? '◈ Graph' : '⏱ Timeline'}
+                  </button>
+                ))}
+              </div>
+
               <div className="flex items-center gap-2">
-                {typeFilter.size > 0 && (
+                {centerView === 'graph' && typeFilter.size > 0 && (
                   <button onClick={() => setTypeFilter(new Set())}
                     className="text-xs px-2 py-0.5 rounded-full"
                     style={{ background: 'var(--brand-pale)', color: 'var(--brand)' }}>
@@ -452,45 +448,63 @@ export default function Home() {
                 )}
               </div>
             </div>
-            {/* Type filter chips */}
-            <div className="px-4 pb-2 flex items-center gap-1.5 overflow-x-auto">
-              {CLAIM_TYPES.map(ct => {
-                const meta    = CLAIM_TYPE_META[ct]
-                const active  = typeFilter.has(ct)
-                return (
-                  <button key={ct} onClick={() => toggleTypeFilter(ct)}
-                    className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs shrink-0 transition-colors"
-                    style={{
-                      background: active ? meta.color : 'var(--surface-2)',
-                      color:      active ? 'white'    : 'var(--text-muted)',
-                      border:     `1px solid ${active ? meta.color : 'var(--border)'}`,
-                    }}>
-                    <span>{meta.icon}</span>
-                    <span>{meta.label}</span>
-                  </button>
-                )
-              })}
+
+            {/* Type filter chips — only in graph mode */}
+            {centerView === 'graph' && (
+              <div className="px-4 pb-2 flex items-center gap-1.5 overflow-x-auto">
+                {CLAIM_TYPES.map(ct => {
+                  const meta   = CLAIM_TYPE_META[ct]
+                  const active = typeFilter.has(ct)
+                  return (
+                    <button key={ct} onClick={() => toggleTypeFilter(ct)}
+                      className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs shrink-0 transition-colors"
+                      style={{
+                        background: active ? meta.color : 'var(--surface-2)',
+                        color:      active ? 'white'   : 'var(--text-muted)',
+                        border:     `1px solid ${active ? meta.color : 'var(--border)'}`,
+                      }}>
+                      <span>{meta.icon}</span>
+                      <span>{meta.label}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Graph canvas */}
+          <div className={`flex-1 overflow-hidden ${centerView === 'graph' ? 'flex' : 'hidden'} flex-col`}>
+            <div className="flex-1 overflow-hidden">
+              <GraphView
+                data={filteredGraph}
+                onRefresh={refreshGraph}
+                conflictNodeIds={conflictNodeIds}
+                sessionId={sessionId}
+                focusClaimIds={focusClaimIds}
+              />
             </div>
+            {/* Time slider — inside graph mode only */}
+            {maxTimeOffset > 0 && (
+              <div className="px-4 py-2 border-t shrink-0"
+                style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+                <TimeSlider
+                  claimNodes={claimNodes}
+                  currentHours={Math.min(timeHours, maxTimeOffset)}
+                  onChange={setTimeHours}
+                />
+              </div>
+            )}
           </div>
 
-          <div className="flex-1 overflow-hidden">
-            <GraphView
-              data={filteredGraph}
-              onRefresh={refreshGraph}
-              conflictNodeIds={conflictNodeIds}
-              sessionId={sessionId}
-              focusClaimIds={focusClaimIds}
-            />
-          </div>
-
-          {/* Time slider */}
-          {maxTimeOffset > 0 && (
-            <div className="px-4 py-2 border-t shrink-0"
-              style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-              <TimeSlider
+          {/* Timeline view */}
+          {centerView === 'timeline' && (
+            <div className="flex-1 overflow-hidden">
+              <TimelinePanel
                 claimNodes={claimNodes}
-                currentHours={Math.min(timeHours, maxTimeOffset)}
-                onChange={setTimeHours}
+                onFocusClaim={id => {
+                  setFocusClaimIds([id])
+                  setCenterView('graph')
+                }}
               />
             </div>
           )}
@@ -502,7 +516,7 @@ export default function Home() {
           style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
           <ReviewPanel
             reasoning={reasoning}
-            loading={analysisLoading}
+            loading={false}
             onGenerateReport={handleGenerateReport}
             onClear={() => setReasoning(null)}
           />

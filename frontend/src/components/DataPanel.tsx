@@ -1,37 +1,74 @@
 'use client'
 
-import { useState, useRef } from 'react'
-import type { Claim, ChatMessage, ClaimStatus } from '@/lib/api'
-import { updateClaimStatus } from '@/lib/api'
+import { useState, useRef, useEffect } from 'react'
+import type { Claim, ChatMessage, ClaimStatus, ReasoningResult, Conflict } from '@/lib/api'
+import { updateClaimStatus, streamMessage } from '@/lib/api'
 import { confColor, confPct, getTypeMeta, STATUS_META, TREND_META } from '@/lib/utils'
 
 interface Props {
   sessionId:      string
-  onSendMessage:  (msg: string, history: ChatMessage[]) => Promise<{ reply: string; claims: Claim[] }>
   onNewClaims:    () => void
+  onReasoning?:   (r: ReasoningResult) => void
+  onConflicts?:   (c: Conflict[]) => void
   allClaims:      Claim[]
 }
 
-export default function DataPanel({ sessionId, onSendMessage, onNewClaims, allClaims }: Props) {
-  const [input,   setInput]   = useState('')
-  const [loading, setLoading] = useState(false)
-  const [history, setHistory] = useState<ChatMessage[]>([])
-  const [filter,  setFilter]  = useState<'all' | 'active' | 'superseded'>('all')
+export default function DataPanel({
+  sessionId, onNewClaims, onReasoning, onConflicts, allClaims,
+}: Props) {
+  const [input,          setInput]          = useState('')
+  const [loading,        setLoading]        = useState(false)
+  const [streamingReply, setStreamingReply] = useState('')
+  const [history,        setHistory]        = useState<ChatMessage[]>([])
+  const [filter,         setFilter]         = useState<'all' | 'active' | 'superseded'>('all')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const replyRef    = useRef<HTMLDivElement>(null)
+
+  // Auto-scroll streaming reply
+  useEffect(() => {
+    if (replyRef.current) replyRef.current.scrollTop = replyRef.current.scrollHeight
+  }, [streamingReply])
 
   const send = async () => {
     const text = input.trim()
     if (!text || loading) return
     setInput('')
     setLoading(true)
+    setStreamingReply('')
+
+    const userMsg: ChatMessage = { role: 'user', content: text }
+
     try {
-      const result = await onSendMessage(text, history)
-      setHistory(prev => [
-        ...prev,
-        { role: 'user',      content: text },
-        { role: 'assistant', content: result.reply },
-      ])
-      if (result.claims.length > 0) onNewClaims()
+      let finalReply = ''
+
+      for await (const event of streamMessage(text, sessionId, history)) {
+        if (event.type === 'token') {
+          finalReply += event.content
+          setStreamingReply(finalReply)
+
+        } else if (event.type === 'claims') {
+          if (event.claims.length > 0) onNewClaims()
+
+        } else if (event.type === 'done') {
+          finalReply = event.reply
+          setStreamingReply('')
+          if (event.reasoning) onReasoning?.(event.reasoning)
+          if (event.conflicts?.length) onConflicts?.(event.conflicts)
+          onNewClaims()
+          setHistory(prev => [
+            ...prev,
+            userMsg,
+            { role: 'assistant', content: finalReply },
+          ])
+
+        } else if (event.type === 'error') {
+          console.error('Stream error:', event.message)
+          setStreamingReply('')
+        }
+      }
+    } catch (err) {
+      console.error('sendMessage failed:', err)
+      setStreamingReply('')
     } finally {
       setLoading(false)
     }
@@ -62,7 +99,6 @@ export default function DataPanel({ sessionId, onSendMessage, onNewClaims, allCl
             {allClaims.length}
           </span>
         </div>
-        {/* Filter */}
         <div className="flex gap-1">
           {(['all', 'active', 'superseded'] as const).map(f => (
             <button key={f} onClick={() => setFilter(f)}
@@ -102,13 +138,11 @@ export default function DataPanel({ sessionId, onSendMessage, onNewClaims, allCl
             <div key={i}
               className="rounded-xl p-3 border-l-4 transition-opacity"
               style={{
-                background:    'var(--surface)',
+                background:      'var(--surface)',
                 borderLeftColor: meta.border,
-                boxShadow:     'var(--shadow-sm)',
-                opacity:       dimmed ? 0.6 : 1,
-              }}
-            >
-              {/* Top row: type tag + confidence + trend */}
+                boxShadow:       'var(--shadow-sm)',
+                opacity:         dimmed ? 0.6 : 1,
+              }}>
               <div className="flex items-center gap-1.5 mb-2">
                 <span className="text-xs font-medium px-1.5 py-0.5 rounded-md"
                   style={{ background: meta.bg, color: meta.text }}>
@@ -130,12 +164,10 @@ export default function DataPanel({ sessionId, onSendMessage, onNewClaims, allCl
                 </div>
               </div>
 
-              {/* Claim text */}
               <p className="text-xs leading-relaxed mb-2" style={{ color: 'var(--text)' }}>
                 {claim.text}
               </p>
 
-              {/* Entities */}
               {claim.entities.length > 0 && (
                 <div className="flex flex-wrap gap-1 mb-2">
                   {claim.entities.map((e, j) => (
@@ -147,17 +179,13 @@ export default function DataPanel({ sessionId, onSendMessage, onNewClaims, allCl
                 </div>
               )}
 
-              {/* Provenance row */}
               <div className="flex items-center justify-between">
                 <span className="text-xs" style={{ color: 'var(--text-light)' }}>
                   {claim.source_type}{claim.source_ref ? ` · ${claim.source_ref}` : ''}
                 </span>
-                <span className="text-xs" style={{ color: status.color }}>
-                  {status.label}
-                </span>
+                <span className="text-xs" style={{ color: status.color }}>{status.label}</span>
               </div>
 
-              {/* Confidence bar */}
               <div className="mt-2 h-1 rounded-full overflow-hidden"
                 style={{ background: 'var(--border-light)' }}>
                 <div className="h-full rounded-full transition-all"
@@ -167,6 +195,32 @@ export default function DataPanel({ sessionId, onSendMessage, onNewClaims, allCl
           )
         })}
       </div>
+
+      {/* Streaming reply area */}
+      {(loading || streamingReply) && (
+        <div className="mx-3 mb-2 rounded-xl overflow-hidden border"
+          style={{ borderColor: 'var(--border)', background: 'var(--surface-2)' }}>
+          <div className="px-3 py-1.5 border-b flex items-center gap-2"
+            style={{ borderColor: 'var(--border)' }}>
+            <span className="w-1.5 h-1.5 rounded-full animate-pulse"
+              style={{ background: loading ? 'var(--brand)' : '#22c55e' }} />
+            <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
+              {loading && !streamingReply ? 'Extracting claims…' : 'AleXiona'}
+            </span>
+          </div>
+          {streamingReply && (
+            <div ref={replyRef}
+              className="px-3 py-2 text-xs leading-relaxed overflow-y-auto"
+              style={{ color: 'var(--text)', maxHeight: '120px' }}>
+              {streamingReply}
+              {loading && (
+                <span className="inline-block w-0.5 h-3 ml-0.5 align-middle animate-pulse"
+                  style={{ background: 'var(--brand)' }} />
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Input */}
       <div className="p-3 border-t" style={{ borderColor: 'var(--border)' }}>

@@ -2,7 +2,8 @@ import os
 import json
 import logging
 import time
-from openai import OpenAI
+from typing import AsyncIterator
+from openai import OpenAI, AsyncOpenAI
 from pydantic import ValidationError
 from models import (
     Claim, ClaimExtractionResult, ChatMessage,
@@ -13,7 +14,8 @@ from models import (
 
 log = logging.getLogger(__name__)
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client       = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+async_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 MODEL = "gpt-4o"
 
 # ── Claim Extraction ─────────────────────────────────────────────────────────
@@ -288,3 +290,36 @@ def answer_with_context(
         model=MODEL, messages=messages, temperature=0.3,
     )
     return response.choices[0].message.content
+
+
+def _build_query_messages(
+    user_message: str,
+    history: list[ChatMessage],
+    graph_context: str,
+) -> list[dict]:
+    messages: list[dict] = [{"role": "system", "content": QUERY_PROMPT}]
+    if graph_context:
+        messages.append({
+            "role": "system",
+            "content": f"Knowledge graph context:\n{graph_context}",
+        })
+    for msg in history[-6:]:
+        messages.append({"role": msg.role, "content": msg.content})
+    messages.append({"role": "user", "content": user_message})
+    return messages
+
+
+async def stream_answer_with_context(
+    user_message: str,
+    history: list[ChatMessage],
+    graph_context: str,
+) -> AsyncIterator[str]:
+    """Yield LLM reply tokens one by one via OpenAI streaming."""
+    messages = _build_query_messages(user_message, history, graph_context)
+    stream = await async_client.chat.completions.create(
+        model=MODEL, messages=messages, temperature=0.3, stream=True,
+    )
+    async for chunk in stream:
+        delta = chunk.choices[0].delta.content or ""
+        if delta:
+            yield delta
