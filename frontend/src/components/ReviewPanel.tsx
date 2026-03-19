@@ -1,125 +1,166 @@
 'use client'
 
-import type { AnalysisResult } from '@/lib/api'
+import type { ReasoningResult } from '@/lib/api'
 import { confColor, confPct } from '@/lib/utils'
 
 interface Props {
-  analysis: AnalysisResult | null
-  loading: boolean
+  reasoning:        ReasoningResult | null
+  loading:          boolean
   onGenerateReport: () => void
-  onClear: () => void
+  onClear:          () => void
 }
 
-function ConfidenceBar({ value }: { value: number }) {
+function SupportBar({ value }: { value: number }) {
   const pct = confPct(value)
-  const bg = confColor(value)
+  const bg  = confColor(value)
   return (
     <div className="flex items-center gap-2">
       <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: 'var(--border)' }}>
         <div className="h-full rounded-full transition-all duration-500"
           style={{ width: `${pct}%`, background: bg }} />
       </div>
-      <span className="text-xs font-bold tabular-nums w-8 text-right"
-        style={{ color: bg }}>{pct}%</span>
+      <span className="text-xs font-bold tabular-nums w-8 text-right" style={{ color: bg }}>
+        {pct}%
+      </span>
     </div>
   )
 }
 
-export default function ReviewPanel({ analysis, loading, onGenerateReport, onClear }: Props) {
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section>
+      <h3 className="text-xs font-semibold uppercase tracking-wider mb-2"
+        style={{ color: 'var(--text-muted)' }}>
+        {title}
+      </h3>
+      {children}
+    </section>
+  )
+}
+
+export default function ReviewPanel({ reasoning, loading, onGenerateReport, onClear }: Props) {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="px-4 py-3 border-b flex items-center justify-between"
         style={{ borderColor: 'var(--border)' }}>
-        <span className="font-semibold text-sm">AI Reviewer</span>
+        <div>
+          <span className="font-semibold text-sm">Clinical Reasoning</span>
+          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>AI-assisted · not a diagnosis</p>
+        </div>
         <div className="w-2 h-2 rounded-full animate-pulse"
-          style={{ background: loading ? '#f59e0b' : analysis ? '#22c55e' : 'var(--border)' }} />
+          style={{ background: loading ? '#f59e0b' : reasoning ? '#22c55e' : 'var(--border)' }} />
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {/* Empty state */}
-        {!analysis && !loading && (
+        {!reasoning && !loading && (
           <div className="text-center py-8">
             <div className="text-3xl mb-2 opacity-20">🔍</div>
             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-              Analysis appears after you add evidence
+              Reasoning summary appears after evidence is added
             </p>
           </div>
         )}
 
+        {/* Loading skeleton */}
         {loading && (
           <div className="space-y-3 animate-pulse">
-            {[80, 60, 90, 50].map((w, i) => (
+            {[80, 60, 90, 50, 70].map((w, i) => (
               <div key={i} className="h-4 rounded-lg" style={{ width: `${w}%`, background: 'var(--border)' }} />
             ))}
           </div>
         )}
 
-        {analysis && !loading && (
+        {reasoning && !loading && (
           <>
-            {/* Primary hypothesis */}
-            <section>
-              <h3 className="text-xs font-semibold uppercase tracking-wider mb-2"
-                style={{ color: 'var(--text-muted)' }}>
-                Primary Hypothesis
-              </h3>
+            {/* Leading hypothesis */}
+            <Section title="Current Leading Hypothesis">
               <div className="rounded-xl p-3 border-l-4"
                 style={{ background: 'var(--brand-pale)', borderLeftColor: 'var(--brand)' }}>
                 <p className="text-sm font-medium mb-2" style={{ color: 'var(--text)' }}>
-                  {analysis.primary_hypothesis}
+                  {reasoning.leading_hypothesis}
                 </p>
-                <div className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Confidence</div>
-                <ConfidenceBar value={analysis.confidence} />
+                <div className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>
+                  Evidence support score
+                </div>
+                <SupportBar value={reasoning.evidence_support_score} />
               </div>
-            </section>
+            </Section>
 
-            {/* Missing Evidence */}
-            {analysis.missing_evidence.length > 0 && (
-              <section>
-                <h3 className="text-xs font-semibold uppercase tracking-wider mb-2"
-                  style={{ color: 'var(--text-muted)' }}>
-                  Missing Evidence
-                </h3>
+            {/* Supporting evidence */}
+            {reasoning.supporting_evidence.length > 0 && (
+              <Section title="Supporting Evidence">
                 <div className="space-y-1.5">
-                  {analysis.missing_evidence.map((item, i) => (
+                  {reasoning.supporting_evidence.map((e, i) => (
                     <div key={i} className="flex items-start gap-2 rounded-lg px-3 py-2"
-                      style={{ background: '#fffbeb', border: '1px solid #fde68a' }}>
-                      <span className="text-sm shrink-0">⚠</span>
-                      <span className="text-xs" style={{ color: '#92400e' }}>{item}</span>
+                      style={{ background: '#f0fdf4', border: '1px solid #bbf7d0' }}>
+                      <span className="text-xs shrink-0" style={{ color: '#15803d' }}>✓</span>
+                      <span className="text-xs" style={{ color: '#14532d' }}>{e}</span>
                     </div>
                   ))}
                 </div>
-              </section>
+              </Section>
+            )}
+
+            {/* Conflicting evidence */}
+            {reasoning.conflicting_evidence.length > 0 && (
+              <Section title="Conflicting Evidence">
+                <div className="space-y-1.5">
+                  {reasoning.conflicting_evidence.map((e, i) => (
+                    <div key={i} className="flex items-start gap-2 rounded-lg px-3 py-2"
+                      style={{ background: '#fef2f2', border: '1px solid #fecaca' }}>
+                      <span className="text-xs shrink-0" style={{ color: '#b91c1c' }}>⚡</span>
+                      <span className="text-xs" style={{ color: '#7f1d1d' }}>{e}</span>
+                    </div>
+                  ))}
+                </div>
+              </Section>
+            )}
+
+            {/* Missing evidence (diagnosis-linked) */}
+            {reasoning.missing_evidence.length > 0 && (
+              <Section title="Missing Evidence">
+                <div className="space-y-2">
+                  {reasoning.missing_evidence.map((m, i) => (
+                    <div key={i} className="rounded-xl p-3"
+                      style={{ background: '#fffbeb', border: '1px solid #fde68a' }}>
+                      <div className="flex items-start gap-2 mb-1">
+                        <span className="text-sm shrink-0">⚠</span>
+                        <span className="text-xs font-medium" style={{ color: '#92400e' }}>
+                          {m.test_or_type}
+                        </span>
+                      </div>
+                      <p className="text-xs ml-5" style={{ color: '#78350f' }}>{m.description}</p>
+                      <p className="text-xs ml-5 mt-0.5 italic" style={{ color: '#a16207' }}>
+                        Needed to clarify: {m.needed_for}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </Section>
             )}
 
             {/* Focus points */}
-            {analysis.focus_points.length > 0 && (
-              <section>
-                <h3 className="text-xs font-semibold uppercase tracking-wider mb-2"
-                  style={{ color: 'var(--text-muted)' }}>
-                  Focus
-                </h3>
+            {reasoning.focus_points.length > 0 && (
+              <Section title="Focus Points">
                 <div className="space-y-1.5">
-                  {analysis.focus_points.map((item, i) => (
+                  {reasoning.focus_points.map((f, i) => (
                     <div key={i} className="flex items-start gap-2 rounded-lg px-3 py-2"
                       style={{ background: 'var(--brand-pale)' }}>
                       <span className="text-xs mt-0.5 shrink-0" style={{ color: 'var(--brand)' }}>→</span>
-                      <span className="text-xs" style={{ color: 'var(--text)' }}>{item}</span>
+                      <span className="text-xs" style={{ color: 'var(--text)' }}>{f}</span>
                     </div>
                   ))}
                 </div>
-              </section>
+              </Section>
             )}
 
-            {/* Alternatives */}
-            {analysis.alternatives.length > 0 && (
-              <section>
-                <h3 className="text-xs font-semibold uppercase tracking-wider mb-2"
-                  style={{ color: 'var(--text-muted)' }}>
-                  Alternative Hypotheses
-                </h3>
+            {/* Alternative hypotheses */}
+            {reasoning.alternatives.length > 0 && (
+              <Section title="Alternative Hypotheses">
                 <div className="space-y-2">
-                  {analysis.alternatives.map((alt, i) => (
+                  {reasoning.alternatives.map((alt, i) => (
                     <div key={i} className="rounded-xl p-3"
                       style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
                       <div className="flex items-center justify-between mb-1.5">
@@ -128,35 +169,35 @@ export default function ReviewPanel({ analysis, loading, onGenerateReport, onCle
                         </span>
                         <span className="text-xs font-bold px-1.5 py-0.5 rounded-md"
                           style={{ background: 'var(--border)', color: 'var(--text-muted)' }}>
-                          {confPct(alt.confidence)}%
+                          {confPct(alt.evidence_support_score)}%
                         </span>
                       </div>
-                      <ConfidenceBar value={alt.confidence} />
+                      <SupportBar value={alt.evidence_support_score} />
                     </div>
                   ))}
                 </div>
-              </section>
+              </Section>
             )}
+
+            {/* Disclaimer */}
+            <p className="text-xs italic text-center px-2"
+              style={{ color: 'var(--text-light)', borderTop: '1px solid var(--border)', paddingTop: '8px' }}>
+              This is a reasoning aid, not a clinical decision. All conclusions must be verified by a qualified clinician.
+            </p>
           </>
         )}
       </div>
 
-      {/* Footer buttons */}
+      {/* Footer */}
       <div className="p-3 border-t space-y-2" style={{ borderColor: 'var(--border)' }}>
-        <button
-          onClick={onGenerateReport}
-          disabled={!analysis}
+        <button onClick={onGenerateReport} disabled={!reasoning}
           className="w-full py-2 rounded-xl text-sm font-semibold transition-all disabled:opacity-40"
-          style={{ background: 'var(--brand)', color: 'white' }}
-        >
+          style={{ background: 'var(--brand)', color: 'white' }}>
           Generate Report
         </button>
-        <button
-          onClick={onClear}
-          disabled={!analysis}
+        <button onClick={onClear} disabled={!reasoning}
           className="w-full py-2 rounded-xl text-sm transition-all disabled:opacity-30"
-          style={{ background: 'var(--surface-2)', color: 'var(--text-muted)' }}
-        >
+          style={{ background: 'var(--surface-2)', color: 'var(--text-muted)' }}>
           Clear Review
         </button>
       </div>

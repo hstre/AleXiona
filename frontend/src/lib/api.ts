@@ -1,54 +1,109 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
+// ── Enums ──────────────────────────────────────────────────────────────────
+
+export type ClaimType =
+  | 'symptom' | 'finding' | 'lab' | 'imaging'
+  | 'hypothesis' | 'diagnosis' | 'therapy' | 'risk_factor' | 'guideline'
+
+export type SourceType =
+  | 'clinician' | 'llm' | 'guideline'
+  | 'imaging_model' | 'lab_system' | 'imported_document'
+
+export type ClaimStatus = 'active' | 'resolved' | 'superseded'
+export type ClaimTrend  = 'improving' | 'worsening' | 'stable' | 'unknown'
+
+export type ConflictType     = 'competing_hypothesis' | 'negation' | 'evidence_mismatch' | 'timeline_gap'
+export type ConflictSeverity = 'error' | 'warning' | 'info'
+
+// ── Core models ─────────────────────────────────────────────────────────────
+
 export interface Relation {
   from_entity: string
-  to_entity: string
-  type: string
+  to_entity:   string
+  type:        string
 }
 
 export interface Claim {
-  text: string
-  entities: string[]
-  relations: Relation[]
-  confidence: number
-  tag: string
+  text:                   string
+  entities:               string[]
+  relations:              Relation[]
+  evidence_support_score: number
+  claim_type:             ClaimType
+  source_type:            SourceType
+  source_ref:             string
+  derived_from:           string[]
+  status:                 ClaimStatus
+  time_offset:            string | null
+  trend:                  ClaimTrend
 }
 
-export interface ChatMessage {
-  role: 'user' | 'assistant'
-  content: string
+export interface Alternative {
+  label:                  string
+  evidence_support_score: number
+  supporting_claim_ids:   string[]
 }
 
-export interface AnalysisResult {
-  primary_hypothesis: string
-  confidence: number
-  alternatives: { label: string; confidence: number }[]
-  missing_evidence: string[]
-  focus_points: string[]
+export interface MissingEvidence {
+  description:  string
+  needed_for:   string
+  test_or_type: string
 }
 
-export interface ChatResponse {
-  reply: string
-  claims: Claim[]
-  session_id: string
-  analysis: AnalysisResult | null
+export interface ReasoningResult {
+  leading_hypothesis:     string
+  supporting_evidence:    string[]
+  conflicting_evidence:   string[]
+  evidence_support_score: number
+  alternatives:           Alternative[]
+  missing_evidence:       MissingEvidence[]
+  focus_points:           string[]
 }
+
+export interface Conflict {
+  id:                  string
+  type:                ConflictType
+  severity:            ConflictSeverity
+  message:             string
+  affected_claim_ids:  string[]
+}
+
+export interface CounterfactualShift {
+  hypothesis:   string
+  score_before: number
+  score_after:  number
+}
+
+export interface CounterfactualResult {
+  excluded_claim_text: string
+  changed_evidence:    string[]
+  shifts:              CounterfactualShift[]
+  reasoning_trace:     string
+}
+
+// ── Graph ────────────────────────────────────────────────────────────────────
 
 export interface GraphNode {
-  id: string
-  label: string
-  type: 'Claim' | 'Entity'
-  fullText?: string
-  claimId?: string
-  confidence?: number
-  tag?: string
+  id:                     string
+  label:                  string
+  type:                   'Claim' | 'Entity'
+  fullText?:              string
+  claimId?:               string
+  evidence_support_score?: number
+  claim_type?:            ClaimType
+  source_type?:           SourceType
+  source_ref?:            string
+  status?:                ClaimStatus
+  time_offset?:           string | null
+  trend?:                 ClaimTrend
+  created_at?:            string
 }
 
 export interface GraphEdge {
-  id: string
+  id:     string
   source: string
   target: string
-  label: string
+  label:  string
 }
 
 export interface GraphData {
@@ -56,10 +111,30 @@ export interface GraphData {
   edges: GraphEdge[]
 }
 
+// ── Chat ─────────────────────────────────────────────────────────────────────
+
+export interface ChatMessage {
+  role:    'user' | 'assistant'
+  content: string
+}
+
+export interface ChatResponse {
+  reply:      string
+  claims:     Claim[]
+  session_id: string
+  reasoning:  ReasoningResult | null
+  conflicts:  Conflict[]
+}
+
+export interface SessionInfo {
+  session_id:  string
+  claim_count: number
+}
+
+// ── API calls ─────────────────────────────────────────────────────────────────
+
 export async function sendMessage(
-  message: string,
-  sessionId: string,
-  history: ChatMessage[]
+  message: string, sessionId: string, history: ChatMessage[]
 ): Promise<ChatResponse> {
   const res = await fetch(`${API_URL}/api/chat`, {
     method: 'POST',
@@ -85,16 +160,28 @@ export async function updateClaim(claimId: string, text: string): Promise<void> 
   if (!res.ok) throw new Error(await res.text())
 }
 
-export async function deleteClaim(claimId: string): Promise<void> {
-  const res = await fetch(`${API_URL}/api/graph/claim/${claimId}`, {
-    method: 'DELETE',
+export async function updateClaimStatus(claimId: string, status: ClaimStatus): Promise<void> {
+  const res = await fetch(`${API_URL}/api/graph/claim/${claimId}/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
   })
   if (!res.ok) throw new Error(await res.text())
 }
 
-export interface SessionInfo {
-  session_id: string
-  claim_count: number
+export async function deleteClaim(claimId: string): Promise<void> {
+  const res = await fetch(`${API_URL}/api/graph/claim/${claimId}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(await res.text())
+}
+
+export async function runCounterfactual(
+  sessionId: string, claimId: string
+): Promise<CounterfactualResult> {
+  const res = await fetch(`${API_URL}/api/graph/${sessionId}/counterfactual/${claimId}`, {
+    method: 'POST',
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
 }
 
 export async function listSessions(): Promise<SessionInfo[]> {
