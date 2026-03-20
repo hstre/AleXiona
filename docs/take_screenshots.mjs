@@ -65,6 +65,21 @@ const CONFLICTS = [
   { id: 'c1', severity: 'warning', message: 'Therapiebeginn ohne explizite Indikations-Claim (Antikoagulation → Lungenembolie-Hypothese)', affected_claim_ids: ['e5','e6'], rule: 'therapy_without_indication' },
 ]
 
+const HYPOTHESIS_COUNTERFACTUAL = {
+  hypothesis: 'Lungenembolie (segmentale Ast-Embolie rechts)',
+  required_changes: [
+    'CT-Angio müsste keinen Embolus zeigen (aktuell: segmentaler Befund re. Unterlappenarterie)',
+    'D-Dimer müsste normwertig sein (aktuell: 4.2 µg/ml — 4× oberhalb Grenzwert)',
+    'Tachykardie müsste fehlen oder anderweitig erklärt sein',
+  ],
+  critical_evidence: [
+    'CT-Angio: Segmentaler Embolus re. Unterlappenarterie (Quelle: Bildgebungs-KI, sehr hohe Evidenz)',
+    'D-Dimer 4.2 µg/ml erhöht (Quelle: Laborsystem, Gewicht ×1.5)',
+  ],
+  alternative_if_false: 'Herzinsuffizienz würde zur führenden Hypothese (Score 0.32 → 0.58)',
+  reasoning_trace: 'Der bildgebende Nachweis ist das entscheidende Kriterium. Ohne CT-Befund und erhöhten D-Dimer verliert die Lungenembolie-Diagnose ihren objektiven Rückhalt — die klinischen Zeichen (Dyspnoe, Tachykardie) wären dann mit Herzinsuffizienz vereinbar.',
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 // The frontend calls http://localhost:8000 (NEXT_PUBLIC_API_URL default)
@@ -94,7 +109,7 @@ async function mockRoutes(page) {
     r.fulfill({ status: 200, contentType: 'text/event-stream',
       body: `data: ${doneEvent}\n\n` }))
 
-  // counterfactual
+  // evidence-node counterfactual (broad — registered first so specific takes priority)
   await page.route(`${API}/api/graph/${SESSION}/counterfactual/**`, r =>
     r.fulfill({ json: {
       excluded_claim_text: 'D-Dimer 4.2 µg/ml (erhöht)',
@@ -117,6 +132,11 @@ async function mockRoutes(page) {
   // graph data (most specific — registered LAST so it wins)
   await page.route(`${API}/api/graph/${SESSION}`, r =>
     r.fulfill({ json: GRAPH }))
+
+  // hypothesis counterfactual — MUST be registered last (after broad counterfactual/**)
+  // so it wins in Playwright's LIFO route matching
+  await page.route(`${API}/api/graph/${SESSION}/counterfactual/hypothesis`, r =>
+    r.fulfill({ json: HYPOTHESIS_COUNTERFACTUAL }))
 }
 
 async function injectSession(page) {
@@ -160,9 +180,20 @@ async function shoot(page, name, fn) {
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 ;(async () => {
-  const browser = await chromium.launch({ headless: true })
+  const browser = await chromium.launch({
+    headless: true,
+    args: [
+      '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
+      '--disable-web-security', '--font-render-hinting=none',
+    ],
+  })
   const ctx     = await browser.newContext({ viewport: { width: 1400, height: 860 } })
   const page    = await ctx.newPage()
+
+  // Block external font/analytics requests that stall in offline environments
+  await page.route('https://fonts.googleapis.com/**', r => r.abort())
+  await page.route('https://fonts.gstatic.com/**', r => r.abort())
+  await page.route('https://*.google-analytics.com/**', r => r.abort())
 
   await mockRoutes(page)
 
@@ -170,7 +201,7 @@ async function shoot(page, name, fn) {
   await ctx.addInitScript(sid => { localStorage.setItem('alexiona_session', sid) }, SESSION)
 
   console.log('Opening app…')
-  await page.goto(BASE, { waitUntil: 'networkidle', timeout: 30000 })
+  await page.goto(BASE, { waitUntil: 'commit', timeout: 30000 })
   await page.waitForTimeout(4000)
 
   // Trigger a chat message so the app receives reasoning + conflicts
@@ -230,6 +261,22 @@ async function shoot(page, name, fn) {
     const btn = page.locator('button').filter({ hasText: '◈ Graph' }).first()
     if (await btn.count() > 0) await btn.click()
     await page.waitForTimeout(400)
+  })
+
+  // 8. Hypothesis counterfactual expanded ("What would refute this?")
+  await shoot(page, '08_hypothesis_counterfactual', async () => {
+    // Make sure we're on the Graph tab so ReviewPanel is visible
+    const graphBtn = page.locator('button').filter({ hasText: '◈ Graph' }).first()
+    if (await graphBtn.count() > 0) await graphBtn.click()
+    await page.waitForTimeout(800)
+    // Click "What would refute this?" button in the ReviewPanel
+    const refuteBtn = page.locator('button').filter({ hasText: /refute/i }).first()
+    const visible = await refuteBtn.isVisible({ timeout: 4000 }).catch(() => false)
+    if (visible) {
+      await refuteBtn.click()
+      // wait for mock API response + render
+      await page.waitForTimeout(2500)
+    }
   })
 
   await browser.close()
