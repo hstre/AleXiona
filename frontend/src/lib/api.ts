@@ -36,6 +36,8 @@ export interface Claim {
   status:                 ClaimStatus
   time_offset:            string | null
   trend:                  ClaimTrend
+  created_at?:            string
+  claimId?:               string
 }
 
 export interface Alternative {

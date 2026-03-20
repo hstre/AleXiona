@@ -123,8 +123,18 @@ Respond ONLY with valid JSON:
 
 # ── Retry helper ──────────────────────────────────────────────────────────────
 
-def _llm_json(messages: list[dict], temperature: float = 0.1, max_retries: int = 2) -> dict:
-    """Call OpenAI with JSON mode, retrying up to max_retries times on parse/schema errors."""
+def _llm_json(
+    messages: list[dict],
+    temperature: float = 0.1,
+    max_retries: int = 2,
+    validate_fn=None,
+) -> dict:
+    """Call OpenAI with JSON mode, retrying on parse OR schema validation errors.
+
+    Args:
+        validate_fn: Optional callable that receives the parsed dict and raises
+                     ValidationError (or any Exception) if the schema is wrong.
+    """
     last_err: Exception | None = None
     for attempt in range(max_retries + 1):
         try:
@@ -134,13 +144,19 @@ def _llm_json(messages: list[dict], temperature: float = 0.1, max_retries: int =
                 response_format={"type": "json_object"},
                 temperature=temperature,
             )
-            return json.loads(response.choices[0].message.content)
-        except (json.JSONDecodeError, KeyError) as e:
+            data = json.loads(response.choices[0].message.content)
+            if validate_fn is not None:
+                validate_fn(data)   # raises ValidationError on schema mismatch
+            return data
+        except (json.JSONDecodeError, KeyError, ValidationError) as e:
             last_err = e
             if attempt < max_retries:
-                log.warning("LLM JSON attempt %d/%d failed (%s), retrying…", attempt + 1, max_retries + 1, e)
+                log.warning(
+                    "LLM JSON attempt %d/%d failed (%s: %s), retrying…",
+                    attempt + 1, max_retries + 1, type(e).__name__, e,
+                )
                 time.sleep(0.5 * (attempt + 1))
-        except Exception as e:
+        except Exception:
             # Non-parsing errors (network, rate limit, etc.) propagate immediately
             raise
     log.error("LLM JSON call failed after %d attempts: %s", max_retries + 1, last_err)
@@ -149,6 +165,11 @@ def _llm_json(messages: list[dict], temperature: float = 0.1, max_retries: int =
 
 # ── Functions ─────────────────────────────────────────────────────────────────
 
+def _validate_extraction_schema(data: dict) -> None:
+    """Raise ValidationError if data doesn't match ClaimExtractionResult schema."""
+    ClaimExtractionResult.model_validate(data)
+
+
 def extract_claims(text: str) -> ClaimExtractionResult:
     data = _llm_json(
         messages=[
@@ -156,6 +177,7 @@ def extract_claims(text: str) -> ClaimExtractionResult:
             {"role": "user", "content": text},
         ],
         temperature=0.1,
+        validate_fn=_validate_extraction_schema,
     )
     if not data:
         return ClaimExtractionResult(claims=[])

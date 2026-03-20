@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react'
 import type { Claim, ChatMessage, ClaimStatus, ReasoningResult, Conflict } from '@/lib/api'
 import { patchClaim, streamMessage } from '@/lib/api'
-import { confColor, confPct, getTypeMeta, STATUS_META, TREND_META } from '@/lib/utils'
+import { getTypeMeta, STATUS_META, TREND_META, essLabel, ESS_LABEL_META } from '@/lib/utils'
 
 interface Props {
   sessionId:      string
@@ -127,12 +127,12 @@ export default function DataPanel({
         )}
 
         {visible.map((claim, i) => {
-          const meta   = getTypeMeta(claim.claim_type)
-          const pct    = confPct(claim.evidence_support_score)
-          const color  = confColor(claim.evidence_support_score)
-          const trend  = TREND_META[claim.trend ?? 'unknown']
-          const status = STATUS_META[claim.status ?? 'active']
-          const dimmed = claim.status === 'superseded' || claim.status === 'resolved'
+          const meta    = getTypeMeta(claim.claim_type)
+          const level   = essLabel(claim.evidence_support_score)
+          const essMeta = ESS_LABEL_META[level]
+          const trend   = TREND_META[claim.trend ?? 'unknown']
+          const status  = STATUS_META[claim.status ?? 'active']
+          const dimmed  = claim.status === 'superseded' || claim.status === 'resolved'
 
           return (
             <div key={i}
@@ -143,31 +143,37 @@ export default function DataPanel({
                 boxShadow:       'var(--shadow-sm)',
                 opacity:         dimmed ? 0.6 : 1,
               }}>
-              <div className="flex items-center gap-1.5 mb-2">
+
+              {/* Row 1: type + time + ess label */}
+              <div className="flex items-center gap-1.5 mb-2 flex-wrap">
                 <span className="text-xs font-medium px-1.5 py-0.5 rounded-md"
                   style={{ background: meta.bg, color: meta.text }}>
                   {meta.icon} {meta.label}
                 </span>
                 {claim.time_offset && (
-                  <span className="text-xs px-1.5 py-0.5 rounded-md"
+                  <span className="text-xs px-1.5 py-0.5 rounded-md font-mono"
                     style={{ background: 'var(--surface-2)', color: 'var(--text-muted)' }}>
                     {claim.time_offset}
                   </span>
                 )}
                 <div className="ml-auto flex items-center gap-1.5">
-                  <span className="text-xs font-bold" style={{ color: trend.color }}>
-                    {trend.icon}
+                  <span className="text-xs" style={{ color: trend.color }} title={`Trend: ${claim.trend ?? 'unknown'}`}>
+                    {trend.icon} {claim.trend ?? 'unknown'}
                   </span>
-                  <span className="text-xs font-bold tabular-nums" style={{ color }}>
-                    {pct}%
+                  <span className="text-xs font-medium px-1.5 py-0.5 rounded-md"
+                    title="Internal evidence support score — not a diagnostic probability"
+                    style={{ background: essMeta.bg, color: essMeta.text }}>
+                    {level} evidence
                   </span>
                 </div>
               </div>
 
+              {/* Claim text */}
               <p className="text-xs leading-relaxed mb-2" style={{ color: 'var(--text)' }}>
                 {claim.text}
               </p>
 
+              {/* Entities */}
               {claim.entities.length > 0 && (
                 <div className="flex flex-wrap gap-1 mb-2">
                   {claim.entities.map((e, j) => (
@@ -179,18 +185,36 @@ export default function DataPanel({
                 </div>
               )}
 
-              <div className="flex items-center justify-between">
-                <span className="text-xs" style={{ color: 'var(--text-light)' }}>
+              {/* Provenance row */}
+              <div className="flex items-center justify-between text-xs mb-1">
+                <span style={{ color: 'var(--text-light)' }}>
                   {claim.source_type}{claim.source_ref ? ` · ${claim.source_ref}` : ''}
                 </span>
-                <span className="text-xs" style={{ color: status.color }}>{status.label}</span>
+                <span style={{ color: status.color }}>{status.label}</span>
               </div>
 
-              <div className="mt-2 h-1 rounded-full overflow-hidden"
-                style={{ background: 'var(--border-light)' }}>
-                <div className="h-full rounded-full transition-all"
-                  style={{ width: `${pct}%`, background: color }} />
-              </div>
+              {/* created_at + derived_from */}
+              {(claim.created_at || (claim.derived_from?.length ?? 0) > 0) && (
+                <div className="mt-1.5 pt-1.5 border-t space-y-1"
+                  style={{ borderColor: 'var(--border)' }}>
+                  {claim.created_at && (
+                    <p className="text-xs" style={{ color: 'var(--text-light)' }}>
+                      {new Date(claim.created_at).toLocaleString()}
+                    </p>
+                  )}
+                  {(claim.derived_from?.length ?? 0) > 0 && (
+                    <div className="flex flex-wrap gap-1 items-center">
+                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>possible rel.:</span>
+                      {claim.derived_from!.map((id, j) => (
+                        <span key={j} className="text-xs px-1 py-0.5 rounded font-mono"
+                          style={{ background: '#f5f3ff', color: '#7c3aed' }}>
+                          {id.slice(0, 8)}…
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )
         })}

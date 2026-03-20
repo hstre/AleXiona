@@ -4,7 +4,7 @@ Tests cover:
 - _key_terms() helper
 - get_db() singleton behaviour (mocked driver)
 - Neo4jClient.update_claim() field mapping
-- link_derived_from() key-term overlap logic
+- link_possible_related() key-term overlap logic
 """
 import json
 from unittest.mock import MagicMock, patch, call
@@ -136,7 +136,7 @@ def test_update_claim_noop_when_empty():
     session.run.assert_not_called()
 
 
-# ── link_derived_from ─────────────────────────────────────────────────────────
+# ── link_possible_related ─────────────────────────────────────────────────────────
 
 def _make_session_rows(rows):
     """Return a mock Neo4j session whose .run().data() yields rows."""
@@ -152,7 +152,7 @@ def _make_session_rows(rows):
     return mock_driver, mock_session
 
 
-def test_link_derived_from_skips_when_no_old_claims():
+def test_link_possible_related_skips_when_no_old_claims():
     import neo4j_client as nc
     with patch.object(nc.Neo4jClient, '__init__', return_value=None):
         client = nc.Neo4jClient.__new__(nc.Neo4jClient)
@@ -162,13 +162,13 @@ def test_link_derived_from_skips_when_no_old_claims():
     client.driver = driver
 
     # Only one claim (the new one) — no existing claims to link from
-    client.link_derived_from(["new-1"], "sess-1")
+    client.link_possible_related(["new-1"], "sess-1")
     # Should only run the initial MATCH, no SET or MERGE
     set_calls = [c for c in session.run.call_args_list if "SET" in str(c)]
     assert len(set_calls) == 0
 
 
-def test_link_derived_from_links_when_overlap():
+def test_link_possible_related_links_when_overlap():
     import neo4j_client as nc
     with patch.object(nc.Neo4jClient, '__init__', return_value=None):
         client = nc.Neo4jClient.__new__(nc.Neo4jClient)
@@ -180,15 +180,15 @@ def test_link_derived_from_links_when_overlap():
     driver, session = _make_session_rows(rows)
     client.driver = driver
 
-    client.link_derived_from(["new-1"], "sess-1")
+    client.link_possible_related(["new-1"], "sess-1")
 
-    # Expect SET call for derived_from JSON and MERGE for DERIVES_FROM edge
+    # link_possible_related only creates the graph edge, never writes derived_from property
     all_calls = [str(c) for c in session.run.call_args_list]
-    assert any("SET" in c and "derived_from" in c for c in all_calls)
-    assert any("DERIVES_FROM" in c for c in all_calls)
+    assert any("POSSIBLE_RELATED" in c for c in all_calls)
+    assert not any("SET" in c and "derived_from" in c for c in all_calls)
 
 
-def test_link_derived_from_no_link_when_insufficient_overlap():
+def test_link_possible_related_no_link_when_insufficient_overlap():
     import neo4j_client as nc
     with patch.object(nc.Neo4jClient, '__init__', return_value=None):
         client = nc.Neo4jClient.__new__(nc.Neo4jClient)
@@ -200,16 +200,16 @@ def test_link_derived_from_no_link_when_insufficient_overlap():
     driver, session = _make_session_rows(rows)
     client.driver = driver
 
-    client.link_derived_from(["new-1"], "sess-1")
+    client.link_possible_related(["new-1"], "sess-1")
 
     all_calls = [str(c) for c in session.run.call_args_list]
-    assert not any("DERIVES_FROM" in c for c in all_calls)
+    assert not any("POSSIBLE_RELATED" in c for c in all_calls)
 
 
-def test_link_derived_from_noop_when_empty_list():
+def test_link_possible_related_noop_when_empty_list():
     import neo4j_client as nc
     with patch.object(nc.Neo4jClient, '__init__', return_value=None):
         client = nc.Neo4jClient.__new__(nc.Neo4jClient)
     client.driver = MagicMock()
-    client.link_derived_from([], "sess-1")
+    client.link_possible_related([], "sess-1")
     client.driver.session.assert_not_called()

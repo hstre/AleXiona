@@ -35,8 +35,7 @@ async def add_manual_claim(session_id: str, payload: ManualClaimPayload):
             time_offset=payload.time_offset,
             trend=payload.trend,
         )
-        new_ids = db.store_claims([claim], session_id)
-        db.link_derived_from(new_ids, session_id)
+        db.store_claims([claim], session_id)
         return {"status": "created"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

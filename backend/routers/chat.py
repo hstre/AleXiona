@@ -24,10 +24,8 @@ async def chat(request: ChatRequest):
     try:
         extraction = extract_claims(request.message)
 
-        new_ids: list[str] = []
         if extraction.claims:
-            new_ids = db.store_claims(extraction.claims, request.session_id)
-            db.link_derived_from(new_ids, request.session_id)
+            db.store_claims(extraction.claims, request.session_id)
 
         all_claims    = db.get_all_claims_for_session(request.session_id)
         graph_context = db.get_context_for_query(request.session_id)
@@ -70,13 +68,9 @@ async def chat_stream(request: ChatRequest):
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
             return
 
-        new_ids: list[str] = []
         if extraction.claims:
-            new_ids = await loop.run_in_executor(
-                _executor, db.store_claims, extraction.claims, request.session_id
-            )
             await loop.run_in_executor(
-                _executor, db.link_derived_from, new_ids, request.session_id
+                _executor, db.store_claims, extraction.claims, request.session_id
             )
 
         # 2. Emit extracted claims immediately (so UI can refresh graph early)

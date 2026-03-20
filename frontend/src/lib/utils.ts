@@ -8,6 +8,16 @@ export const confColor = (c: number): string  =>
   c >= 0.75 ? '#22c55e' : c >= 0.5 ? '#f59e0b' : '#ef4444'
 export const confPct   = (c: number): number  => Math.round(c * 100)
 
+/** Human-readable evidence support label — never implies diagnostic probability. */
+export const essLabel = (c: number): 'low' | 'moderate' | 'strong' =>
+  c >= 0.75 ? 'strong' : c >= 0.5 ? 'moderate' : 'low'
+
+export const ESS_LABEL_META: Record<'low' | 'moderate' | 'strong', { bg: string; text: string }> = {
+  low:      { bg: '#fef2f2', text: '#b91c1c' },
+  moderate: { bg: '#fffbeb', text: '#92400e' },
+  strong:   { bg: '#f0fdf4', text: '#14532d' },
+}
+
 // ── Claim Type ───────────────────────────────────────────────────────────────
 
 export interface TypeMeta {

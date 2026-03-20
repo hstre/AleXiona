@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { GraphData, GraphNode, ClaimType, ClaimStatus, CounterfactualResult } from '@/lib/api'
 import { patchClaim, deleteClaim, runCounterfactual } from '@/lib/api'
-import { getTypeMeta, STATUS_META, TREND_META, confColor, confPct, CLAIM_TYPE_META } from '@/lib/utils'
+import { getTypeMeta, STATUS_META, TREND_META, confColor, confPct, essLabel, ESS_LABEL_META, CLAIM_TYPE_META } from '@/lib/utils'
 
 interface Props {
   data:             GraphData
@@ -84,6 +84,16 @@ const NODE_STYLES = [
       width: 1.5, 'line-color': '#a78bfa', 'target-arrow-color': '#a78bfa',
       label: 'derives from', color: '#7c3aed', 'font-size': '9px',
       'text-background-color': '#f5f3ff', 'text-background-opacity': 1,
+      'text-background-padding': '2px',
+    },
+  },
+  {
+    selector: 'edge[label="possible_related"]',
+    style: {
+      'line-style': 'dotted', 'line-dash-pattern': [2, 4],
+      width: 1, 'line-color': '#d1d5db', 'target-arrow-color': '#d1d5db',
+      label: 'possible rel.', color: '#9ca3af', 'font-size': '9px',
+      'text-background-color': '#f9fafb', 'text-background-opacity': 1,
       'text-background-padding': '2px',
     },
   },
@@ -271,7 +281,11 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
             </div>
             <div className="flex items-center gap-2">
               <div className="w-4 h-0.5 rounded shrink-0" style={{ background: '#a78bfa' }} />
-              <span className="text-xs" style={{ color: 'var(--text-muted)' }}>derives from</span>
+              <span className="text-xs" style={{ color: 'var(--text-muted)' }}>derives from (explicit)</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-0.5 shrink-0" style={{ background: '#d1d5db', borderTop: '1px dotted #9ca3af' }} />
+              <span className="text-xs" style={{ color: 'var(--text-muted)' }}>possible related (heuristic)</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-3 h-3 rounded-sm shrink-0"
@@ -332,10 +346,13 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
 
                   {/* ESS slider */}
                   <div>
-                    <div className="flex justify-between mb-1">
-                      <span style={{ color: 'var(--text-muted)' }}>Evidence support</span>
-                      <span className="font-bold" style={{ color: confColor(editEss) }}>
-                        {confPct(editEss)}%
+                    <div className="flex justify-between items-center mb-1">
+                      <span style={{ color: 'var(--text-muted)' }}>Evidence support
+                        <span className="ml-1 opacity-50">(not probability)</span>
+                      </span>
+                      <span className="text-xs font-medium px-1.5 py-0.5 rounded-md"
+                        style={{ background: ESS_LABEL_META[essLabel(editEss)].bg, color: ESS_LABEL_META[essLabel(editEss)].text }}>
+                        {essLabel(editEss)} · {confPct(editEss)}%
                       </span>
                     </div>
                     <input type="range" min={0} max={100}

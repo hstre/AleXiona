@@ -104,8 +104,11 @@ class Neo4jClient:
 
         return claim_ids
 
-    def link_derived_from(self, new_claim_ids: list[str], session_id: str) -> None:
-        """Heuristic: link new claims to existing session claims with >= 2 shared key terms."""
+    def link_possible_related(self, new_claim_ids: list[str], session_id: str) -> None:
+        """Heuristic: create POSSIBLE_RELATED edges to existing session claims with >= 2 shared key terms.
+        This is NOT the same as epistemic derivation. Edges are labelled `possible_related`
+        and must be reviewed before treating them as actual clinical reasoning chains.
+        """
         if not new_claim_ids:
             return
         new_id_set = set(new_claim_ids)
@@ -126,16 +129,12 @@ class Neo4jClient:
                 ]
                 if not sources:
                     continue
-                s.run(
-                    "MATCH (c:Claim {id: $id}) SET c.derived_from = $df",
-                    id=nc["id"], df=json.dumps(sources),
-                )
                 for src_id in sources:
                     s.run(
                         """
                         MATCH (nc:Claim {id: $nc_id})
                         MATCH (oc:Claim {id: $oc_id})
-                        MERGE (nc)-[:DERIVES_FROM]->(oc)
+                        MERGE (nc)-[:POSSIBLE_RELATED]->(oc)
                         """,
                         nc_id=nc["id"], oc_id=src_id,
                     )
@@ -265,16 +264,15 @@ class Neo4jClient:
                         "label": r["type"],
                     }
 
-            # DERIVES_FROM edges between Claims
+            # DERIVES_FROM (legacy) and POSSIBLE_RELATED edges between Claims
             result3 = s.run(
                 """
-                MATCH (c1:Claim {session_id: $session_id})-[r:DERIVES_FROM]->(c2:Claim {session_id: $session_id})
-                RETURN c1.id AS c1_id, c2.id AS c2_id, r.element_id AS rid
+                MATCH (c1:Claim {session_id: $session_id})-[r:DERIVES_FROM|POSSIBLE_RELATED]->(c2:Claim {session_id: $session_id})
+                RETURN c1.id AS c1_id, c2.id AS c2_id, type(r) AS rel_type
                 """,
                 session_id=session_id,
             )
             for record in result3:
-                # Use the c1 element_id by looking it up in nodes
                 src_elem = next(
                     (k for k, v in nodes.items()
                      if v.get("type") == "Claim" and v.get("claimId") == record["c1_id"]),
@@ -286,12 +284,13 @@ class Neo4jClient:
                     None,
                 )
                 if src_elem and tgt_elem:
-                    eid = f"df-{record['c1_id']}-{record['c2_id']}"
+                    label = "possible_related" if record["rel_type"] == "POSSIBLE_RELATED" else "derives_from"
+                    eid = f"{label}-{record['c1_id']}-{record['c2_id']}"
                     if eid not in edges:
                         edges[eid] = {
                             "id": eid,
                             "source": src_elem, "target": tgt_elem,
-                            "label": "derives_from",
+                            "label": label,
                         }
 
         return GraphData(nodes=list(nodes.values()), edges=list(edges.values()))
