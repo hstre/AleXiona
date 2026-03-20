@@ -181,24 +181,21 @@ export default function DataPanel({
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="panel-header shrink-0">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="font-semibold text-sm tracking-tight" style={{ color: 'var(--text)' }}>
-              Patient Data
-            </span>
-            <span className="badge badge-blue">{allClaims.length}</span>
-          </div>
-          <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Evidence nodes</p>
+      <div className="px-4 py-3 border-b shrink-0" style={{ borderColor: 'var(--border)' }}>
+        <div className="flex items-center justify-between mb-2">
+          <span className="font-semibold text-sm">Evidence Nodes</span>
+          <span className="text-xs px-2 py-0.5 rounded-full font-medium"
+            style={{ background: 'var(--brand-pale)', color: 'var(--brand)' }}>
+            {allClaims.length}
+          </span>
         </div>
-        <div className="flex gap-1 p-0.5 rounded-lg" style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+        <div className="flex gap-1">
           {(['all', 'active', 'superseded'] as const).map(f => (
             <button key={f} onClick={() => setFilter(f)}
-              className="text-xs px-2 py-0.5 rounded-md capitalize transition-all"
+              className="text-xs px-2 py-0.5 rounded-md capitalize transition-colors"
               style={{
-                background: filter === f ? 'var(--brand)' : 'transparent',
+                background: filter === f ? 'var(--brand)' : 'var(--surface-2)',
                 color:      filter === f ? 'white' : 'var(--text-muted)',
-                boxShadow:  filter === f ? '0 1px 4px rgba(59,142,234,0.4)' : 'none',
               }}>
               {f}
             </button>
@@ -416,7 +413,8 @@ export default function DataPanel({
                     <div className="flex flex-wrap gap-1 items-center">
                       <span className="text-xs" style={{ color: 'var(--text-muted)' }}>possible rel.:</span>
                       {claim.derived_from!.map((id, j) => (
-                        <span key={j} className="text-xs px-1 py-0.5 rounded font-mono badge badge-muted">
+                        <span key={j} className="text-xs px-1 py-0.5 rounded font-mono"
+                          style={{ background: '#f5f3ff', color: '#7c3aed' }}>
                           {id.slice(0, 8)}…
                         </span>
                       ))}
@@ -456,13 +454,13 @@ export default function DataPanel({
       )}
 
       {/* Input */}
-      <div className="p-3 border-t shrink-0" style={{ borderColor: 'var(--border-light)' }}>
-        <div className="rounded-xl overflow-hidden"
+      <div className="p-3 border-t shrink-0" style={{ borderColor: 'var(--border)' }}>
+        <div className="rounded-xl overflow-hidden shadow-sm"
           style={{
             border: `1px solid ${loading ? 'var(--brand)' : 'var(--border)'}`,
-            background: 'var(--bg-secondary)',
+            background: 'var(--surface)',
             transition: 'border-color 0.15s, box-shadow 0.15s',
-            boxShadow: loading ? '0 0 0 3px var(--brand-glow)' : 'none',
+            boxShadow: loading ? `0 0 0 3px var(--brand-glow)` : 'var(--shadow-sm)',
           }}>
           <textarea
             ref={textareaRef}
@@ -476,14 +474,17 @@ export default function DataPanel({
           />
           <div className="flex items-center justify-between px-3 pb-2">
             <span className="text-xs" style={{ color: 'var(--text-light)' }}>
-              ↵ analyse · ⇧↵ newline
+              Enter to analyse · Shift+Enter newline
             </span>
             <button onClick={send} disabled={!input.trim() || loading}
-              className="btn-primary flex items-center gap-1.5 py-1"
-              style={{ fontSize: '12px', padding: '5px 12px' }}>
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-all"
+              style={{
+                background: input.trim() && !loading ? 'var(--brand)' : 'var(--border)',
+                color:      input.trim() && !loading ? 'white' : 'var(--text-muted)',
+              }}>
               {loading
                 ? <span className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin" />
-                : <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                     <line x1="22" y1="2" x2="11" y2="13" />
                     <polygon points="22 2 15 22 11 13 2 9 22 2" />
                   </svg>}

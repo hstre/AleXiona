@@ -684,7 +684,8 @@ export default function Home() {
             </svg>
           </button>
           <button onClick={newSession}
-            className="hidden sm:flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg btn-ghost">
+            className="hidden sm:flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg border hover:bg-gray-50"
+            style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}>
             + New
           </button>
           <div className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold text-white"
@@ -696,8 +697,8 @@ export default function Home() {
 
       {/* ── Search bar ────────────────────────────────────────────────────── */}
       {showSearch && (
-        <div className="px-4 py-2 border-b shrink-0 flex items-center gap-2.5"
-          style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border)' }}>
+        <div className="px-4 py-2 border-b shrink-0 flex items-center gap-2"
+          style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2">
             <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
           </svg>
@@ -705,19 +706,19 @@ export default function Home() {
             ref={searchInputRef}
             autoFocus
             type="text"
-            placeholder="Search claims and entities…"
+            placeholder="Search claims and entities… (/ to focus)"
             className="flex-1 outline-none text-sm bg-transparent"
             style={{ color: 'var(--text)' }}
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
           />
           {searchQuery && (
-            <span className="text-xs px-2 py-0.5 rounded-md" style={{ background: 'var(--surface-2)', color: 'var(--text-muted)' }}>
-              {filteredGraph.nodes.filter(n => n.type === 'Claim').length} results
-            </span>
+            <button onClick={() => setSearchQuery('')} style={{ color: 'var(--text-muted)' }}>✕</button>
           )}
           {searchQuery && (
-            <button onClick={() => setSearchQuery('')} className="text-xs px-1.5" style={{ color: 'var(--text-muted)' }}>✕</button>
+            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              {filteredGraph.nodes.filter(n => n.type === 'Claim').length} results
+            </span>
           )}
         </div>
       )}
@@ -728,7 +729,7 @@ export default function Home() {
         {/* LEFT: Evidence Nodes */}
         <div className={`border-r shrink-0 md:flex flex-col overflow-hidden
             ${activePanel === 'data' ? 'flex flex-1' : 'hidden'} md:w-72`}
-          style={{ background: 'var(--surface)', borderColor: 'var(--border-light)' }}>
+          style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
           <DataPanel
             key={sessionId}
             sessionId={sessionId}
@@ -930,7 +931,7 @@ export default function Home() {
         {/* RIGHT: Clinical Reasoning */}
         <div className={`border-l shrink-0 md:flex flex-col overflow-hidden
             ${activePanel === 'review' ? 'flex flex-1' : 'hidden'} md:w-72`}
-          style={{ borderColor: 'var(--border-light)' }}>
+          style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
           <ReviewPanel
             reasoning={reasoning}
             loading={false}
