@@ -27,7 +27,7 @@ export default function StatsPanel({ data }: Props) {
   for (const c of claims) {
     if (c.claim_type) byType.set(c.claim_type, (byType.get(c.claim_type) ?? 0) + 1)
   }
-  const sortedTypes = [...byType.entries()].sort((a, b) => b[1] - a[1])
+  const sortedTypes = Array.from(byType.entries()).sort((a, b) => b[1] - a[1])
 
   // Average ESS
   const avgEss = claims.reduce((s, c) => s + (c.evidence_support_score ?? 0.8), 0) / claims.length
@@ -49,7 +49,7 @@ export default function StatsPanel({ data }: Props) {
       }
     }
   }
-  const topEntities = [...entityMentions.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4)
+  const topEntities = Array.from(entityMentions.entries()).sort((a, b) => b[1] - a[1]).slice(0, 4)
 
   return (
     <div className="px-4 py-3 border-t grid grid-cols-3 gap-3 text-xs shrink-0"

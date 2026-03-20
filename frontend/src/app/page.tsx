@@ -181,6 +181,27 @@ export default function Home() {
     })
   }
 
+  // ── Conflict sorting/filtering — declared early so handleExplainConflict can reference shownConflict ──
+  const sortedConflicts = useMemo(() => [
+    ...conflicts.filter(c => c.severity === 'error'),
+    ...conflicts.filter(c => c.severity === 'warning'),
+    ...conflicts.filter(c => c.severity === 'info'),
+  ], [conflicts])
+
+  const activeConflicts = useMemo(
+    () => sortedConflicts.filter(c => !dismissedConflicts.has(c.id)),
+    [sortedConflicts, dismissedConflicts],
+  )
+
+  const safeIdx       = activeConflicts.length === 0 ? 0 : conflictIdx % activeConflicts.length
+  const shownConflict = activeConflicts[safeIdx] ?? null
+
+  // Keep idx in bounds; reset when conflict list changes
+  useEffect(() => { setConflictIdx(0) }, [conflicts])
+
+  // Clear explanation when the shown conflict changes
+  useEffect(() => { setConflictExplanation(''); setConflictExplaining(false) }, [shownConflict?.id])
+
   // ── Explain conflict (extracted for keyboard shortcut) ────────────────────
   const handleExplainConflict = useCallback(async () => {
     if (!sessionId || !shownConflict || conflictExplaining) return
@@ -365,26 +386,6 @@ export default function Home() {
 
   const claimCount  = allClaims.length
   const entityCount = graphData.nodes.filter(n => n.type === 'Entity').length
-
-  // Sort conflicts: errors first, then warnings, then info — stable within each tier
-  const sortedConflicts = useMemo(() => [
-    ...conflicts.filter(c => c.severity === 'error'),
-    ...conflicts.filter(c => c.severity === 'warning'),
-    ...conflicts.filter(c => c.severity === 'info'),
-  ], [conflicts])
-
-  const activeConflicts = useMemo(
-    () => sortedConflicts.filter(c => !dismissedConflicts.has(c.id)),
-    [sortedConflicts, dismissedConflicts],
-  )
-
-  // Keep idx in bounds; reset when conflict list changes
-  useEffect(() => { setConflictIdx(0) }, [conflicts])
-  const safeIdx       = activeConflicts.length === 0 ? 0 : conflictIdx % activeConflicts.length
-  const shownConflict = activeConflicts[safeIdx] ?? null
-
-  // Clear explanation when the shown conflict changes
-  useEffect(() => { setConflictExplanation(''); setConflictExplaining(false) }, [shownConflict?.id])
 
   const CLAIM_TYPES = Object.keys(CLAIM_TYPE_META) as ClaimType[]
 

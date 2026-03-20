@@ -10,6 +10,22 @@ contradicts a hypothesis, and can be challenged by counterfactual analysis.
 
 ---
 
+## Screenshots
+
+| Evidence Graph | Clinical Reasoning |
+|---|---|
+| ![Evidence Graph with provenance edges, type-colour-coded nodes, conflict banner and time slider](docs/screenshots/02_conflict_banner.png) | ![Reasoning panel showing leading hypothesis, supporting/conflicting evidence, missing evidence](docs/screenshots/07_reasoning_panel.png) |
+
+| Evidence × Diagnosis Matrix | What-If? Counterfactual |
+|---|---|
+| ![Matrix view mapping each evidence node to hypotheses with supports/contradicts annotations](docs/screenshots/03_evidence_matrix.png) | ![Counterfactual panel: selecting D-Dimer shows before/after score shifts for each hypothesis](docs/screenshots/04_counterfactual.png) |
+
+| Clinical Handover (Übergabe) | Evidence Timeline |
+|---|---|
+| ![Handover form auto-populated with Leitdiagnose, Befunde, Offene Diagnostik — PDF export](docs/screenshots/05_handover.png) | ![Timeline view showing claims distributed by time offset t+0h to t+5h](docs/screenshots/06_timeline.png) |
+
+---
+
 ## What it Does
 
 Instead of storing clinical observations as flat text, AleXiona builds an explicit
