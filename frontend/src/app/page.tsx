@@ -17,7 +17,7 @@ import CounterfactualPanel from '@/components/CounterfactualPanel'
 import HandoverPanel     from '@/components/HandoverPanel'
 import { getGraph, seedDemo, exportSession, explainConflict } from '@/lib/api'
 import type { GraphData, Claim, ClaimType, ReasoningResult, Conflict, GraphNode } from '@/lib/api'
-import { SESSION_KEY, shortId, confPct, CONFLICT_SEVERITY_META, CLAIM_TYPE_META } from '@/lib/utils'
+import { SESSION_KEY, shortId, confPct, essLabel, CONFLICT_SEVERITY_META, CLAIM_TYPE_META } from '@/lib/utils'
 
 export default function Home() {
   const [sessionId,   setSessionId]   = useState<string | null>(null)
@@ -305,7 +305,7 @@ export default function Home() {
 
     section('Leading Hypothesis')
     line(reasoning.leading_hypothesis, 11, 'bold')
-    line(`Evidence Support Score: ${confPct(reasoning.evidence_support_score)}%`, 10)
+    line(`Evidence support: ${essLabel(reasoning.evidence_support_score)} (internal score, not a probability)`, 10)
 
     if (reasoning.supporting_evidence.length > 0) {
       section('Supporting Evidence')
@@ -326,7 +326,7 @@ export default function Home() {
     if (reasoning.alternatives.length > 0) {
       section('Alternative Hypotheses')
       reasoning.alternatives.forEach(a =>
-        line(`- ${a.label}  (${confPct(a.evidence_support_score)}%)`, 9))
+        line(`- ${a.label}  [${essLabel(a.evidence_support_score)} support]`, 9))
     }
 
     if (conflicts.length > 0) {
@@ -337,7 +337,7 @@ export default function Home() {
 
     section(`Evidence Nodes (${allClaims.length})`)
     allClaims.forEach(c =>
-      line(`[${c.claim_type.toUpperCase()} · ${confPct(c.evidence_support_score)}% · ${c.status}]  ${c.text}`, 9))
+      line(`[${c.claim_type.toUpperCase()} · ${essLabel(c.evidence_support_score)} support · ${c.status}]  ${c.text}`, 9))
 
     doc.save(`alexiona-report-${shortId(sessionId ?? '')}.pdf`)
   }

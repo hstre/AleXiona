@@ -27,7 +27,7 @@ For each claim extract:
 - text: the claim as a clear, concise statement
 - entities: key medical concepts, objects, people, findings
 - relations: directed relationships between entities
-- evidence_support_score: 0.0–1.0 (how strongly the input supports this claim)
+- evidence_support_score: 0.0–1.0 (how strongly the input text supports this claim — this is NOT a diagnostic probability)
 - claim_type: one of symptom | finding | lab | imaging | hypothesis | diagnosis | therapy | risk_factor | guideline
 - source_type: one of clinician | llm | guideline | imaging_model | lab_system | imported_document
 - source_ref: document or test name if mentioned, else ""

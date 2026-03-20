@@ -1,7 +1,7 @@
 'use client'
 
 import type { ReasoningResult } from '@/lib/api'
-import { confColor, confPct } from '@/lib/utils'
+import { confColor, confPct, essLabel, ESS_LABEL_META } from '@/lib/utils'
 
 interface Props {
   reasoning:        ReasoningResult | null
@@ -11,16 +11,19 @@ interface Props {
 }
 
 function SupportBar({ value }: { value: number }) {
-  const pct = confPct(value)
-  const bg  = confColor(value)
+  const pct   = confPct(value)
+  const bg    = confColor(value)
+  const level = essLabel(value)
+  const meta  = ESS_LABEL_META[level]
   return (
     <div className="flex items-center gap-2">
       <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: 'var(--border)' }}>
         <div className="h-full rounded-full transition-all duration-500"
           style={{ width: `${pct}%`, background: bg }} />
       </div>
-      <span className="text-xs font-bold tabular-nums w-8 text-right" style={{ color: bg }}>
-        {pct}%
+      <span className="text-xs font-semibold capitalize px-1.5 py-0.5 rounded-md"
+        style={{ background: meta.bg, color: meta.text }}>
+        {level}
       </span>
     </div>
   )
@@ -82,7 +85,7 @@ export default function ReviewPanel({ reasoning, loading, onGenerateReport, onCl
                   {reasoning.leading_hypothesis}
                 </p>
                 <div className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>
-                  Evidence support score
+                  Evidence support
                 </div>
                 <SupportBar value={reasoning.evidence_support_score} />
               </div>
@@ -167,9 +170,12 @@ export default function ReviewPanel({ reasoning, loading, onGenerateReport, onCl
                         <span className="text-xs font-medium" style={{ color: 'var(--text)' }}>
                           {alt.label}
                         </span>
-                        <span className="text-xs font-bold px-1.5 py-0.5 rounded-md"
-                          style={{ background: 'var(--border)', color: 'var(--text-muted)' }}>
-                          {confPct(alt.evidence_support_score)}%
+                        <span className="text-xs font-semibold capitalize px-1.5 py-0.5 rounded-md"
+                          style={{
+                            background: ESS_LABEL_META[essLabel(alt.evidence_support_score)].bg,
+                            color:      ESS_LABEL_META[essLabel(alt.evidence_support_score)].text,
+                          }}>
+                          {essLabel(alt.evidence_support_score)}
                         </span>
                       </div>
                       <SupportBar value={alt.evidence_support_score} />

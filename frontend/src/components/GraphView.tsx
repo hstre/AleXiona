@@ -113,7 +113,7 @@ const NODE_STYLES = [
     style: {
       'line-style': 'dotted', 'line-dash-pattern': [2, 4],
       width: 1, 'line-color': '#d1d5db', 'target-arrow-color': '#d1d5db',
-      label: 'possible rel.', color: '#9ca3af', 'font-size': '9px',
+      label: 'similar topic', color: '#9ca3af', 'font-size': '9px',
       'text-background-color': '#f9fafb', 'text-background-opacity': 1,
       'text-background-padding': '2px',
     },

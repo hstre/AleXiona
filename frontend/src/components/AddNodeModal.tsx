@@ -186,9 +186,13 @@ export default function AddNodeModal({ sessionId, onClose, onCreated, allClaims 
           {sourceCandidates.length > 0 && (
             <div>
               <label className={labelCls} style={{ color: 'var(--text-muted)' }}>
-                Derived from
-                <span className="ml-1 opacity-50">(optional — explicit only)</span>
+                Provenance — derives from
+                <span className="ml-1 opacity-50">(optional)</span>
               </label>
+              <p className="text-xs mb-1.5" style={{ color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                Only select a source if this claim is a <em>direct logical or clinical consequence</em> of it.
+                Topical similarity alone is not derivation — the system tracks that separately.
+              </p>
               <div className="rounded-lg border overflow-y-auto space-y-0.5 p-1.5"
                 style={{ borderColor: 'var(--border)', background: 'var(--surface-2)', maxHeight: '120px' }}>
                 {sourceCandidates.map(c => {
