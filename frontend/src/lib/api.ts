@@ -1,5 +1,18 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
+/** Extract a human-readable message from a structured or plain-text error response. */
+async function parseError(res: Response): Promise<Error> {
+  try {
+    const data = await res.json()
+    const detail = data?.detail
+    if (typeof detail === 'string') return new Error(detail)
+    if (typeof detail?.message === 'string') return new Error(detail.message)
+    return new Error(JSON.stringify(detail ?? data))
+  } catch {
+    return new Error((await res.text()) || `HTTP ${res.status}`)
+  }
+}
+
 // ── Enums ──────────────────────────────────────────────────────────────────
 
 export type ClaimType =
@@ -152,7 +165,7 @@ export async function sendMessage(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message, session_id: sessionId, history }),
   })
-  if (!res.ok) throw new Error(await res.text())
+  if (!res.ok) throw await parseError(res)
   return res.json()
 }
 
@@ -164,7 +177,7 @@ export async function* streamMessage(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message, session_id: sessionId, history }),
   })
-  if (!res.ok) throw new Error(await res.text())
+  if (!res.ok) throw await parseError(res)
 
   const reader  = res.body!.getReader()
   const decoder = new TextDecoder()
@@ -191,7 +204,7 @@ export async function* streamMessage(
 
 export async function getGraph(sessionId: string): Promise<GraphData> {
   const res = await fetch(`${API_URL}/api/graph/${sessionId}`)
-  if (!res.ok) throw new Error(await res.text())
+  if (!res.ok) throw await parseError(res)
   return res.json()
 }
 
@@ -211,12 +224,12 @@ export async function patchClaim(claimId: string, fields: ClaimPatch): Promise<v
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(fields),
   })
-  if (!res.ok) throw new Error(await res.text())
+  if (!res.ok) throw await parseError(res)
 }
 
 export async function deleteClaim(claimId: string): Promise<void> {
   const res = await fetch(`${API_URL}/api/graph/claim/${claimId}`, { method: 'DELETE' })
-  if (!res.ok) throw new Error(await res.text())
+  if (!res.ok) throw await parseError(res)
 }
 
 export async function runCounterfactual(
@@ -225,24 +238,24 @@ export async function runCounterfactual(
   const res = await fetch(`${API_URL}/api/graph/${sessionId}/counterfactual/${claimId}`, {
     method: 'POST',
   })
-  if (!res.ok) throw new Error(await res.text())
+  if (!res.ok) throw await parseError(res)
   return res.json()
 }
 
 export async function listSessions(): Promise<SessionInfo[]> {
   const res = await fetch(`${API_URL}/api/sessions`)
-  if (!res.ok) throw new Error(await res.text())
+  if (!res.ok) throw await parseError(res)
   return res.json()
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
   const res = await fetch(`${API_URL}/api/sessions/${sessionId}`, { method: 'DELETE' })
-  if (!res.ok) throw new Error(await res.text())
+  if (!res.ok) throw await parseError(res)
 }
 
 export async function seedDemo(sessionId: string): Promise<{ seeded: boolean; claim_count?: number; reason?: string }> {
   const res = await fetch(`${API_URL}/api/demo/seed/${sessionId}`, { method: 'POST' })
-  if (!res.ok) throw new Error(await res.text())
+  if (!res.ok) throw await parseError(res)
   return res.json()
 }
 
@@ -264,5 +277,5 @@ export async function addManualClaim(sessionId: string, claim: ManualClaim): Pro
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(claim),
   })
-  if (!res.ok) throw new Error(await res.text())
+  if (!res.ok) throw await parseError(res)
 }

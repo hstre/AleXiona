@@ -41,8 +41,8 @@ export default function AddNodeModal({ sessionId, onClose, onCreated, allClaims 
         claim_type:             type,
         source_type:            source,
         source_ref:             ref.trim(),
-        evidence_support_score: score,
-        time_offset:            offset.trim() || '',
+        evidence_support_score: Math.max(0, Math.min(1, score)),
+        time_offset:            offset.trim() ? normalizeOffset(offset) : '',
         trend,
         status:                 'active',
         derived_from:           derivedFrom.length > 0 ? derivedFrom : undefined,
@@ -55,6 +55,12 @@ export default function AddNodeModal({ sessionId, onClose, onCreated, allClaims 
     } finally {
       setSaving(false)
     }
+  }
+
+  // Normalize "6h" / "6" / "t+6" → "t+6h"; leave unrecognized forms alone
+  const normalizeOffset = (raw: string): string => {
+    const m = raw.trim().match(/^(?:t\+)?(\d+(?:\.\d+)?)h?$/i)
+    return m ? `t+${m[1]}h` : raw.trim()
   }
 
   // Claims eligible as derivation sources (active + has a claimId)

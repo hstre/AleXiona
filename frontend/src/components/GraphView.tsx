@@ -114,6 +114,7 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
   const [saving,         setSaving]         = useState(false)
   const [counterfactual, setCounterfactual] = useState<CounterfactualResult | null>(null)
   const [cfLoading,      setCfLoading]      = useState(false)
+  const [cfError,        setCfError]        = useState('')
   const [showLegend,     setShowLegend]     = useState(false)
 
   useEffect(() => {
@@ -174,6 +175,7 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
         setEditTimeOffset(n.data('time_offset') ?? '')
         setEditSourceRef(n.data('source_ref') ?? '')
         setCounterfactual(null)
+        setCfError('')
       })
       cy.on('tap', (evt: any) => { if (evt.target === cy) setSelected(null) })
       cyRef.current = cy
@@ -218,11 +220,14 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
   const handleCounterfactual = async () => {
     if (!selected?.claimId) return
     setCfLoading(true)
+    setCfError('')
+    setCounterfactual(null)
     try {
       const result = await runCounterfactual(sessionId, selected.claimId)
       setCounterfactual(result)
-    } catch { setCounterfactual(null) }
-    finally { setCfLoading(false) }
+    } catch (e: any) {
+      setCfError(e.message ?? 'Counterfactual analysis failed')
+    } finally { setCfLoading(false) }
   }
 
   const fitGraph = () => cyRef.current?.fit(undefined, 40)
@@ -451,6 +456,14 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
               <p className="text-sm font-medium">{selected.label}</p>
             )}
 
+            {/* Counterfactual error */}
+            {cfError && (
+              <div className="rounded-lg px-3 py-2 text-xs"
+                style={{ background: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca' }}>
+                {cfError}
+              </div>
+            )}
+
             {/* Counterfactual result */}
             {counterfactual && (
               <div className="rounded-lg p-3 space-y-2"
@@ -458,6 +471,19 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
                 <p className="text-xs font-semibold" style={{ color: '#1e3a8a' }}>
                   Counterfactual — if this claim is removed
                 </p>
+
+                {/* Changed evidence items */}
+                {counterfactual.changed_evidence.length > 0 && (
+                  <div className="space-y-0.5">
+                    <p className="text-xs font-medium" style={{ color: '#3730a3' }}>
+                      Evidence affected:
+                    </p>
+                    {counterfactual.changed_evidence.map((e, i) => (
+                      <p key={i} className="text-xs pl-2" style={{ color: '#1e40af' }}>· {e}</p>
+                    ))}
+                  </div>
+                )}
+
                 {counterfactual.shifts.map((s, i) => {
                   const delta      = s.score_after - s.score_before
                   const deltaPp    = Math.abs(Math.round(delta * 100))

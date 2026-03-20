@@ -17,6 +17,8 @@ export default function Home() {
   const [graphData,   setGraphData]   = useState<GraphData>({ nodes: [], edges: [] })
   const [reasoning,   setReasoning]   = useState<ReasoningResult | null>(null)
   const [conflicts,   setConflicts]   = useState<Conflict[]>([])
+  const [dismissedConflicts, setDismissedConflicts] = useState<Set<string>>(new Set())
+  const [conflictIdx,        setConflictIdx]        = useState(0)
   const [graphLoading,       setGraphLoading]       = useState(false)
   const [activePanel,        setActivePanel]        = useState<'data' | 'graph' | 'review'>('graph')
   const [showConflictBanner, setShowConflictBanner] = useState(true)
@@ -225,9 +227,23 @@ export default function Home() {
 
   const claimCount  = allClaims.length
   const entityCount = graphData.nodes.filter(n => n.type === 'Entity').length
-  const topConflict = conflicts.find(c => c.severity === 'error')
-    ?? conflicts.find(c => c.severity === 'warning')
-    ?? conflicts[0]
+
+  // Sort conflicts: errors first, then warnings, then info — stable within each tier
+  const sortedConflicts = useMemo(() => [
+    ...conflicts.filter(c => c.severity === 'error'),
+    ...conflicts.filter(c => c.severity === 'warning'),
+    ...conflicts.filter(c => c.severity === 'info'),
+  ], [conflicts])
+
+  const activeConflicts = useMemo(
+    () => sortedConflicts.filter(c => !dismissedConflicts.has(c.id)),
+    [sortedConflicts, dismissedConflicts],
+  )
+
+  // Keep idx in bounds; reset when conflict list changes
+  useEffect(() => { setConflictIdx(0) }, [conflicts])
+  const safeIdx     = activeConflicts.length === 0 ? 0 : conflictIdx % activeConflicts.length
+  const shownConflict = activeConflicts[safeIdx] ?? null
 
   const CLAIM_TYPES = Object.keys(CLAIM_TYPE_META) as ClaimType[]
 
@@ -245,31 +261,63 @@ export default function Home() {
       )}
 
       {/* ── Conflict Banner ───────────────────────────────────────────────── */}
-      {showConflictBanner && conflicts.length > 0 && topConflict && (() => {
-        const meta = CONFLICT_SEVERITY_META[topConflict.severity]
+      {showConflictBanner && activeConflicts.length > 0 && shownConflict && (() => {
+        const meta  = CONFLICT_SEVERITY_META[shownConflict.severity]
+        const total = activeConflicts.length
+        const num   = safeIdx + 1
         return (
-          <button
-            className="flex items-center justify-between px-4 py-2 shrink-0 w-full text-left"
-            style={{ background: meta.bg, borderBottom: `1px solid ${meta.border}` }}
-            onClick={() => {
-              // Focus affected nodes in graph and switch to graph tab
-              setFocusClaimIds([...topConflict.affected_claim_ids])
-              setActivePanel('graph')
-            }}>
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="shrink-0">{meta.icon}</span>
-              <span className="text-xs font-medium truncate" style={{ color: meta.text }}>
-                {conflicts.length > 1 ? `${conflicts.length} conflicts — ` : ''}{topConflict.message}
-              </span>
-              <span className="text-xs shrink-0 opacity-60" style={{ color: meta.text }}>
-                (click to focus)
-              </span>
-            </div>
-            <span className="text-xs ml-3 shrink-0" style={{ color: meta.text }}
-              onClick={e => { e.stopPropagation(); setShowConflictBanner(false) }}>
-              ✕
-            </span>
-          </button>
+          <div className="flex items-center gap-2 px-3 py-1.5 shrink-0"
+            style={{ background: meta.bg, borderBottom: `1px solid ${meta.border}` }}>
+
+            {/* Severity icon */}
+            <span className="shrink-0 text-sm">{meta.icon}</span>
+
+            {/* Navigation — only when multiple active conflicts */}
+            {total > 1 && (
+              <div className="flex items-center gap-0.5 shrink-0">
+                <button
+                  className="w-5 h-5 rounded flex items-center justify-center hover:opacity-70"
+                  style={{ color: meta.text, background: meta.border + '55' }}
+                  onClick={() => setConflictIdx(i => (i - 1 + total) % total)}
+                  title="Previous conflict">‹</button>
+                <span className="text-xs font-mono px-1" style={{ color: meta.text }}>
+                  {num}/{total}
+                </span>
+                <button
+                  className="w-5 h-5 rounded flex items-center justify-center hover:opacity-70"
+                  style={{ color: meta.text, background: meta.border + '55' }}
+                  onClick={() => setConflictIdx(i => (i + 1) % total)}
+                  title="Next conflict">›</button>
+              </div>
+            )}
+
+            {/* Message — clickable → focus nodes */}
+            <button className="flex-1 text-left text-xs font-medium truncate hover:underline"
+              style={{ color: meta.text }}
+              onClick={() => {
+                setFocusClaimIds([...shownConflict.affected_claim_ids])
+                setActivePanel('graph')
+              }}>
+              {shownConflict.message}
+              <span className="ml-1 opacity-50 font-normal">(click to focus)</span>
+            </button>
+
+            {/* Dismiss this conflict */}
+            <button
+              className="shrink-0 text-xs px-2 py-0.5 rounded hover:opacity-70"
+              style={{ color: meta.text, background: meta.border + '55' }}
+              onClick={() => setDismissedConflicts(prev => new Set(Array.from(prev).concat(shownConflict.id)))}
+              title="Dismiss this conflict">
+              Dismiss
+            </button>
+
+            {/* Close banner */}
+            <button
+              className="shrink-0 w-5 h-5 flex items-center justify-center rounded hover:opacity-70"
+              style={{ color: meta.text }}
+              onClick={() => setShowConflictBanner(false)}
+              title="Hide conflict bar">✕</button>
+          </div>
         )
       })()}
 
@@ -296,10 +344,13 @@ export default function Home() {
           <span><strong style={{ color: 'var(--text)' }}>{claimCount}</strong> claims</span>
           <span><strong style={{ color: 'var(--text)' }}>{entityCount}</strong> entities</span>
           {conflicts.length > 0 && (
-            <span className="flex items-center gap-1"
-              style={{ color: conflicts.some(c => c.severity === 'error') ? '#ef4444' : '#f59e0b' }}>
-              ⚠ {conflicts.length} conflict{conflicts.length !== 1 ? 's' : ''}
-            </span>
+            <button className="flex items-center gap-1 hover:opacity-70"
+              style={{ color: conflicts.some(c => c.severity === 'error') ? '#ef4444' : '#f59e0b' }}
+              onClick={() => { setShowConflictBanner(true); setDismissedConflicts(new Set()) }}
+              title={dismissedConflicts.size > 0 ? 'Some conflicts dismissed — click to restore' : undefined}>
+              ⚠ {activeConflicts.length}/{conflicts.length} conflict{conflicts.length !== 1 ? 's' : ''}
+              {dismissedConflicts.size > 0 && <span className="opacity-50">({dismissedConflicts.size} dismissed)</span>}
+            </button>
           )}
         </div>
 

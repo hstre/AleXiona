@@ -2,6 +2,7 @@ import asyncio
 import json
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter, HTTPException
+from api_errors import internal_error
 from fastapi.responses import StreamingResponse
 from models import ChatRequest, ChatResponse
 from llm_client import (
@@ -47,8 +48,10 @@ async def chat(request: ChatRequest):
             reasoning=reasoning,
             conflicts=conflicts,
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise internal_error(e)
 
 
 # ── Streaming endpoint ────────────────────────────────────────────────────────

@@ -1,7 +1,27 @@
 from __future__ import annotations
+import re
 from enum import Enum
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+_TIME_RE = re.compile(r'^(?:t\+)?(\d+(?:\.\d+)?)h?$', re.IGNORECASE)
+
+
+def _clamp_ess(v: float | None) -> float | None:
+    if v is None:
+        return v
+    return max(0.0, min(1.0, v))
+
+
+def _normalize_time_offset(v: str | None) -> str | None:
+    """Accepts '6h', '6', 't+6', 't+6h' → 't+6h'; passes through unrecognized forms."""
+    if not v:
+        return v
+    m = _TIME_RE.match(v.strip())
+    if m:
+        hours = m.group(1)
+        return f"t+{hours}h"
+    return v.strip()
 
 
 class ClaimType(str, Enum):
@@ -154,6 +174,16 @@ class NodeUpdate(BaseModel):
     trend:                  Optional[ClaimTrend]  = None
     time_offset:            Optional[str]         = None
     source_ref:             Optional[str]         = None
+
+    @field_validator('evidence_support_score', mode='before')
+    @classmethod
+    def clamp_ess(cls, v: float | None) -> float | None:
+        return _clamp_ess(v)
+
+    @field_validator('time_offset', mode='before')
+    @classmethod
+    def normalize_offset(cls, v: str | None) -> str | None:
+        return _normalize_time_offset(v)
 
 
 class GraphData(BaseModel):
