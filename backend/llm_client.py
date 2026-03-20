@@ -11,6 +11,7 @@ from models import (
     CounterfactualResult, CounterfactualShift,
     Relation, ClaimType, SourceType, ClaimStatus, ClaimTrend,
 )
+from reasoning_engine import build_reasoning_context
 
 log = logging.getLogger(__name__)
 
@@ -62,13 +63,15 @@ Extract 1–6 meaningful claims. Use the input language."""
 # ── Clinical Reasoning Analysis ───────────────────────────────────────────────
 
 REASONING_PROMPT = """You are a clinical reasoning assistant (NOT a diagnosing physician).
-Given a set of extracted claims from a knowledge graph, produce a structured reasoning summary.
+Given a set of extracted claims from a knowledge graph — enriched with rule-based hypothesis scores
+as anchor points — produce a structured reasoning summary.
 
 IMPORTANT:
 - Do NOT make autonomous diagnostic decisions
 - Use language like "leading hypothesis", "supporting evidence", "conflicting evidence"
-- Express support as evidence_support_score (0.0–1.0), NOT as diagnostic probability
-- Missing evidence must be tied to specific competing hypotheses
+- The rule_score values are ANCHORS — refine them using clinical context, do not blindly copy
+- Express evidence_support_score (0.0–1.0) as evidence strength, NOT diagnostic probability
+- Missing evidence must specify WHICH hypotheses it would differentiate between
 
 Respond ONLY with valid JSON:
 {
@@ -85,12 +88,13 @@ Respond ONLY with valid JSON:
   ],
   "missing_evidence": [
     {
-      "description": "string - what is missing",
+      "description": "string - what is missing and why it matters",
       "needed_for": "string - which hypothesis this would clarify",
-      "test_or_type": "string - e.g. D-Dimer, CT-Angiographie"
+      "test_or_type": "string - e.g. D-Dimer, CT-Angiographie, Troponin",
+      "differentiates_between": ["string - hypothesis A", "string - hypothesis B"]
     }
   ],
-  "focus_points": ["string - key area to investigate"]
+  "focus_points": ["string - key area to investigate or act on"]
 }
 
 Max 2 alternatives, 3 missing evidence items, 2 focus points.
@@ -213,17 +217,13 @@ def extract_claims(text: str) -> ClaimExtractionResult:
 def analyze_reasoning(claims: list[dict]) -> ReasoningResult | None:
     if not claims:
         return None
-    claim_text = "\n".join(
-        f"- [{c.get('claim_type', 'finding').upper()}] {c['text']} "
-        f"(support: {int(c.get('evidence_support_score', 0.8) * 100)}%, "
-        f"source: {c.get('source_type', 'llm')}, status: {c.get('status', 'active')})"
-        for c in claims
-    )
+    # Build enriched context with rule-based hypothesis scores as anchors
+    context = build_reasoning_context(claims)
     try:
         data = _llm_json(
             messages=[
                 {"role": "system", "content": REASONING_PROMPT},
-                {"role": "user", "content": f"Claims in knowledge graph:\n{claim_text}"},
+                {"role": "user", "content": f"Clinical knowledge graph:\n{context}"},
             ],
             temperature=0.2,
         )
@@ -247,6 +247,7 @@ def analyze_reasoning(claims: list[dict]) -> ReasoningResult | None:
                     description=m["description"],
                     needed_for=m["needed_for"],
                     test_or_type=m["test_or_type"],
+                    differentiates_between=m.get("differentiates_between", []),
                 )
                 for m in data.get("missing_evidence", [])
             ],

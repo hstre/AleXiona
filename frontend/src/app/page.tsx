@@ -16,7 +16,7 @@ import EvidenceMatrix    from '@/components/EvidenceMatrix'
 import CounterfactualPanel from '@/components/CounterfactualPanel'
 import HandoverPanel     from '@/components/HandoverPanel'
 import { getGraph, seedDemo, exportSession, explainConflict } from '@/lib/api'
-import type { GraphData, Claim, ClaimType, ReasoningResult, Conflict, GraphNode } from '@/lib/api'
+import type { GraphData, Claim, ClaimType, ReasoningResult, Conflict, GraphNode, DemoScenario } from '@/lib/api'
 import { SESSION_KEY, shortId, confPct, essLabel, CONFLICT_SEVERITY_META, CLAIM_TYPE_META } from '@/lib/utils'
 
 export default function Home() {
@@ -47,6 +47,7 @@ export default function Home() {
   const [showShortcuts,      setShowShortcuts]      = useState(false)
   const [showStats,          setShowStats]          = useState(false)
   const [demoLang,           setDemoLang]           = useState<'en' | 'de'>('en')
+  const [demoScenario,       setDemoScenario]       = useState<'cap' | 'pe' | 'ards' | 'nstemi'>('cap')
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   // ── Session ───────────────────────────────────────────────────────────────
@@ -90,6 +91,7 @@ export default function Home() {
         source_type:            n.source_type ?? 'llm',
         source_ref:             n.source_ref  ?? '',
         derived_from:           n.derived_from ?? [],
+        related_to:             n.related_to ?? [],
         status:                 n.status      ?? 'active',
         time_offset:            n.time_offset ?? null,
         trend:                  n.trend       ?? 'unknown',
@@ -258,7 +260,7 @@ export default function Home() {
     if (!sessionId) return
     setSeeding(true)
     try {
-      const result = await seedDemo(sessionId, demoLang)
+      const result = await seedDemo(sessionId, demoLang, demoScenario)
       if (result.seeded) await refreshGraph()
       else alert(result.reason ?? 'Session already has data')
     } catch (e: any) {
@@ -605,13 +607,33 @@ export default function Home() {
                 style={{ background: 'var(--brand-pale)', color: 'var(--brand)' }}>
                 {seeding ? '…' : '▶ Demo'}
               </button>
+              {/* Scenario selector */}
+              <div className="flex border-l" style={{ borderColor: 'var(--brand)' }}>
+                {([
+                  ['cap',    'CAP'],
+                  ['pe',     'PE'],
+                  ['ards',   'ARDS'],
+                  ['nstemi', 'NSTEMI'],
+                ] as [DemoScenario, string][]).map(([s, label]) => (
+                  <button key={s} onClick={() => setDemoScenario(s)}
+                    className="text-xs px-2 py-1.5 font-medium"
+                    title={{ cap: 'Community-Acquired Pneumonia', pe: 'Pulmonary Embolism', ards: 'ARDS + Septic Shock', nstemi: 'Non-ST Elevation MI' }[s]}
+                    style={{
+                      background: demoScenario === s ? 'var(--brand)' : 'var(--brand-pale)',
+                      color:      demoScenario === s ? 'white'        : 'var(--brand)',
+                    }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {/* Language selector */}
               <div className="flex border-l" style={{ borderColor: 'var(--brand)' }}>
                 {(['en', 'de'] as const).map(l => (
                   <button key={l} onClick={() => setDemoLang(l)}
                     className="text-xs px-2 py-1.5 font-medium uppercase"
                     style={{
-                      background: demoLang === l ? 'var(--brand)' : 'var(--brand-pale)',
-                      color:      demoLang === l ? 'white'        : 'var(--brand)',
+                      background: demoLang === l ? 'var(--teal)' : 'var(--teal-pale)',
+                      color:      demoLang === l ? 'white'       : 'var(--teal)',
                     }}>
                     {l}
                   </button>

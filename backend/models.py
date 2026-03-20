@@ -82,7 +82,8 @@ class Claim(BaseModel):
     claim_type:            ClaimType           = ClaimType.finding
     source_type:           SourceType          = SourceType.llm
     source_ref:            str                 = ""
-    derived_from:          list[str]           = []   # claim IDs
+    derived_from:          list[str]           = []   # claim IDs — explicit causal/epistemic derivation (set by LLM or user only)
+    related_to:            list[str]           = []   # claim IDs — heuristic semantic proximity (set by system only)
     status:                ClaimStatus         = ClaimStatus.active
     time_offset:           Optional[str]       = None  # e.g. "t+6h"
     trend:                 ClaimTrend          = ClaimTrend.unknown
@@ -101,9 +102,10 @@ class Alternative(BaseModel):
 
 
 class MissingEvidence(BaseModel):
-    description:  str
-    needed_for:   str        # which hypothesis it would clarify
-    test_or_type: str        # e.g. "D-Dimer", "CT-Angiographie"
+    description:              str
+    needed_for:               str        # which hypothesis it would clarify
+    test_or_type:             str        # e.g. "D-Dimer", "CT-Angiographie"
+    differentiates_between:   list[str]  = []  # hypothesis labels this would help differentiate
 
 
 class CounterfactualShift(BaseModel):

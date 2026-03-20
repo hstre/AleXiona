@@ -238,13 +238,371 @@ DEMO_CLAIMS_DE = [
 ]
 
 
-def seed_demo(session_id: str, lang: str = "en"):
+# ── Scenario: Pulmonary Embolism (PE) ────────────────────────────────────────
+
+PE_CLAIMS = [
+    # t+0h – Presentation
+    {
+        "text": "Sudden onset chest pain and severe dyspnea, onset 2 hours ago",
+        "claim_type": "symptom", "source_type": "clinician",
+        "time_offset": "t+0h", "trend": "worsening",
+        "evidence_support_score": 0.92, "status": "active",
+        "entities": ["Chest Pain", "Dyspnea"],
+        "relations": [{"from_entity": "Chest Pain", "to_entity": "Pulmonary Embolism", "type": "indicates"}],
+    },
+    {
+        "text": "Heart rate 118 bpm (tachycardia), blood pressure 96/62 mmHg",
+        "claim_type": "finding", "source_type": "clinician",
+        "time_offset": "t+0h", "trend": "worsening",
+        "evidence_support_score": 0.90, "status": "active",
+        "entities": ["Tachycardia", "Hypotension"],
+        "relations": [{"from_entity": "Tachycardia", "to_entity": "Hemodynamic Instability", "type": "indicates"}],
+    },
+    {
+        "text": "SpO2 88% on room air — significant hypoxemia",
+        "claim_type": "finding", "source_type": "clinician",
+        "time_offset": "t+0h", "trend": "worsening",
+        "evidence_support_score": 0.95, "status": "active",
+        "entities": ["SpO2", "Hypoxemia"],
+        "relations": [{"from_entity": "Hypoxemia", "to_entity": "Respiratory Failure", "type": "indicates"}],
+    },
+    {
+        "text": "Wells score 7 — high clinical probability for pulmonary embolism",
+        "claim_type": "finding", "source_type": "clinician",
+        "time_offset": "t+0h", "trend": "stable",
+        "evidence_support_score": 0.88, "status": "active",
+        "entities": ["Wells Score", "7"],
+        "relations": [{"from_entity": "Wells Score", "to_entity": "Pulmonary Embolism", "type": "indicates"}],
+    },
+    # t+2h – Labs
+    {
+        "text": "D-Dimer markedly elevated: 4.8 µg/mL (reference < 0.5 µg/mL)",
+        "claim_type": "lab", "source_type": "lab_system",
+        "time_offset": "t+2h", "trend": "stable",
+        "evidence_support_score": 0.94, "status": "active",
+        "entities": ["D-Dimer", "4.8 µg/mL"],
+        "relations": [{"from_entity": "D-Dimer", "to_entity": "Thrombosis", "type": "indicates"}],
+    },
+    {
+        "text": "Troponin I mildly elevated: 0.12 ng/mL — right ventricular strain",
+        "claim_type": "lab", "source_type": "lab_system",
+        "time_offset": "t+2h", "trend": "stable",
+        "evidence_support_score": 0.80, "status": "active",
+        "entities": ["Troponin I", "0.12 ng/mL", "Right Ventricular Strain"],
+        "relations": [{"from_entity": "Troponin", "to_entity": "Right Heart Strain", "type": "indicates"}],
+    },
+    {
+        "text": "BNP elevated: 380 pg/mL — pressure overload right ventricle",
+        "claim_type": "lab", "source_type": "lab_system",
+        "time_offset": "t+2h", "trend": "stable",
+        "evidence_support_score": 0.78, "status": "active",
+        "entities": ["BNP", "380 pg/mL", "Right Ventricle"],
+        "relations": [{"from_entity": "BNP", "to_entity": "Right Heart Strain", "type": "indicates"}],
+    },
+    # t+2h – ECG
+    {
+        "text": "ECG: S1Q3T3 pattern — classic sign of acute right heart strain",
+        "claim_type": "finding", "source_type": "clinician",
+        "time_offset": "t+2h", "trend": "stable",
+        "evidence_support_score": 0.75, "status": "active",
+        "entities": ["ECG", "S1Q3T3", "Right Heart Strain"],
+        "relations": [{"from_entity": "S1Q3T3", "to_entity": "Right Heart Strain", "type": "indicates"}],
+    },
+    # t+4h – CT-PA
+    {
+        "text": "CT-pulmonary angiography: saddle embolus at bifurcation, bilateral main pulmonary arteries",
+        "claim_type": "imaging", "source_type": "imaging_model",
+        "time_offset": "t+4h", "trend": "stable",
+        "evidence_support_score": 0.99, "status": "active",
+        "entities": ["Saddle Embolus", "Pulmonary Arteries", "CT-PA"],
+        "relations": [{"from_entity": "Saddle Embolus", "to_entity": "Pulmonary Embolism", "type": "is"}],
+    },
+    {
+        "text": "Echo: right ventricular dilation, D-sign on short axis, McConnell sign positive",
+        "claim_type": "imaging", "source_type": "imaging_model",
+        "time_offset": "t+4h", "trend": "stable",
+        "evidence_support_score": 0.91, "status": "active",
+        "entities": ["Right Ventricle", "D-Sign", "McConnell Sign"],
+        "relations": [{"from_entity": "RV Dilation", "to_entity": "Right Heart Strain", "type": "indicates"}],
+    },
+    # t+4h – Hypothesis
+    {
+        "text": "High-risk pulmonary embolism with hemodynamic compromise — leading diagnosis",
+        "claim_type": "diagnosis", "source_type": "llm",
+        "time_offset": "t+4h", "trend": "stable",
+        "evidence_support_score": 0.96, "status": "active",
+        "entities": ["Pulmonary Embolism", "High-risk"],
+        "relations": [{"from_entity": "PE", "to_entity": "Hemodynamic Instability", "type": "causes"}],
+    },
+    {
+        "text": "Acute myocardial infarction — cannot be fully excluded, troponin elevation noted",
+        "claim_type": "hypothesis", "source_type": "llm",
+        "time_offset": "t+4h", "trend": "stable",
+        "evidence_support_score": 0.18, "status": "active",
+        "entities": ["Myocardial Infarction", "Troponin"],
+        "relations": [],
+    },
+    # t+5h – Treatment
+    {
+        "text": "Systemic thrombolysis with rtPA initiated — criteria met (high-risk PE + hemodynamic instability)",
+        "claim_type": "therapy", "source_type": "clinician",
+        "time_offset": "t+5h", "trend": "improving",
+        "evidence_support_score": 0.92, "status": "active",
+        "entities": ["rtPA", "Thrombolysis"],
+        "relations": [{"from_entity": "rtPA", "to_entity": "Pulmonary Embolism", "type": "reduces"}],
+    },
+]
+
+
+# ── Scenario: ARDS + Septic Shock ────────────────────────────────────────────
+
+ARDS_SEPSIS_CLAIMS = [
+    # t+0h – ICU admission
+    {
+        "text": "Septic shock: MAP < 65 mmHg despite 2L IV fluids, requiring norepinephrine 0.4 µg/kg/min",
+        "claim_type": "finding", "source_type": "clinician",
+        "time_offset": "t+0h", "trend": "worsening",
+        "evidence_support_score": 0.97, "status": "active",
+        "entities": ["Septic Shock", "Norepinephrine", "MAP"],
+        "relations": [{"from_entity": "Septic Shock", "to_entity": "Organ Failure", "type": "causes"}],
+    },
+    {
+        "text": "SOFA score 11: Respiratory (4) + Coagulation (2) + Liver (2) + Cardiovascular (3)",
+        "claim_type": "finding", "source_type": "clinician",
+        "time_offset": "t+0h", "trend": "worsening",
+        "evidence_support_score": 0.95, "status": "active",
+        "entities": ["SOFA Score", "11", "Organ Dysfunction"],
+        "relations": [{"from_entity": "SOFA Score", "to_entity": "Organ Failure", "type": "indicates"}],
+    },
+    {
+        "text": "Fever 40.1°C, rigors; suspected abdominal sepsis source — perforated viscus",
+        "claim_type": "symptom", "source_type": "clinician",
+        "time_offset": "t+0h", "trend": "worsening",
+        "evidence_support_score": 0.88, "status": "active",
+        "entities": ["Fever", "Rigors", "Abdominal Sepsis"],
+        "relations": [{"from_entity": "Fever", "to_entity": "Sepsis", "type": "indicates"}],
+    },
+    # t+2h – Labs
+    {
+        "text": "Lactate 5.8 mmol/L — severe tissue hypoperfusion (Sepsis-3 criteria met)",
+        "claim_type": "lab", "source_type": "lab_system",
+        "time_offset": "t+2h", "trend": "worsening",
+        "evidence_support_score": 0.98, "status": "active",
+        "entities": ["Lactate", "5.8 mmol/L", "Tissue Hypoperfusion"],
+        "relations": [{"from_entity": "Lactate", "to_entity": "Tissue Hypoperfusion", "type": "indicates"}],
+    },
+    {
+        "text": "Procalcitonin 38 ng/mL — severe bacterial sepsis",
+        "claim_type": "lab", "source_type": "lab_system",
+        "time_offset": "t+2h", "trend": "stable",
+        "evidence_support_score": 0.97, "status": "active",
+        "entities": ["Procalcitonin", "38 ng/mL"],
+        "relations": [{"from_entity": "Procalcitonin", "to_entity": "Bacterial Sepsis", "type": "indicates"}],
+    },
+    {
+        "text": "Thrombocytopenia: platelets 58,000/µL (DIC suspected)",
+        "claim_type": "lab", "source_type": "lab_system",
+        "time_offset": "t+2h", "trend": "worsening",
+        "evidence_support_score": 0.85, "status": "active",
+        "entities": ["Thrombocytopenia", "Platelets", "DIC"],
+        "relations": [{"from_entity": "DIC", "to_entity": "Coagulopathy", "type": "causes"}],
+    },
+    # t+4h – Imaging
+    {
+        "text": "CT abdomen: free air under diaphragm — hollow viscus perforation confirmed",
+        "claim_type": "imaging", "source_type": "imaging_model",
+        "time_offset": "t+4h", "trend": "stable",
+        "evidence_support_score": 0.99, "status": "active",
+        "entities": ["Free Air", "Diaphragm", "Viscus Perforation"],
+        "relations": [{"from_entity": "Perforation", "to_entity": "Peritonitis", "type": "causes"}],
+    },
+    {
+        "text": "Chest CT: bilateral diffuse ground-glass opacities — ARDS pattern (PaO2/FiO2 = 84)",
+        "claim_type": "imaging", "source_type": "imaging_model",
+        "time_offset": "t+4h", "trend": "worsening",
+        "evidence_support_score": 0.96, "status": "active",
+        "entities": ["Ground-Glass Opacities", "ARDS", "PaO2/FiO2"],
+        "relations": [{"from_entity": "ARDS", "to_entity": "Respiratory Failure", "type": "causes"}],
+    },
+    # t+6h – Diagnoses
+    {
+        "text": "Septic shock secondary to hollow viscus perforation — leading diagnosis",
+        "claim_type": "diagnosis", "source_type": "llm",
+        "time_offset": "t+6h", "trend": "stable",
+        "evidence_support_score": 0.95, "status": "active",
+        "entities": ["Septic Shock", "Viscus Perforation"],
+        "relations": [{"from_entity": "Perforation", "to_entity": "Septic Shock", "type": "causes"}],
+    },
+    {
+        "text": "ARDS (severe) secondary to sepsis — confirmed by Berlin criteria",
+        "claim_type": "diagnosis", "source_type": "llm",
+        "time_offset": "t+6h", "trend": "stable",
+        "evidence_support_score": 0.93, "status": "active",
+        "entities": ["ARDS", "Berlin Criteria", "Sepsis"],
+        "relations": [{"from_entity": "Sepsis", "to_entity": "ARDS", "type": "causes"}],
+    },
+    # t+6h – Treatment
+    {
+        "text": "Broad-spectrum antibiotics: meropenem 2g q8h + vancomycin — sepsis bundle initiated",
+        "claim_type": "therapy", "source_type": "clinician",
+        "time_offset": "t+6h", "trend": "stable",
+        "evidence_support_score": 0.94, "status": "active",
+        "entities": ["Meropenem", "Vancomycin", "Sepsis Bundle"],
+        "relations": [{"from_entity": "Antibiotics", "to_entity": "Sepsis", "type": "reduces"}],
+    },
+    {
+        "text": "Mechanical ventilation: lung-protective strategy — tidal volume 6 mL/kg, PEEP 14 cmH2O",
+        "claim_type": "therapy", "source_type": "clinician",
+        "time_offset": "t+6h", "trend": "stable",
+        "evidence_support_score": 0.92, "status": "active",
+        "entities": ["Mechanical Ventilation", "PEEP", "Lung-Protective"],
+        "relations": [{"from_entity": "Ventilation", "to_entity": "ARDS", "type": "reduces"}],
+    },
+    # t+8h – Blood cultures
+    {
+        "text": "Blood cultures positive: E. coli (ESBL-negative) — confirms gram-negative bacteremia",
+        "claim_type": "lab", "source_type": "lab_system",
+        "time_offset": "t+8h", "trend": "stable",
+        "evidence_support_score": 0.98, "status": "active",
+        "entities": ["E. coli", "Bacteremia", "Blood Cultures"],
+        "relations": [{"from_entity": "E. coli", "to_entity": "Gram-negative Bacteremia", "type": "is"}],
+    },
+]
+
+
+# ── Scenario: NSTEMI (Non-ST-Elevation Myocardial Infarction) ─────────────────
+
+NSTEMI_CLAIMS = [
+    # t+0h – Presentation
+    {
+        "text": "Retrosternal chest pressure radiating to left arm and jaw, onset 3 hours ago",
+        "claim_type": "symptom", "source_type": "clinician",
+        "time_offset": "t+0h", "trend": "stable",
+        "evidence_support_score": 0.93, "status": "active",
+        "entities": ["Chest Pressure", "Left Arm", "Jaw", "Angina"],
+        "relations": [{"from_entity": "Chest Pressure", "to_entity": "Myocardial Ischemia", "type": "indicates"}],
+    },
+    {
+        "text": "Diaphoresis and nausea present — autonomic response to acute ischemia",
+        "claim_type": "symptom", "source_type": "clinician",
+        "time_offset": "t+0h", "trend": "stable",
+        "evidence_support_score": 0.82, "status": "active",
+        "entities": ["Diaphoresis", "Nausea", "Autonomic Response"],
+        "relations": [{"from_entity": "Diaphoresis", "to_entity": "Acute Ischemia", "type": "indicates"}],
+    },
+    {
+        "text": "Risk factors: hypertension, diabetes mellitus type 2, current smoker, family history ACS",
+        "claim_type": "risk_factor", "source_type": "clinician",
+        "time_offset": "t+0h", "trend": "stable",
+        "evidence_support_score": 0.90, "status": "active",
+        "entities": ["Hypertension", "Diabetes", "Smoking", "ACS"],
+        "relations": [{"from_entity": "Risk Factors", "to_entity": "Coronary Artery Disease", "type": "indicates"}],
+    },
+    # t+1h – ECG
+    {
+        "text": "ECG: ST-depression 2mm in leads V3–V6 and reciprocal changes in aVL",
+        "claim_type": "finding", "source_type": "clinician",
+        "time_offset": "t+1h", "trend": "stable",
+        "evidence_support_score": 0.94, "status": "active",
+        "entities": ["ST-Depression", "V3-V6", "aVL"],
+        "relations": [{"from_entity": "ST-Depression", "to_entity": "Myocardial Ischemia", "type": "indicates"}],
+    },
+    {
+        "text": "No ST-elevation — STEMI excluded; NSTEMI/unstable angina on differential",
+        "claim_type": "finding", "source_type": "clinician",
+        "time_offset": "t+1h", "trend": "stable",
+        "evidence_support_score": 0.88, "status": "active",
+        "entities": ["STEMI", "NSTEMI", "Unstable Angina"],
+        "relations": [{"from_entity": "ECG", "to_entity": "STEMI", "type": "rules_out"}],
+    },
+    # t+2h – Labs
+    {
+        "text": "Troponin I 1.4 ng/mL at 2h (reference < 0.04 ng/mL) — significant elevation",
+        "claim_type": "lab", "source_type": "lab_system",
+        "time_offset": "t+2h", "trend": "worsening",
+        "evidence_support_score": 0.97, "status": "active",
+        "entities": ["Troponin I", "1.4 ng/mL", "Myocardial Necrosis"],
+        "relations": [{"from_entity": "Troponin", "to_entity": "Myocardial Necrosis", "type": "indicates"}],
+    },
+    {
+        "text": "GRACE score 162 — high risk in-hospital mortality (> 3%); early invasive strategy indicated",
+        "claim_type": "finding", "source_type": "clinician",
+        "time_offset": "t+2h", "trend": "stable",
+        "evidence_support_score": 0.91, "status": "active",
+        "entities": ["GRACE Score", "162", "High Risk"],
+        "relations": [{"from_entity": "GRACE Score", "to_entity": "Mortality Risk", "type": "indicates"}],
+    },
+    {
+        "text": "TIMI risk score 5/7 — high risk; early revascularization strongly indicated",
+        "claim_type": "finding", "source_type": "clinician",
+        "time_offset": "t+2h", "trend": "stable",
+        "evidence_support_score": 0.89, "status": "active",
+        "entities": ["TIMI Score", "5/7"],
+        "relations": [{"from_entity": "TIMI Score", "to_entity": "Revascularization", "type": "requires"}],
+    },
+    # t+4h – Echo
+    {
+        "text": "Echo: anterior-lateral wall hypokinesia, EF 48% (mildly reduced)",
+        "claim_type": "imaging", "source_type": "imaging_model",
+        "time_offset": "t+4h", "trend": "stable",
+        "evidence_support_score": 0.92, "status": "active",
+        "entities": ["Anterior Hypokinesia", "EF 48%", "Echocardiography"],
+        "relations": [{"from_entity": "Hypokinesia", "to_entity": "Myocardial Ischemia", "type": "indicates"}],
+    },
+    # t+4h – Diagnosis
+    {
+        "text": "NSTEMI — non-ST-elevation myocardial infarction: confirmed by troponin rise + ischemic ECG changes",
+        "claim_type": "diagnosis", "source_type": "llm",
+        "time_offset": "t+4h", "trend": "stable",
+        "evidence_support_score": 0.96, "status": "active",
+        "entities": ["NSTEMI", "Troponin", "ECG Changes"],
+        "relations": [{"from_entity": "NSTEMI", "to_entity": "Coronary Artery Disease", "type": "is"}],
+    },
+    # t+4h – Treatment
+    {
+        "text": "Dual antiplatelet therapy initiated: aspirin 300mg loading + ticagrelor 180mg loading",
+        "claim_type": "therapy", "source_type": "clinician",
+        "time_offset": "t+4h", "trend": "stable",
+        "evidence_support_score": 0.95, "status": "active",
+        "entities": ["Aspirin", "Ticagrelor", "Dual Antiplatelet"],
+        "relations": [{"from_entity": "Dual Antiplatelet", "to_entity": "Coronary Thrombosis", "type": "reduces"}],
+    },
+    {
+        "text": "Fondaparinux 2.5mg SC — anticoagulation per ESC NSTEMI guidelines",
+        "claim_type": "therapy", "source_type": "clinician",
+        "time_offset": "t+4h", "trend": "stable",
+        "evidence_support_score": 0.91, "status": "active",
+        "entities": ["Fondaparinux", "Anticoagulation"],
+        "relations": [{"from_entity": "Fondaparinux", "to_entity": "Thrombus", "type": "reduces"}],
+    },
+    # t+6h – Troponin rise pattern
+    {
+        "text": "Troponin I at 6h: 3.2 ng/mL — rising curve confirms myocardial injury (delta troponin positive)",
+        "claim_type": "lab", "source_type": "lab_system",
+        "time_offset": "t+6h", "trend": "worsening",
+        "evidence_support_score": 0.98, "status": "active",
+        "entities": ["Troponin I", "3.2 ng/mL", "Delta Troponin"],
+        "relations": [{"from_entity": "Rising Troponin", "to_entity": "Myocardial Infarction", "type": "confirms"}],
+    },
+]
+
+
+SCENARIO_MAP = {
+    "cap":       (DEMO_CLAIMS,       DEMO_CLAIMS_DE),
+    "pe":        (PE_CLAIMS,         PE_CLAIMS),
+    "ards":      (ARDS_SEPSIS_CLAIMS, ARDS_SEPSIS_CLAIMS),
+    "nstemi":    (NSTEMI_CLAIMS,     NSTEMI_CLAIMS),
+}
+
+
+def seed_demo(session_id: str, lang: str = "en", scenario: str = "cap"):
     uri      = os.getenv("NEO4J_URI",      "bolt://localhost:7687")
     user     = os.getenv("NEO4J_USER",     "neo4j")
     password = os.getenv("NEO4J_PASSWORD", "alexiona123")
     driver = GraphDatabase.driver(uri, auth=(user, password))
 
-    claims = DEMO_CLAIMS_DE if lang == "de" else DEMO_CLAIMS
+    en_claims, de_claims = SCENARIO_MAP.get(scenario, (DEMO_CLAIMS, DEMO_CLAIMS_DE))
+    claims = de_claims if lang == "de" else en_claims
 
     with driver.session() as s:
         # Check if already seeded

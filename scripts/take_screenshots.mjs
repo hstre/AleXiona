@@ -61,8 +61,8 @@ const MOCK_REASONING = {
     'Unilateral effusion may suggest parapneumonic or alternative diagnosis',
   ],
   missing_evidence: [
-    { test_or_type:'Troponin', description:'Elevated troponin would suggest cardiac involvement or PE-related strain', needed_for:'Differentiating CAP from PE or cardiac origin' },
-    { test_or_type:'Blood cultures', description:'Not yet resulted — needed before antibiotic de-escalation', needed_for:'Pathogen identification and antibiogram' },
+    { test_or_type:'Troponin', description:'Elevated troponin would suggest cardiac involvement or PE-related strain', needed_for:'Differentiating CAP from PE or cardiac origin', differentiates_between:['Community-acquired Pneumonia', 'Pulmonary Embolism'] },
+    { test_or_type:'Blood cultures', description:'Not yet resulted — needed before antibiotic de-escalation', needed_for:'Pathogen identification and antibiogram', differentiates_between:['Community-acquired Pneumonia', 'Heart Failure decompensation'] },
   ],
   focus_points: [
     'Differential diagnosis: CAP vs. Pulmonary Embolism',

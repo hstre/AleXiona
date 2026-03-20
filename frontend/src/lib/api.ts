@@ -45,7 +45,8 @@ export interface Claim {
   claim_type:             ClaimType
   source_type:            SourceType
   source_ref:             string
-  derived_from:           string[]
+  derived_from:           string[]   // explicit causal/epistemic derivation
+  related_to:             string[]   // heuristic semantic proximity
   status:                 ClaimStatus
   time_offset:            string | null
   trend:                  ClaimTrend
@@ -61,9 +62,10 @@ export interface Alternative {
 }
 
 export interface MissingEvidence {
-  description:  string
-  needed_for:   string
-  test_or_type: string
+  description:            string
+  needed_for:             string
+  test_or_type:           string
+  differentiates_between: string[]  // hypothesis labels this would help differentiate
 }
 
 export interface ReasoningResult {
@@ -113,7 +115,8 @@ export interface GraphNode {
   time_offset?:           string | null
   trend?:                 ClaimTrend
   created_at?:            string
-  derived_from?:          string[]   // claimIds this claim was derived from
+  derived_from?:          string[]   // claimIds this claim was derived from (explicit causal)
+  related_to?:            string[]   // claimIds heuristically related (semantic proximity)
   notes?:                 string
 }
 
@@ -266,8 +269,14 @@ export async function deleteSession(sessionId: string): Promise<void> {
   if (!res.ok) throw await parseError(res)
 }
 
-export async function seedDemo(sessionId: string, lang: 'en' | 'de' = 'en'): Promise<{ seeded: boolean; claim_count?: number; reason?: string }> {
-  const res = await fetch(`${API_URL}/api/demo/seed/${sessionId}?lang=${lang}`, { method: 'POST' })
+export type DemoScenario = 'cap' | 'pe' | 'ards' | 'nstemi'
+
+export async function seedDemo(
+  sessionId: string,
+  lang:     'en' | 'de'   = 'en',
+  scenario: DemoScenario  = 'cap',
+): Promise<{ seeded: boolean; claim_count?: number; reason?: string }> {
+  const res = await fetch(`${API_URL}/api/demo/seed/${sessionId}?lang=${lang}&scenario=${scenario}`, { method: 'POST' })
   if (!res.ok) throw await parseError(res)
   return res.json()
 }

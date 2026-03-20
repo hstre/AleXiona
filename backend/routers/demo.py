@@ -6,9 +6,13 @@ router = APIRouter(prefix="/api/demo", tags=["demo"])
 
 
 @router.post("/seed/{session_id}")
-async def seed(session_id: str, lang: str = Query(default="en", pattern="^(en|de)$")):
+async def seed(
+    session_id: str,
+    lang:     str = Query(default="en",  pattern="^(en|de)$"),
+    scenario: str = Query(default="cap", pattern="^(cap|pe|ards|nstemi)$"),
+):
     try:
-        result = seed_demo(session_id, lang=lang)
+        result = seed_demo(session_id, lang=lang, scenario=scenario)
         return result
     except Exception as e:
         raise internal_error(e)

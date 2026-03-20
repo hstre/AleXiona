@@ -208,6 +208,17 @@ export default function ReviewPanel({ reasoning, loading, onGenerateReport, onCl
                       <p className="text-xs ml-5 mt-0.5 italic" style={{ color: '#a16207' }}>
                         Needed to clarify: {m.needed_for}
                       </p>
+                      {m.differentiates_between && m.differentiates_between.length >= 2 && (
+                        <div className="ml-5 mt-1.5 flex flex-wrap gap-1">
+                          <span className="text-xs" style={{ color: '#a16207' }}>Differentiates:</span>
+                          {m.differentiates_between.map((h, hi) => (
+                            <span key={hi} className="text-xs px-1.5 py-0.5 rounded-md font-medium"
+                              style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a' }}>
+                              {h}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

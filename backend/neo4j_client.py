@@ -62,7 +62,8 @@ class Neo4jClient:
                         id: $id, text: $text, session_id: $session_id,
                         evidence_support_score: $ess, claim_type: $ct,
                         source_type: $st, source_ref: $sr,
-                        derived_from: $df, status: $status,
+                        derived_from: $df, related_to: $rt,
+                        status: $status,
                         time_offset: $to, trend: $trend,
                         created_at: $now
                     })
@@ -73,6 +74,7 @@ class Neo4jClient:
                     st=claim.source_type.value,
                     sr=claim.source_ref,
                     df=json.dumps(claim.derived_from),
+                    rt=json.dumps(claim.related_to),
                     status=claim.status.value,
                     to=claim.time_offset,
                     trend=claim.trend.value,
@@ -105,9 +107,11 @@ class Neo4jClient:
         return claim_ids
 
     def link_possible_related(self, new_claim_ids: list[str], session_id: str) -> None:
-        """Heuristic: create POSSIBLE_RELATED edges to existing session claims with >= 2 shared key terms.
-        This is NOT the same as epistemic derivation. Edges are labelled `possible_related`
-        and must be reviewed before treating them as actual clinical reasoning chains.
+        """Heuristic: create POSSIBLE_RELATED edges and populate `related_to` on new claims
+        for existing session claims with >= 2 shared key terms.
+
+        This is NOT the same as epistemic derivation (`derived_from`).
+        Edges are labelled POSSIBLE_RELATED; `related_to` on the claim node is also updated.
         """
         if not new_claim_ids:
             return
@@ -129,6 +133,11 @@ class Neo4jClient:
                 ]
                 if not sources:
                     continue
+                # Update related_to on the claim node (JSON list)
+                s.run(
+                    "MATCH (c:Claim {id: $id}) SET c.related_to = $rt",
+                    id=nc["id"], rt=json.dumps(sources),
+                )
                 for src_id in sources:
                     s.run(
                         """
@@ -181,6 +190,7 @@ class Neo4jClient:
                        c.source_type AS source_type,
                        c.source_ref AS source_ref,
                        c.derived_from AS derived_from,
+                       c.related_to AS related_to,
                        c.status AS status,
                        c.time_offset AS time_offset,
                        c.trend AS trend,
@@ -199,6 +209,7 @@ class Neo4jClient:
                     "source_type":            r["source_type"] or "llm",
                     "source_ref":             r["source_ref"] or "",
                     "derived_from":           json.loads(r["derived_from"] or "[]"),
+                    "related_to":             json.loads(r["related_to"] or "[]"),
                     "status":                 r["status"] or "active",
                     "time_offset":            r["time_offset"],
                     "trend":                  r["trend"] or "unknown",
@@ -240,6 +251,7 @@ class Neo4jClient:
                         "trend":                  c.get("trend", "unknown"),
                         "created_at":             c.get("created_at", ""),
                         "derived_from":           json.loads(c.get("derived_from") or "[]"),
+                        "related_to":             json.loads(c.get("related_to") or "[]"),
                         "notes":                  c.get("notes", ""),
                     }
 
