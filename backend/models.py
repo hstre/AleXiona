@@ -144,7 +144,13 @@ class ChatResponse(BaseModel):
 
 
 class NodeUpdate(BaseModel):
-    text: str
+    text:                   Optional[str]         = None
+    evidence_support_score: Optional[float]       = None
+    claim_type:             Optional[ClaimType]   = None
+    status:                 Optional[ClaimStatus] = None
+    trend:                  Optional[ClaimTrend]  = None
+    time_offset:            Optional[str]         = None
+    source_ref:             Optional[str]         = None
 
 
 class GraphData(BaseModel):

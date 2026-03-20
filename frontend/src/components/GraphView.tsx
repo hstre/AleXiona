@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { GraphData, GraphNode, ClaimType, ClaimStatus, CounterfactualResult } from '@/lib/api'
-import { updateClaim, deleteClaim, updateClaimStatus, runCounterfactual } from '@/lib/api'
+import { patchClaim, deleteClaim, runCounterfactual } from '@/lib/api'
 import { getTypeMeta, STATUS_META, TREND_META, confColor, confPct, CLAIM_TYPE_META } from '@/lib/utils'
 
 interface Props {
@@ -95,6 +95,12 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
   const cyRef        = useRef<any>(null)
   const [selected,       setSelected]       = useState<GraphNode | null>(null)
   const [editText,       setEditText]       = useState('')
+  const [editEss,        setEditEss]        = useState(0.8)
+  const [editType,       setEditType]       = useState<ClaimType>('finding')
+  const [editStatus,     setEditStatus]     = useState<ClaimStatus>('active')
+  const [editTrend,      setEditTrend]      = useState('unknown')
+  const [editTimeOffset, setEditTimeOffset] = useState('')
+  const [editSourceRef,  setEditSourceRef]  = useState('')
   const [saving,         setSaving]         = useState(false)
   const [counterfactual, setCounterfactual] = useState<CounterfactualResult | null>(null)
   const [cfLoading,      setCfLoading]      = useState(false)
@@ -140,7 +146,7 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
 
       cy.on('tap', 'node', (evt: any) => {
         const n = evt.target
-        setSelected({
+        const node: GraphNode = {
           id: n.id(), label: n.data('label'), type: n.data('type'),
           fullText:     n.data('fullText'),    claimId: n.data('claimId'),
           evidence_support_score: n.data('evidence_support_score'),
@@ -148,8 +154,15 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
           source_ref:   n.data('source_ref'),  status:      n.data('status'),
           time_offset:  n.data('time_offset'), trend:       n.data('trend'),
           created_at:   n.data('created_at'),  derived_from: n.data('derived_from') ?? [],
-        })
+        }
+        setSelected(node)
         setEditText(n.data('fullText') || n.data('label'))
+        setEditEss(n.data('evidence_support_score') ?? 0.8)
+        setEditType(n.data('claim_type') ?? 'finding')
+        setEditStatus(n.data('status') ?? 'active')
+        setEditTrend(n.data('trend') ?? 'unknown')
+        setEditTimeOffset(n.data('time_offset') ?? '')
+        setEditSourceRef(n.data('source_ref') ?? '')
         setCounterfactual(null)
       })
       cy.on('tap', (evt: any) => { if (evt.target === cy) setSelected(null) })
@@ -170,21 +183,25 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
   const handleSave = async () => {
     if (!selected?.claimId) return
     setSaving(true)
-    try { await updateClaim(selected.claimId, editText); onRefresh(); setSelected(null) }
-    finally { setSaving(false) }
+    try {
+      await patchClaim(selected.claimId, {
+        text:                   editText,
+        evidence_support_score: editEss,
+        claim_type:             editType,
+        status:                 editStatus,
+        trend:                  editTrend,
+        time_offset:            editTimeOffset || null,
+        source_ref:             editSourceRef,
+      })
+      onRefresh()
+      setSelected(null)
+    } finally { setSaving(false) }
   }
 
   const handleDelete = async () => {
     if (!selected?.claimId || !confirm('Delete this claim?')) return
     setSaving(true)
     try { await deleteClaim(selected.claimId); onRefresh(); setSelected(null) }
-    finally { setSaving(false) }
-  }
-
-  const handleStatusChange = async (status: ClaimStatus) => {
-    if (!selected?.claimId) return
-    setSaving(true)
-    try { await updateClaimStatus(selected.claimId, status); onRefresh(); setSelected(null) }
     finally { setSaving(false) }
   }
 
@@ -299,76 +316,122 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
 
           <div className="p-4 space-y-3 max-h-[75vh] overflow-y-auto">
             {selected.claimId ? (
-              <textarea
-                className="w-full text-sm rounded-lg p-2 resize-none outline-none"
-                style={{ background: 'var(--surface-2)', border: '1px solid var(--border)',
-                         color: 'var(--text)', minHeight: '65px' }}
-                value={editText}
-                onChange={e => setEditText(e.target.value)}
-              />
-            ) : (
-              <p className="text-sm font-medium">{selected.label}</p>
-            )}
+              <>
+                {/* Text */}
+                <textarea
+                  className="w-full text-sm rounded-lg p-2 resize-none outline-none"
+                  style={{ background: 'var(--surface-2)', border: '1px solid var(--border)',
+                           color: 'var(--text)', minHeight: '65px' }}
+                  value={editText}
+                  onChange={e => setEditText(e.target.value)}
+                />
 
-            {/* Provenance block */}
-            {selected.claimId && (
-              <div className="rounded-lg p-3 space-y-1.5 text-xs"
-                style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
-                <p className="font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>Provenance</p>
-                <div className="flex justify-between">
-                  <span style={{ color: 'var(--text-muted)' }}>Source</span>
-                  <span className="font-medium" style={{ color: 'var(--text)' }}>
-                    {selected.source_type}{selected.source_ref ? ` · ${selected.source_ref}` : ''}
-                  </span>
-                </div>
-                {selected.time_offset && (
-                  <div className="flex justify-between">
-                    <span style={{ color: 'var(--text-muted)' }}>Time</span>
-                    <span className="font-medium" style={{ color: 'var(--text)' }}>{selected.time_offset}</span>
-                  </div>
-                )}
-                <div className="flex justify-between">
-                  <span style={{ color: 'var(--text-muted)' }}>Status</span>
-                  <span style={{ color: STATUS_META[selected.status ?? 'active'].color }}>
-                    {STATUS_META[selected.status ?? 'active'].label}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span style={{ color: 'var(--text-muted)' }}>Trend</span>
-                  <span style={{ color: TREND_META[selected.trend ?? 'unknown'].color }}>
-                    {TREND_META[selected.trend ?? 'unknown'].icon} {selected.trend ?? 'unknown'}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span style={{ color: 'var(--text-muted)' }}>Evidence support</span>
-                  <span className="font-bold"
-                    style={{ color: confColor(selected.evidence_support_score ?? 0.8) }}>
-                    {confPct(selected.evidence_support_score ?? 0.8)}%
-                  </span>
-                </div>
-                {selected.created_at && (
-                  <div className="flex justify-between">
-                    <span style={{ color: 'var(--text-muted)' }}>Created</span>
-                    <span style={{ color: 'var(--text)' }}>
-                      {new Date(selected.created_at).toLocaleString()}
-                    </span>
-                  </div>
-                )}
-                {/* Derivation chain */}
-                {(selected.derived_from?.length ?? 0) > 0 && (
+                {/* Editable fields grid */}
+                <div className="rounded-lg p-3 space-y-2 text-xs"
+                  style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+
+                  {/* ESS slider */}
                   <div>
-                    <p className="mb-1" style={{ color: 'var(--text-muted)' }}>Derived from</p>
-                    <div className="flex flex-wrap gap-1">
-                      {selected.derived_from!.map((id, i) => (
-                        <span key={i} className="px-1.5 py-0.5 rounded-md font-mono"
-                          style={{ background: '#f5f3ff', color: '#7c3aed', fontSize: '10px' }}>
-                          {id.slice(0, 8)}…
-                        </span>
-                      ))}
+                    <div className="flex justify-between mb-1">
+                      <span style={{ color: 'var(--text-muted)' }}>Evidence support</span>
+                      <span className="font-bold" style={{ color: confColor(editEss) }}>
+                        {confPct(editEss)}%
+                      </span>
+                    </div>
+                    <input type="range" min={0} max={100}
+                      value={Math.round(editEss * 100)}
+                      onChange={e => setEditEss(Number(e.target.value) / 100)}
+                      className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
+                      style={{ accentColor: confColor(editEss) }}
+                    />
+                  </div>
+
+                  {/* Type + Status row */}
+                  <div className="flex gap-2">
+                    <div className="flex-1">
+                      <p className="mb-1" style={{ color: 'var(--text-muted)' }}>Type</p>
+                      <select value={editType} onChange={e => setEditType(e.target.value as ClaimType)}
+                        className="w-full text-xs rounded-md px-1.5 py-1 outline-none"
+                        style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)' }}>
+                        {(Object.keys(CLAIM_TYPE_META) as ClaimType[]).map(ct => (
+                          <option key={ct} value={ct}>{CLAIM_TYPE_META[ct].icon} {CLAIM_TYPE_META[ct].label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex-1">
+                      <p className="mb-1" style={{ color: 'var(--text-muted)' }}>Status</p>
+                      <select value={editStatus} onChange={e => setEditStatus(e.target.value as ClaimStatus)}
+                        className="w-full text-xs rounded-md px-1.5 py-1 outline-none"
+                        style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)' }}>
+                        {(['active', 'resolved', 'superseded'] as const).map(s => (
+                          <option key={s} value={s}>{STATUS_META[s].label}</option>
+                        ))}
+                      </select>
                     </div>
                   </div>
-                )}
-              </div>
+
+                  {/* Trend + Time offset row */}
+                  <div className="flex gap-2">
+                    <div className="flex-1">
+                      <p className="mb-1" style={{ color: 'var(--text-muted)' }}>Trend</p>
+                      <select value={editTrend} onChange={e => setEditTrend(e.target.value)}
+                        className="w-full text-xs rounded-md px-1.5 py-1 outline-none"
+                        style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)' }}>
+                        {Object.entries(TREND_META).map(([k, v]) => (
+                          <option key={k} value={k}>{v.icon} {k}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex-1">
+                      <p className="mb-1" style={{ color: 'var(--text-muted)' }}>Time offset</p>
+                      <input type="text" placeholder="t+6h"
+                        value={editTimeOffset}
+                        onChange={e => setEditTimeOffset(e.target.value)}
+                        className="w-full text-xs rounded-md px-1.5 py-1 outline-none font-mono"
+                        style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)' }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Source ref */}
+                  <div>
+                    <p className="mb-1" style={{ color: 'var(--text-muted)' }}>
+                      Source ref <span className="opacity-50">(source: {selected.source_type})</span>
+                    </p>
+                    <input type="text" placeholder="e.g. Lab result #42"
+                      value={editSourceRef}
+                      onChange={e => setEditSourceRef(e.target.value)}
+                      className="w-full text-xs rounded-md px-1.5 py-1 outline-none"
+                      style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)' }}
+                    />
+                  </div>
+
+                  {/* Read-only: created + derived_from */}
+                  {selected.created_at && (
+                    <div className="flex justify-between pt-1 border-t" style={{ borderColor: 'var(--border)' }}>
+                      <span style={{ color: 'var(--text-muted)' }}>Created</span>
+                      <span style={{ color: 'var(--text)' }}>
+                        {new Date(selected.created_at).toLocaleString()}
+                      </span>
+                    </div>
+                  )}
+                  {(selected.derived_from?.length ?? 0) > 0 && (
+                    <div className="pt-1 border-t" style={{ borderColor: 'var(--border)' }}>
+                      <p className="mb-1" style={{ color: 'var(--text-muted)' }}>Derived from</p>
+                      <div className="flex flex-wrap gap-1">
+                        {selected.derived_from!.map((id, i) => (
+                          <span key={i} className="px-1.5 py-0.5 rounded-md font-mono"
+                            style={{ background: '#f5f3ff', color: '#7c3aed', fontSize: '10px' }}>
+                            {id.slice(0, 8)}…
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <p className="text-sm font-medium">{selected.label}</p>
             )}
 
             {/* Counterfactual result */}
@@ -419,26 +482,13 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
                   <button onClick={handleSave} disabled={saving}
                     className="flex-1 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50"
                     style={{ background: 'var(--brand)', color: 'white' }}>
-                    Save
+                    {saving ? 'Saving…' : 'Save changes'}
                   </button>
                   <button onClick={handleDelete} disabled={saving}
                     className="py-1.5 px-3 rounded-lg text-xs disabled:opacity-50"
                     style={{ background: '#fef2f2', color: '#ef4444' }}>
                     Delete
                   </button>
-                </div>
-                <div className="flex gap-1.5">
-                  {(['active', 'resolved', 'superseded'] as const).map(s => (
-                    <button key={s} onClick={() => handleStatusChange(s)}
-                      disabled={saving || selected.status === s}
-                      className="flex-1 py-1 rounded-lg text-xs disabled:opacity-40 capitalize"
-                      style={{
-                        background: selected.status === s ? STATUS_META[s].color + '22' : 'var(--surface-2)',
-                        color:      STATUS_META[s].color,
-                      }}>
-                      {s}
-                    </button>
-                  ))}
                 </div>
                 <button onClick={handleCounterfactual} disabled={cfLoading}
                   className="w-full py-1.5 rounded-lg text-xs font-medium hover:opacity-80 disabled:opacity-50"

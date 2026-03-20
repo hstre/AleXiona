@@ -140,13 +140,15 @@ class Neo4jClient:
                         nc_id=nc["id"], oc_id=src_id,
                     )
 
-    def update_claim(self, claim_id: str, new_text: str):
+    def update_claim(self, claim_id: str, fields: dict) -> None:
+        """Update any non-None fields on a Claim node."""
+        # Convert enum values to strings for Neo4j
+        clean = {k: (v.value if hasattr(v, 'value') else v) for k, v in fields.items() if v is not None}
+        if not clean:
+            return
+        set_clause = ", ".join(f"c.{k} = ${k}" for k in clean)
         with self.driver.session() as s:
-            s.run("MATCH (c:Claim {id: $id}) SET c.text = $text", id=claim_id, text=new_text)
-
-    def update_claim_status(self, claim_id: str, status: str):
-        with self.driver.session() as s:
-            s.run("MATCH (c:Claim {id: $id}) SET c.status = $status", id=claim_id, status=status)
+            s.run(f"MATCH (c:Claim {{id: $id}}) SET {set_clause}", id=claim_id, **clean)
 
     def delete_claim(self, claim_id: str):
         with self.driver.session() as s:

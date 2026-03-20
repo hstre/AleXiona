@@ -193,20 +193,21 @@ export async function getGraph(sessionId: string): Promise<GraphData> {
   return res.json()
 }
 
-export async function updateClaim(claimId: string, text: string): Promise<void> {
+export interface ClaimPatch {
+  text?:                   string
+  evidence_support_score?: number
+  claim_type?:             ClaimType
+  status?:                 ClaimStatus
+  trend?:                  string
+  time_offset?:            string | null
+  source_ref?:             string
+}
+
+export async function patchClaim(claimId: string, fields: ClaimPatch): Promise<void> {
   const res = await fetch(`${API_URL}/api/graph/claim/${claimId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
-  })
-  if (!res.ok) throw new Error(await res.text())
-}
-
-export async function updateClaimStatus(claimId: string, status: ClaimStatus): Promise<void> {
-  const res = await fetch(`${API_URL}/api/graph/claim/${claimId}/status`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ status }),
+    body: JSON.stringify(fields),
   })
   if (!res.ok) throw new Error(await res.text())
 }

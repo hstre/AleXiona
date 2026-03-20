@@ -80,16 +80,7 @@ async def counterfactual(session_id: str, claim_id: str):
 @router.patch("/claim/{claim_id}")
 async def update_claim(claim_id: str, update: NodeUpdate):
     try:
-        get_db().update_claim(claim_id, update.text)
-        return {"status": "updated"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.patch("/claim/{claim_id}/status")
-async def update_claim_status(claim_id: str, payload: dict):
-    try:
-        get_db().update_claim_status(claim_id, payload.get("status", "active"))
+        get_db().update_claim(claim_id, update.model_dump(exclude_none=True))
         return {"status": "updated"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import type { Claim, ChatMessage, ClaimStatus, ReasoningResult, Conflict } from '@/lib/api'
-import { updateClaimStatus, streamMessage } from '@/lib/api'
+import { patchClaim, streamMessage } from '@/lib/api'
 import { confColor, confPct, getTypeMeta, STATUS_META, TREND_META } from '@/lib/utils'
 
 interface Props {
@@ -80,7 +80,7 @@ export default function DataPanel({
 
   const handleStatusToggle = async (claim: Claim & { claimId?: string }, newStatus: ClaimStatus) => {
     if (!claim.claimId) return
-    await updateClaimStatus(claim.claimId, newStatus)
+    await patchClaim(claim.claimId, { status: newStatus })
     onNewClaims()
   }
 
