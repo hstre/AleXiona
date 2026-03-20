@@ -84,9 +84,30 @@ const MOCK_CONFLICTS = [
   },
 ];
 
+const MOCK_HYPOTHESIS_CF = {
+  hypothesis: 'Community-acquired Pneumonia (CAP)',
+  required_changes: [
+    'CT chest would need to show NO consolidation (currently: right lower lobe consolidation)',
+    'CRP would need to be < 10 mg/L (currently: 142 mg/L)',
+    'WBC would need to be within normal range (currently: 16,400/µL)',
+    'Fever would need to be absent (currently: 38.9°C × 3 days)',
+  ],
+  critical_evidence: [
+    'CT chest: Consolidation right lower lobe consistent with pneumonia',
+    'C-reactive protein elevated at 142 mg/L — key inflammatory marker',
+    'Elevated WBC 16,400/µL with left shift',
+  ],
+  alternative_if_false: 'If CAP is excluded, Pulmonary Embolism becomes the leading hypothesis given elevated D-Dimer (2.1 µg/mL) and dyspnea with SpO2 91%',
+  reasoning_trace: 'The CT consolidation is the single most decisive finding — without it, the combination of D-Dimer elevation, tachycardia, and dyspnea would shift the probability strongly toward PE. Inflammatory markers (CRP, WBC) are supportive but non-specific.',
+};
+
 // ── API route mock handlers ───────────────────────────────────────────────────
 
 async function setupMocks(page) {
+  // Counterfactual hypothesis — must be registered BEFORE the catch-all /graph/ route
+  await page.route('**/counterfactual/hypothesis', async route => {
+    await route.fulfill({ json: MOCK_HYPOTHESIS_CF });
+  });
   await page.route('**/graph/**', async route => {
     await route.fulfill({ json: MOCK_GRAPH });
   });

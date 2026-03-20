@@ -1,9 +1,9 @@
 from fastapi import APIRouter, HTTPException
-from models import GraphData, NodeUpdate, CounterfactualResult, Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend, _clamp_ess, _normalize_time_offset, _parse_offset_hours
+from models import GraphData, NodeUpdate, CounterfactualResult, HypothesisCounterfactualResult, Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend, _clamp_ess, _normalize_time_offset, _parse_offset_hours
 from pydantic import BaseModel, field_validator
 from typing import Optional
 from neo4j_client import get_db
-from llm_client import run_counterfactual, analyze_reasoning, explain_conflict as _explain_conflict
+from llm_client import run_counterfactual, run_hypothesis_counterfactual, analyze_reasoning, explain_conflict as _explain_conflict
 from conflict_engine import detect_conflicts
 from api_errors import internal_error, validation_error, not_found
 
@@ -92,6 +92,27 @@ async def get_conflicts(session_id: str):
     try:
         claims = get_db().get_all_claims_for_session(session_id)
         return detect_conflicts(claims)
+    except Exception as e:
+        raise internal_error(e)
+
+
+class HypothesisCounterfactualPayload(BaseModel):
+    hypothesis: str
+
+
+@router.post("/{session_id}/counterfactual/hypothesis", response_model=HypothesisCounterfactualResult)
+async def hypothesis_counterfactual(session_id: str, payload: HypothesisCounterfactualPayload):
+    """Ask: 'What would need to change for this hypothesis to be false?'"""
+    db = get_db()
+    try:
+        all_claims = db.get_all_claims_for_session(session_id)
+        result = run_hypothesis_counterfactual(payload.hypothesis, all_claims)
+        if not result:
+            raise validation_error("Could not compute hypothesis counterfactual",
+                                   code="counterfactual_failed")
+        return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise internal_error(e)
 

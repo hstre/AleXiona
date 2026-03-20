@@ -9,6 +9,7 @@ from models import (
     Claim, ClaimExtractionResult, ChatMessage,
     ReasoningResult, Alternative, MissingEvidence,
     CounterfactualResult, CounterfactualShift,
+    HypothesisCounterfactualResult,
     Relation, ClaimType, SourceType, ClaimStatus, ClaimTrend,
 )
 from reasoning_engine import build_reasoning_context
@@ -291,6 +292,68 @@ def run_counterfactual(
             excluded_claim_text=excluded["text"],
             changed_evidence=data.get("changed_evidence", []),
             shifts=[CounterfactualShift(**s) for s in data.get("shifts", [])],
+            reasoning_trace=data.get("reasoning_trace", ""),
+        )
+    except Exception:
+        return None
+
+
+HYPOTHESIS_COUNTERFACTUAL_PROMPT = """You are a clinical reasoning assistant (NOT a diagnosing physician).
+
+You will be given:
+1. A specific clinical hypothesis/diagnosis
+2. All available claims from the clinical knowledge graph
+
+Your task: Analyze what would need to change in the evidence for this hypothesis to be WRONG.
+
+Think critically:
+- Which current findings are the decisive pillars that make this hypothesis plausible?
+- What specific changes (reversal, absence, or new contradicting findings) would be needed?
+- If this hypothesis were false, which alternative would become most likely?
+
+Respond ONLY with valid JSON:
+{
+  "required_changes": [
+    "string - specific finding/value that would need to be different, e.g. 'D-Dimer would need to be < 0.5 µg/mL (currently 4.8)' or 'CT-PA would need to show no filling defect'"
+  ],
+  "critical_evidence": [
+    "string - the most decisive supporting claim text (verbatim or paraphrased)"
+  ],
+  "alternative_if_false": "string - which diagnosis/hypothesis would become most likely if this were excluded",
+  "reasoning_trace": "string - 2-3 sentence clinical explanation of the reasoning"
+}
+
+Max 4 required_changes, 3 critical_evidence items.
+Be specific and quantitative where possible (include actual values).
+Respond in the same language as the input claims."""
+
+
+def run_hypothesis_counterfactual(
+    hypothesis_label: str,
+    all_claims: list[dict],
+) -> HypothesisCounterfactualResult | None:
+    """Ask: 'What would need to change for hypothesis H to be false?'"""
+    if not all_claims:
+        return None
+    context = build_reasoning_context(all_claims)
+    try:
+        data = _llm_json(
+            messages=[
+                {"role": "system", "content": HYPOTHESIS_COUNTERFACTUAL_PROMPT},
+                {"role": "user", "content": (
+                    f"Hypothesis under analysis: \"{hypothesis_label}\"\n\n"
+                    f"Clinical knowledge graph:\n{context}"
+                )},
+            ],
+            temperature=0.2,
+        )
+        if not data:
+            return None
+        return HypothesisCounterfactualResult(
+            hypothesis=hypothesis_label,
+            required_changes=data.get("required_changes", []),
+            critical_evidence=data.get("critical_evidence", []),
+            alternative_if_false=data.get("alternative_if_false", ""),
             reasoning_trace=data.get("reasoning_trace", ""),
         )
     except Exception:

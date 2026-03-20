@@ -957,6 +957,7 @@ export default function Home() {
           <ReviewPanel
             reasoning={reasoning}
             loading={false}
+            sessionId={sessionId}
             onGenerateReport={handleGenerateReport}
             onClear={() => setReasoning(null)}
           />

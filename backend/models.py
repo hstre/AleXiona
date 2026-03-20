@@ -121,6 +121,15 @@ class CounterfactualResult(BaseModel):
     reasoning_trace:     str
 
 
+class HypothesisCounterfactualResult(BaseModel):
+    """Result of asking: 'What would need to change for this hypothesis to be false?'"""
+    hypothesis:           str
+    required_changes:     list[str]  # specific evidence/findings that would need to change
+    critical_evidence:    list[str]  # the most decisive currently-supporting claims
+    alternative_if_false: str        # which hypothesis would become leading instead
+    reasoning_trace:      str        # clinical explanation
+
+
 class ReasoningResult(BaseModel):
     leading_hypothesis:       str
     supporting_evidence:      list[str]

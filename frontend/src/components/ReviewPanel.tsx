@@ -1,11 +1,14 @@
 'use client'
 
-import type { ReasoningResult } from '@/lib/api'
+import { useState, useCallback } from 'react'
+import type { ReasoningResult, HypothesisCounterfactualResult } from '@/lib/api'
+import { hypothesisCounterfactual } from '@/lib/api'
 import { confColor, confPct, essLabel, ESS_LABEL_META } from '@/lib/utils'
 
 interface Props {
   reasoning:        ReasoningResult | null
   loading:          boolean
+  sessionId:        string | null
   onGenerateReport: () => void
   onClear:          () => void
 }
@@ -17,7 +20,6 @@ function ConfidenceGauge({ value }: { value: number }) {
   const level = essLabel(value)
   const meta  = ESS_LABEL_META[level]
 
-  // 220° arc, starting at 160° (bottom-left, clockwise)
   const R     = 36
   const CX    = 48
   const CY    = 48
@@ -41,13 +43,10 @@ function ConfidenceGauge({ value }: { value: number }) {
   return (
     <div className="flex flex-col items-center gap-1 shrink-0">
       <svg width="96" height="78" viewBox="0 0 96 82">
-        {/* Track */}
         <path d={arcPath(ARC)} fill="none"
           stroke="var(--border)" strokeWidth="6" strokeLinecap="round" />
-        {/* Fill */}
         <path d={arcPath(filled)} fill="none"
           stroke={color} strokeWidth="6" strokeLinecap="round" />
-        {/* Center value */}
         <text x={CX} y={CY - 2} textAnchor="middle" dominantBaseline="middle"
           fontSize="14" fontWeight="700" fontFamily="Inter, sans-serif"
           fill="var(--text)">
@@ -67,7 +66,7 @@ function ConfidenceGauge({ value }: { value: number }) {
   )
 }
 
-/* ── Horizontal support bar (original style) ─────────────────────────────── */
+/* ── Horizontal support bar ──────────────────────────────────────────────── */
 function SupportBar({ value }: { value: number }) {
   const pct   = confPct(value)
   const bg    = confColor(value)
@@ -100,8 +99,162 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   )
 }
 
+/* ── Inline counterfactual result ────────────────────────────────────────── */
+function CounterfactualInline({ result }: { result: HypothesisCounterfactualResult }) {
+  return (
+    <div className="mt-2 rounded-xl overflow-hidden"
+      style={{ border: '1px solid #e0d7ff', background: '#faf5ff' }}>
+      {/* Header */}
+      <div className="px-3 py-2 flex items-center gap-1.5"
+        style={{ background: '#ede9fe', borderBottom: '1px solid #e0d7ff' }}>
+        <span className="text-xs font-semibold" style={{ color: '#5b21b6' }}>
+          ↙ Counterfactual
+        </span>
+        <span className="text-xs" style={{ color: '#7c3aed' }}>
+          — What would need to change?
+        </span>
+      </div>
+
+      <div className="p-3 space-y-2.5">
+        {/* Required changes */}
+        {result.required_changes.length > 0 && (
+          <div>
+            <div className="text-xs font-medium mb-1.5" style={{ color: '#6d28d9' }}>
+              These findings would need to be different:
+            </div>
+            <div className="space-y-1">
+              {result.required_changes.map((c, i) => (
+                <div key={i} className="flex items-start gap-2 text-xs px-2.5 py-1.5 rounded-lg"
+                  style={{ background: '#ede9fe', color: '#3b0764' }}>
+                  <span className="shrink-0 mt-0.5" style={{ color: '#7c3aed' }}>✗</span>
+                  {c}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Critical evidence */}
+        {result.critical_evidence.length > 0 && (
+          <div>
+            <div className="text-xs font-medium mb-1.5" style={{ color: '#6d28d9' }}>
+              Decisive supporting evidence:
+            </div>
+            <div className="space-y-1">
+              {result.critical_evidence.map((e, i) => (
+                <div key={i} className="flex items-start gap-2 text-xs px-2.5 py-1.5 rounded-lg"
+                  style={{ background: '#f5f3ff', color: '#4c1d95', border: '1px solid #e0d7ff' }}>
+                  <span className="shrink-0 mt-0.5" style={{ color: '#7c3aed' }}>⬟</span>
+                  {e}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Alternative if false */}
+        {result.alternative_if_false && (
+          <div className="flex items-start gap-2 text-xs px-2.5 py-1.5 rounded-lg"
+            style={{ background: '#fef3c7', border: '1px solid #fde68a', color: '#78350f' }}>
+            <span className="shrink-0 font-medium" style={{ color: '#92400e' }}>→</span>
+            <span>
+              <span className="font-medium">If false: </span>
+              {result.alternative_if_false}
+            </span>
+          </div>
+        )}
+
+        {/* Reasoning trace */}
+        {result.reasoning_trace && (
+          <p className="text-xs italic px-1" style={{ color: '#7c3aed' }}>
+            {result.reasoning_trace}
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* ── Counterfactual button ────────────────────────────────────────────────── */
+function CounterfactualButton({
+  hypothesis,
+  sessionId,
+}: {
+  hypothesis: string
+  sessionId:  string | null
+}) {
+  const [open,    setOpen]    = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [result,  setResult]  = useState<HypothesisCounterfactualResult | null>(null)
+  const [error,   setError]   = useState('')
+
+  const run = useCallback(async () => {
+    if (!sessionId) return
+    if (open && result) { setOpen(false); return }
+    if (open) { setOpen(false); return }
+
+    setLoading(true)
+    setError('')
+    setOpen(true)
+    try {
+      const r = await hypothesisCounterfactual(sessionId, hypothesis)
+      setResult(r)
+    } catch (e: any) {
+      setError(e.message || 'Request failed')
+      setOpen(false)
+    } finally {
+      setLoading(false)
+    }
+  }, [sessionId, hypothesis, open, result])
+
+  return (
+    <div>
+      <button
+        onClick={run}
+        disabled={!sessionId || loading}
+        title="Was müsste sich ändern, damit diese Hypothese falsch ist?"
+        className="mt-2 flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg font-medium transition-all disabled:opacity-40"
+        style={{
+          background: open && result ? '#ede9fe' : 'var(--surface)',
+          color:      open && result ? '#5b21b6' : 'var(--text-muted)',
+          border:     `1px solid ${open && result ? '#c4b5fd' : 'var(--border)'}`,
+        }}>
+        {loading ? (
+          <>
+            <span className="w-3 h-3 rounded-full border border-t-transparent animate-spin"
+              style={{ borderColor: '#7c3aed' }} />
+            Analyzing…
+          </>
+        ) : (
+          <>
+            <span style={{ color: '#7c3aed' }}>↙</span>
+            {open && result ? 'Hide counterfactual' : 'What would refute this?'}
+          </>
+        )}
+      </button>
+
+      {error && (
+        <p className="text-xs mt-1 px-1" style={{ color: '#b91c1c' }}>{error}</p>
+      )}
+
+      {open && result && !loading && (
+        <CounterfactualInline result={result} />
+      )}
+
+      {open && loading && (
+        <div className="mt-2 rounded-xl p-4 space-y-2 animate-pulse"
+          style={{ background: '#faf5ff', border: '1px solid #e0d7ff' }}>
+          {[90, 70, 85, 60].map((w, i) => (
+            <div key={i} className="h-3 rounded-lg" style={{ width: `${w}%`, background: '#ede9fe' }} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /* ── Main component ──────────────────────────────────────────────────────── */
-export default function ReviewPanel({ reasoning, loading, onGenerateReport, onClear }: Props) {
+export default function ReviewPanel({ reasoning, loading, sessionId, onGenerateReport, onClear }: Props) {
   return (
     <div className="flex flex-col h-full" style={{ background: 'var(--surface)' }}>
 
@@ -142,7 +295,7 @@ export default function ReviewPanel({ reasoning, loading, onGenerateReport, onCl
 
         {reasoning && !loading && (
           <>
-            {/* Leading hypothesis — with gauge + bar */}
+            {/* Leading hypothesis — with gauge + bar + counterfactual */}
             <Section title="Current Leading Hypothesis">
               <div className="rounded-xl p-3 border-l-4"
                 style={{ background: 'var(--brand-pale)', borderLeftColor: 'var(--brand)' }}>
@@ -158,6 +311,10 @@ export default function ReviewPanel({ reasoning, loading, onGenerateReport, onCl
                     <SupportBar value={reasoning.evidence_support_score} />
                   </div>
                 </div>
+                <CounterfactualButton
+                  hypothesis={reasoning.leading_hypothesis}
+                  sessionId={sessionId}
+                />
               </div>
             </Section>
 
@@ -240,7 +397,7 @@ export default function ReviewPanel({ reasoning, loading, onGenerateReport, onCl
               </Section>
             )}
 
-            {/* Alternative hypotheses */}
+            {/* Alternative hypotheses — each with its own counterfactual button */}
             {reasoning.alternatives.length > 0 && (
               <Section title="Alternative Hypotheses">
                 <div className="space-y-2">
@@ -260,6 +417,10 @@ export default function ReviewPanel({ reasoning, loading, onGenerateReport, onCl
                         </span>
                       </div>
                       <SupportBar value={alt.evidence_support_score} />
+                      <CounterfactualButton
+                        hypothesis={alt.label}
+                        sessionId={sessionId}
+                      />
                     </div>
                   ))}
                 </div>

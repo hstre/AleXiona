@@ -99,6 +99,14 @@ export interface CounterfactualResult {
   reasoning_trace:     string
 }
 
+export interface HypothesisCounterfactualResult {
+  hypothesis:           string
+  required_changes:     string[]   // what would need to be different
+  critical_evidence:    string[]   // the decisive supporting claims
+  alternative_if_false: string     // which hypothesis takes over
+  reasoning_trace:      string
+}
+
 // ── Graph ────────────────────────────────────────────────────────────────────
 
 export interface GraphNode {
@@ -253,6 +261,18 @@ export async function runCounterfactual(
 ): Promise<CounterfactualResult> {
   const res = await fetch(`${API_URL}/api/graph/${sessionId}/counterfactual/${claimId}`, {
     method: 'POST',
+  })
+  if (!res.ok) throw await parseError(res)
+  return res.json()
+}
+
+export async function hypothesisCounterfactual(
+  sessionId: string, hypothesis: string
+): Promise<HypothesisCounterfactualResult> {
+  const res = await fetch(`${API_URL}/api/graph/${sessionId}/counterfactual/hypothesis`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ hypothesis }),
   })
   if (!res.ok) throw await parseError(res)
   return res.json()
