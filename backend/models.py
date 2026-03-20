@@ -185,6 +185,7 @@ class NodeUpdate(BaseModel):
     trend:                  Optional[ClaimTrend]  = None
     time_offset:            Optional[str]         = None
     source_ref:             Optional[str]         = None
+    notes:                  Optional[str]         = None
 
     @field_validator('evidence_support_score', mode='before')
     @classmethod

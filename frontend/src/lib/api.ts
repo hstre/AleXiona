@@ -51,6 +51,7 @@ export interface Claim {
   trend:                  ClaimTrend
   created_at?:            string
   claimId?:               string
+  notes?:                 string
 }
 
 export interface Alternative {
@@ -113,6 +114,7 @@ export interface GraphNode {
   trend?:                 ClaimTrend
   created_at?:            string
   derived_from?:          string[]   // claimIds this claim was derived from
+  notes?:                 string
 }
 
 export interface GraphEdge {
@@ -216,6 +218,7 @@ export interface ClaimPatch {
   trend?:                  string
   time_offset?:            string | null
   source_ref?:             string
+  notes?:                  string
 }
 
 export async function patchClaim(claimId: string, fields: ClaimPatch): Promise<void> {

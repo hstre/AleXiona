@@ -5,16 +5,32 @@ import type { Claim, ChatMessage, ClaimStatus, ClaimType, ReasoningResult, Confl
 import { patchClaim, batchPatch, batchDelete, streamMessage } from '@/lib/api'
 import { getTypeMeta, STATUS_META, TREND_META, essLabel, ESS_LABEL_META, CLAIM_TYPE_META } from '@/lib/utils'
 
+function escRe(s: string) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') }
+function Highlight({ text, query }: { text: string; query: string }) {
+  if (!query) return <>{text}</>
+  const parts = text.split(new RegExp(`(${escRe(query)})`, 'gi'))
+  return (
+    <>
+      {parts.map((p, i) =>
+        p.toLowerCase() === query.toLowerCase()
+          ? <mark key={i} style={{ background: '#fef08a', color: 'inherit', borderRadius: '2px', padding: '0 1px' }}>{p}</mark>
+          : p
+      )}
+    </>
+  )
+}
+
 interface Props {
   sessionId:      string
   onNewClaims:    () => void
   onReasoning?:   (r: ReasoningResult) => void
   onConflicts?:   (c: Conflict[]) => void
   allClaims:      Claim[]
+  searchQuery?:   string
 }
 
 export default function DataPanel({
-  sessionId, onNewClaims, onReasoning, onConflicts, allClaims,
+  sessionId, onNewClaims, onReasoning, onConflicts, allClaims, searchQuery = '',
 }: Props) {
   const [input,          setInput]          = useState('')
   const [loading,        setLoading]        = useState(false)
@@ -99,9 +115,23 @@ export default function DataPanel({
     })
   }
 
-  const visible    = allClaims.filter(c =>
-    filter === 'all' ? true : c.status === filter
-  )
+  const visible = allClaims.filter(c => {
+    if (filter !== 'all' && c.status !== filter) return false
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase()
+      return (
+        c.text.toLowerCase().includes(q) ||
+        c.claim_type.toLowerCase().includes(q) ||
+        c.status.toLowerCase().includes(q) ||
+        (c.source_ref ?? '').toLowerCase().includes(q) ||
+        (c.source_type ?? '').toLowerCase().includes(q) ||
+        (c.trend ?? '').toLowerCase().includes(q) ||
+        (c.time_offset ?? '').toLowerCase().includes(q) ||
+        (c.notes ?? '').toLowerCase().includes(q)
+      )
+    }
+    return true
+  })
   const selectableIds = visible.filter(c => c.claimId).map(c => c.claimId!)
   const allVisibleSelected = selectableIds.length > 0 && selectableIds.every(id => selected.has(id))
 
@@ -339,7 +369,7 @@ export default function DataPanel({
 
               {/* Claim text */}
               <p className="text-xs leading-relaxed mb-2" style={{ color: 'var(--text)' }}>
-                {claim.text}
+                <Highlight text={claim.text} query={searchQuery} />
               </p>
 
               {/* Entities */}
@@ -361,6 +391,14 @@ export default function DataPanel({
                 </span>
                 <span style={{ color: status.color }}>{status.label}</span>
               </div>
+
+              {/* Notes */}
+              {claim.notes && (
+                <p className="text-xs italic mt-1 pt-1.5 border-t"
+                  style={{ color: 'var(--text-muted)', borderColor: 'var(--border)' }}>
+                  <Highlight text={claim.notes} query={searchQuery} />
+                </p>
+              )}
 
               {/* created_at + derived_from */}
               {(claim.created_at || (claim.derived_from?.length ?? 0) > 0) && (

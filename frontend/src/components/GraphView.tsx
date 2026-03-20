@@ -5,12 +5,33 @@ import type { GraphData, GraphNode, ClaimType, ClaimStatus, CounterfactualResult
 import { patchClaim, deleteClaim, runCounterfactual } from '@/lib/api'
 import { getTypeMeta, STATUS_META, TREND_META, confColor, confPct, essLabel, ESS_LABEL_META, CLAIM_TYPE_META } from '@/lib/utils'
 
+export type GraphLayout = 'cose' | 'breadthfirst' | 'concentric' | 'grid'
+
+export function buildLayout(name: GraphLayout): any {
+  switch (name) {
+    case 'breadthfirst':
+      return { name: 'breadthfirst', animate: true, animationDuration: 500, directed: true, padding: 50, spacingFactor: 1.6 }
+    case 'concentric':
+      return {
+        name: 'concentric', animate: true, animationDuration: 500, padding: 50,
+        concentric: (node: any) => node.data('type') === 'Claim' ? (node.data('evidence_support_score') ?? 0.5) : 0,
+        levelWidth: () => 0.25,
+      }
+    case 'grid':
+      return { name: 'grid', animate: true, animationDuration: 400, padding: 40, avoidOverlap: true }
+    default:
+      return { name: 'cose', animate: true, animationDuration: 600, nodeRepulsion: 12000, idealEdgeLength: 170, padding: 50, randomize: false }
+  }
+}
+
 interface Props {
   data:             GraphData
   onRefresh:        () => void
   conflictNodeIds?: Set<string>    // claim IDs flagged by conflict engine
   sessionId:        string
   focusClaimIds?:   string[]       // claim IDs to center/zoom to
+  layout?:          GraphLayout
+  fitTrigger?:      number         // increment to trigger fit from parent
 }
 
 const NODE_STYLES = [
@@ -119,7 +140,7 @@ const NODE_STYLES = [
   },
 ]
 
-export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId, focusClaimIds }: Props) {
+export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId, focusClaimIds, layout = 'cose', fitTrigger }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const cyRef        = useRef<any>(null)
   const [selected,       setSelected]       = useState<GraphNode | null>(null)
@@ -130,6 +151,7 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
   const [editTrend,      setEditTrend]      = useState('unknown')
   const [editTimeOffset, setEditTimeOffset] = useState('')
   const [editSourceRef,  setEditSourceRef]  = useState('')
+  const [editNotes,      setEditNotes]      = useState('')
   const [saving,         setSaving]         = useState(false)
   const [counterfactual, setCounterfactual] = useState<CounterfactualResult | null>(null)
   const [cfLoading,      setCfLoading]      = useState(false)
@@ -155,6 +177,7 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
             trend:       n.trend       ?? 'unknown',
             created_at:  n.created_at  ?? '',
             derived_from: n.derived_from ?? [],
+            notes:       n.notes       ?? '',
           },
           classes: conflictNodeIds?.has(n.claimId ?? '') ? 'conflict' : '',
         })),
@@ -167,10 +190,7 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
         container: containerRef.current,
         elements,
         style: NODE_STYLES as any,
-        layout: {
-          name: 'cose', animate: true, animationDuration: 600,
-          nodeRepulsion: 12000, idealEdgeLength: 170, padding: 50, randomize: false,
-        } as any,
+        layout: buildLayout(layout),
         userZoomingEnabled: true, userPanningEnabled: true, boxSelectionEnabled: false,
       })
 
@@ -193,6 +213,7 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
         setEditTrend(n.data('trend') ?? 'unknown')
         setEditTimeOffset(n.data('time_offset') ?? '')
         setEditSourceRef(n.data('source_ref') ?? '')
+        setEditNotes(n.data('notes') ?? '')
         setCounterfactual(null)
         setCfError('')
 
@@ -236,7 +257,12 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
       cyRef.current = cy
     })
     return () => { if (cyRef.current) { cyRef.current.destroy(); cyRef.current = null } }
-  }, [data, conflictNodeIds])
+  }, [data, conflictNodeIds, layout])
+
+  // Fit graph when parent requests it (keyboard shortcut 'f')
+  useEffect(() => {
+    if (fitTrigger && cyRef.current) cyRef.current.fit(undefined, 40)
+  }, [fitTrigger])
 
   // Focus on specified claim nodes when prop changes
   useEffect(() => {
@@ -259,6 +285,7 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
         trend:                  editTrend,
         time_offset:            editTimeOffset || null,
         source_ref:             editSourceRef,
+        notes:                  editNotes,
       })
       onRefresh()
       setSelected(null)
@@ -286,6 +313,15 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
   }
 
   const fitGraph = () => cyRef.current?.fit(undefined, 40)
+
+  const exportPng = () => {
+    if (!cyRef.current) return
+    const uri = cyRef.current.png({ scale: 2, bg: '#f4f7fb', full: true })
+    const a   = document.createElement('a')
+    a.href    = uri
+    a.download = 'alexiona-graph.png'
+    a.click()
+  }
   const CLAIM_TYPES = Object.keys(CLAIM_TYPE_META) as ClaimType[]
 
   return (
@@ -305,9 +341,22 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
           title="Fit graph">⊞</button>
       )}
 
+      {/* PNG export */}
+      {data.nodes.length > 0 && (
+        <button onClick={exportPng}
+          className="absolute top-3 left-12 z-10 w-7 h-7 rounded-lg flex items-center justify-center text-xs shadow-sm hover:opacity-80"
+          style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}
+          title="Export graph as PNG">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
+            <polyline points="21 15 16 10 5 21"/>
+          </svg>
+        </button>
+      )}
+
       {/* Legend toggle */}
       <button onClick={() => setShowLegend(v => !v)}
-        className="absolute top-3 left-12 z-10 h-7 px-2 rounded-lg text-xs flex items-center gap-1 shadow-sm hover:opacity-80"
+        className="absolute top-3 left-[5rem] z-10 h-7 px-2 rounded-lg text-xs flex items-center gap-1 shadow-sm hover:opacity-80"
         style={{
           background: showLegend ? 'var(--brand-pale)' : 'var(--surface)',
           border: `1px solid ${showLegend ? 'var(--brand)' : 'var(--border)'}`,
@@ -490,6 +539,19 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
                       onChange={e => setEditSourceRef(e.target.value)}
                       className="w-full text-xs rounded-md px-1.5 py-1 outline-none"
                       style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)' }}
+                    />
+                  </div>
+
+                  {/* Notes */}
+                  <div>
+                    <p className="mb-1" style={{ color: 'var(--text-muted)' }}>Notes</p>
+                    <textarea
+                      placeholder="Add a clinical annotation…"
+                      value={editNotes}
+                      onChange={e => setEditNotes(e.target.value)}
+                      className="w-full text-xs rounded-md px-1.5 py-1 resize-none outline-none"
+                      style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)', minHeight: '52px' }}
+                      rows={2}
                     />
                   </div>
 

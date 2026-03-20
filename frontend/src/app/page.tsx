@@ -1,9 +1,10 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { v4 as uuidv4 } from 'uuid'
 import DataPanel          from '@/components/DataPanel'
 import GraphView          from '@/components/GraphView'
+import type { GraphLayout } from '@/components/GraphView'
 import ReviewPanel        from '@/components/ReviewPanel'
 import AddNodeModal       from '@/components/AddNodeModal'
 import EntityDedupModal   from '@/components/EntityDedupModal'
@@ -30,12 +31,17 @@ export default function Home() {
   const [showDedup,          setShowDedup]          = useState(false)
   const [showImport,         setShowImport]         = useState(false)
   const [searchQuery,        setSearchQuery]        = useState('')
+  const [debouncedSearch,    setDebouncedSearch]    = useState('')
   const [showSearch,         setShowSearch]         = useState(false)
   const [timeHours,          setTimeHours]          = useState<number>(999)
   const [seeding,            setSeeding]            = useState(false)
   const [typeFilter,         setTypeFilter]         = useState<Set<ClaimType>>(new Set())
   const [focusClaimIds,      setFocusClaimIds]      = useState<string[]>([])
   const [centerView,         setCenterView]         = useState<'graph' | 'timeline'>('graph')
+  const [graphLayout,        setGraphLayout]        = useState<GraphLayout>('cose')
+  const [fitTrigger,         setFitTrigger]         = useState(0)
+  const [showShortcuts,      setShowShortcuts]      = useState(false)
+  const searchInputRef = useRef<HTMLInputElement>(null)
 
   // ── Session ───────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -61,6 +67,12 @@ export default function Home() {
 
   useEffect(() => { if (sessionId) refreshGraph() }, [sessionId, refreshGraph])
 
+  // ── Debounce search query ─────────────────────────────────────────────────
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchQuery), 300)
+    return () => clearTimeout(t)
+  }, [searchQuery])
+
   // ── Derived: claims from graph nodes ─────────────────────────────────────
   const allClaims = useMemo<Claim[]>(() =>
     graphData.nodes
@@ -79,6 +91,7 @@ export default function Home() {
         relations:              [],
         claimId:                n.claimId,
         created_at:             n.created_at,
+        notes:                  n.notes ?? '',
       })),
     [graphData.nodes]
   )
@@ -102,9 +115,18 @@ export default function Home() {
       if (n.type !== 'Claim') return
       if (parseOffset(n.time_offset) > effectiveH) return
       if (typeFilter.size > 0 && n.claim_type && !typeFilter.has(n.claim_type)) return
-      if (searchQuery) {
-        const q = searchQuery.toLowerCase()
-        if (!n.fullText?.toLowerCase().includes(q) && !n.label.toLowerCase().includes(q)) return
+      if (debouncedSearch) {
+        const q = debouncedSearch.toLowerCase()
+        const match =
+          n.fullText?.toLowerCase().includes(q) ||
+          n.label.toLowerCase().includes(q) ||
+          n.claim_type?.toLowerCase().includes(q) ||
+          n.status?.toLowerCase().includes(q) ||
+          n.source_ref?.toLowerCase().includes(q) ||
+          n.source_type?.toLowerCase().includes(q) ||
+          n.trend?.toLowerCase().includes(q) ||
+          n.time_offset?.toLowerCase().includes(q)
+        if (!match) return
       }
       visibleClaimIds.add(n.id)
     })
@@ -129,7 +151,7 @@ export default function Home() {
       e => visibleNodeIds.has(e.source) && visibleNodeIds.has(e.target)
     )
     return { nodes, edges }
-  }, [graphData, timeHours, searchQuery, typeFilter, nodeById])
+  }, [graphData, timeHours, debouncedSearch, typeFilter, nodeById])
 
   // ── Conflict node IDs ─────────────────────────────────────────────────────
   const conflictNodeIds = useMemo(() => {
@@ -152,6 +174,57 @@ export default function Home() {
       return next
     })
   }
+
+  // ── Explain conflict (extracted for keyboard shortcut) ────────────────────
+  const handleExplainConflict = useCallback(async () => {
+    if (!sessionId || !shownConflict || conflictExplaining) return
+    setConflictExplaining(true)
+    setConflictExplanation('')
+    try {
+      const text = await explainConflict(sessionId, shownConflict)
+      setConflictExplanation(text)
+    } catch { /* LLM may be unavailable */ }
+    finally { setConflictExplaining(false) }
+  }, [sessionId, shownConflict, conflictExplaining])
+
+  // ── Keyboard shortcuts ────────────────────────────────────────────────────
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement).isContentEditable) return
+      switch (e.key) {
+        case '/':
+          e.preventDefault()
+          setShowSearch(true)
+          setTimeout(() => searchInputRef.current?.focus(), 50)
+          break
+        case 'Escape':
+          setShowAddNode(false); setShowDedup(false); setShowImport(false)
+          setShowSearch(false); setSearchQuery('')
+          break
+        case 'j':
+          setConflictIdx(i => activeConflicts.length > 0 ? (i + 1) % activeConflicts.length : i)
+          break
+        case 'k':
+          setConflictIdx(i => activeConflicts.length > 0 ? (i - 1 + activeConflicts.length) % activeConflicts.length : i)
+          break
+        case 'e':
+          handleExplainConflict()
+          break
+        case 'f':
+          setFitTrigger(t => t + 1)
+          break
+        case 'n':
+          setShowAddNode(true)
+          break
+        case '?':
+          setShowShortcuts(v => !v)
+          break
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [activeConflicts.length, handleExplainConflict])
 
   // ── Demo seed ─────────────────────────────────────────────────────────────
   const handleSeedDemo = async () => {
@@ -306,6 +379,39 @@ export default function Home() {
         />
       )}
 
+      {/* ── Keyboard Shortcuts Overlay ───────────────────────────────────── */}
+      {showShortcuts && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ background: 'rgba(0,0,0,0.4)' }}
+          onClick={() => setShowShortcuts(false)}>
+          <div className="rounded-2xl shadow-2xl p-6 w-80"
+            style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}
+            onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <span className="font-semibold text-sm">Keyboard Shortcuts</span>
+              <button onClick={() => setShowShortcuts(false)} style={{ color: 'var(--text-muted)' }}>✕</button>
+            </div>
+            <div className="space-y-2 text-xs">
+              {([
+                ['/', 'Open search'],
+                ['Esc', 'Close modals / search'],
+                ['j / k', 'Next / prev conflict'],
+                ['e', 'Explain current conflict'],
+                ['f', 'Fit graph to screen'],
+                ['n', 'New evidence node'],
+                ['?', 'Toggle this panel'],
+              ] as [string, string][]).map(([key, desc]) => (
+                <div key={key} className="flex items-center justify-between">
+                  <code className="px-1.5 py-0.5 rounded text-xs font-mono"
+                    style={{ background: 'var(--surface-2)', color: 'var(--text)' }}>{key}</code>
+                  <span style={{ color: 'var(--text-muted)' }}>{desc}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Conflict Banner ───────────────────────────────────────────────── */}
       {showConflictBanner && activeConflicts.length > 0 && shownConflict && (() => {
         const meta  = CONFLICT_SEVERITY_META[shownConflict.severity]
@@ -354,15 +460,7 @@ export default function Home() {
                 className="shrink-0 text-xs px-2 py-0.5 rounded hover:opacity-70 disabled:opacity-40"
                 style={{ color: meta.text, background: meta.border + '55' }}
                 disabled={conflictExplaining}
-                onClick={async () => {
-                  setConflictExplaining(true)
-                  setConflictExplanation('')
-                  try {
-                    const text = await explainConflict(sessionId, shownConflict)
-                    setConflictExplanation(text)
-                  } catch { /* silently ignore — LLM may be unavailable */ }
-                  finally { setConflictExplaining(false) }
-                }}
+                onClick={handleExplainConflict}
                 title="Get LLM explanation for this conflict">
                 {conflictExplaining ? '…' : '✦ Explain'}
               </button>
@@ -506,6 +604,12 @@ export default function Home() {
             title="Add evidence node">
             +
           </button>
+          <button onClick={() => setShowShortcuts(v => !v)}
+            className="w-8 h-8 rounded-lg flex items-center justify-center hover:opacity-70 text-xs"
+            style={{ background: 'transparent', color: 'var(--text-muted)' }}
+            title="Keyboard shortcuts (?)">
+            ?
+          </button>
           <button onClick={refreshGraph} disabled={graphLoading}
             className="w-8 h-8 rounded-lg flex items-center justify-center hover:opacity-70 disabled:opacity-40"
             title="Refresh">
@@ -535,9 +639,10 @@ export default function Home() {
             <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
           </svg>
           <input
+            ref={searchInputRef}
             autoFocus
             type="text"
-            placeholder="Search claims and entities…"
+            placeholder="Search claims and entities… (/ to focus)"
             className="flex-1 outline-none text-sm bg-transparent"
             style={{ color: 'var(--text)' }}
             value={searchQuery}
@@ -568,6 +673,7 @@ export default function Home() {
             onReasoning={r => setReasoning(r)}
             onConflicts={c => { setConflicts(c); setShowConflictBanner(true) }}
             allClaims={allClaims}
+            searchQuery={debouncedSearch}
           />
         </div>
 
@@ -595,6 +701,29 @@ export default function Home() {
               </div>
 
               <div className="flex items-center gap-2">
+                {/* Layout picker */}
+                {centerView === 'graph' && (
+                  <div className="flex rounded-lg overflow-hidden border text-xs"
+                    style={{ borderColor: 'var(--border)' }}>
+                    {([
+                      ['cose',         '⊛', 'Force'],
+                      ['breadthfirst', '⊤', 'Tree'],
+                      ['concentric',   '◎', 'Ring'],
+                      ['grid',         '⊞', 'Grid'],
+                    ] as [GraphLayout, string, string][]).map(([name, icon, label]) => (
+                      <button key={name} onClick={() => setGraphLayout(name)}
+                        className="px-2 py-1 flex items-center gap-0.5"
+                        title={`${label} layout`}
+                        style={{
+                          background: graphLayout === name ? 'var(--brand)' : 'var(--surface)',
+                          color:      graphLayout === name ? 'white' : 'var(--text-muted)',
+                        }}>
+                        <span>{icon}</span>
+                        <span className="hidden lg:inline">{label}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {centerView === 'graph' && typeFilter.size > 0 && (
                   <button onClick={() => setTypeFilter(new Set())}
                     className="text-xs px-2 py-0.5 rounded-full"
@@ -646,6 +775,8 @@ export default function Home() {
                 conflictNodeIds={conflictNodeIds}
                 sessionId={sessionId}
                 focusClaimIds={focusClaimIds}
+                layout={graphLayout}
+                fitTrigger={fitTrigger}
               />
             </div>
             {/* Time slider — inside graph mode only */}

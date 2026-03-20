@@ -184,7 +184,8 @@ class Neo4jClient:
                        c.status AS status,
                        c.time_offset AS time_offset,
                        c.trend AS trend,
-                       c.created_at AS created_at
+                       c.created_at AS created_at,
+                       c.notes AS notes
                 ORDER BY c.created_at
                 """,
                 session_id=session_id,
@@ -202,6 +203,7 @@ class Neo4jClient:
                     "time_offset":            r["time_offset"],
                     "trend":                  r["trend"] or "unknown",
                     "created_at":             r["created_at"] or "",
+                    "notes":                  r["notes"] or "",
                 }
                 for r in result
             ]
@@ -238,6 +240,7 @@ class Neo4jClient:
                         "trend":                  c.get("trend", "unknown"),
                         "created_at":             c.get("created_at", ""),
                         "derived_from":           json.loads(c.get("derived_from") or "[]"),
+                        "notes":                  c.get("notes", ""),
                     }
 
                 for e in record["entities"]:
