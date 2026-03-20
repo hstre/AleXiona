@@ -150,7 +150,7 @@ async function shot(page, filename) {
   const ctx     = await browser.newContext({
     viewport: { width: W, height: H },
     deviceScaleFactor: 2,
-    colorScheme: 'dark',
+    colorScheme: 'light',
   });
   const page = await ctx.newPage();
 
@@ -165,11 +165,23 @@ async function shot(page, filename) {
   await injectAppState(page);
   await page.waitForTimeout(1500);
 
-  // Navigate to click "Refresh" button (triggers getGraph which is mocked)
+  // Click "Refresh" to load the mocked graph
   const refreshBtn = page.locator('button[title="Refresh"]');
   if (await refreshBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
     await refreshBtn.click();
     await page.waitForTimeout(2000);
+  }
+
+  // ── Send a chat message so the mocked streaming endpoint returns reasoning ──
+  // This populates the reasoning state needed by the Matrix and ReviewPanel
+  const textarea = page.locator('textarea').first();
+  if (await textarea.isVisible({ timeout: 2000 }).catch(() => false)) {
+    await textarea.fill('Patient has fever, dyspnea, elevated WBC and right lobe infiltrate on CT.');
+    await page.waitForTimeout(300);
+    // Press Enter to send
+    await textarea.press('Enter');
+    // Wait for the streaming mock to respond and reasoning state to be set
+    await page.waitForTimeout(2500);
   }
 
   // ── 01: Graph view ──────────────────────────────────────────────────────
