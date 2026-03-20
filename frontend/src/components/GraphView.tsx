@@ -98,6 +98,25 @@ const NODE_STYLES = [
     },
   },
   { selector: 'edge:selected', style: { 'line-color': '#f59e0b', 'target-arrow-color': '#f59e0b' } },
+  // ── Chain highlight ──────────────────────────────────────────────────────
+  {
+    selector: 'node.chain-ancestor',
+    style: {
+      'border-color': '#a78bfa', 'border-width': 3,
+      'outline-color': '#ddd6fe', 'outline-width': 3, 'outline-offset': 2,
+    },
+  },
+  {
+    selector: 'node.chain-descendant',
+    style: {
+      'border-color': '#34d399', 'border-width': 3,
+      'outline-color': '#a7f3d0', 'outline-width': 3, 'outline-offset': 2,
+    },
+  },
+  {
+    selector: 'edge.chain-edge',
+    style: { width: 3, 'line-color': '#a78bfa', 'target-arrow-color': '#a78bfa' },
+  },
 ]
 
 export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId, focusClaimIds }: Props) {
@@ -176,8 +195,44 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
         setEditSourceRef(n.data('source_ref') ?? '')
         setCounterfactual(null)
         setCfError('')
+
+        // ── Evidence-chain highlight ─────────────────────────────────────
+        cy.elements().removeClass('chain-ancestor chain-descendant chain-edge')
+        if (n.data('type') === 'Claim') {
+          const visited = new Set<string>([n.id()])
+          // BFS queue: {nodeId, isAncestor (true = upstream, false = downstream)}
+          const queue: Array<{ id: string; ancestor: boolean }> = []
+          n.connectedEdges('[label="derives_from"]').forEach((e: any) => {
+            const isAncestor = e.source().id() === n.id()   // n→target means target is n's source
+            const other = isAncestor ? e.target() : e.source()
+            e.addClass('chain-edge')
+            if (!visited.has(other.id())) {
+              visited.add(other.id())
+              other.addClass(isAncestor ? 'chain-ancestor' : 'chain-descendant')
+              queue.push({ id: other.id(), ancestor: isAncestor })
+            }
+          })
+          while (queue.length) {
+            const { id: curId, ancestor } = queue.shift()!
+            const cur = cy.$('#' + curId)
+            cur.connectedEdges('[label="derives_from"]').forEach((e: any) => {
+              e.addClass('chain-edge')
+              const other = e.source().id() === curId ? e.target() : e.source()
+              if (!visited.has(other.id())) {
+                visited.add(other.id())
+                other.addClass(ancestor ? 'chain-ancestor' : 'chain-descendant')
+                queue.push({ id: other.id(), ancestor })
+              }
+            })
+          }
+        }
       })
-      cy.on('tap', (evt: any) => { if (evt.target === cy) setSelected(null) })
+      cy.on('tap', (evt: any) => {
+        if (evt.target === cy) {
+          setSelected(null)
+          cy.elements().removeClass('chain-ancestor chain-descendant chain-edge')
+        }
+      })
       cyRef.current = cy
     })
     return () => { if (cyRef.current) { cyRef.current.destroy(); cyRef.current = null } }
@@ -296,6 +351,16 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
               <div className="w-3 h-3 rounded-sm shrink-0"
                 style={{ background: '#ef4444', outline: '2px solid #fca5a5', outlineOffset: '1px' }} />
               <span className="text-xs" style={{ color: 'var(--text-muted)' }}>conflict</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-sm shrink-0"
+                style={{ border: '3px solid #a78bfa', outline: '2px solid #ddd6fe', outlineOffset: '1px' }} />
+              <span className="text-xs" style={{ color: 'var(--text-muted)' }}>chain ancestor</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-sm shrink-0"
+                style={{ border: '3px solid #34d399', outline: '2px solid #a7f3d0', outlineOffset: '1px' }} />
+              <span className="text-xs" style={{ color: 'var(--text-muted)' }}>chain descendant</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-3 h-3 rounded-sm border-dashed border-2 shrink-0"

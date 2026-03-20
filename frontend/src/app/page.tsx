@@ -10,7 +10,7 @@ import EntityDedupModal   from '@/components/EntityDedupModal'
 import ImportModal        from '@/components/ImportModal'
 import TimeSlider, { parseOffset } from '@/components/TimeSlider'
 import TimelinePanel      from '@/components/TimelinePanel'
-import { getGraph, seedDemo, exportSession } from '@/lib/api'
+import { getGraph, seedDemo, exportSession, explainConflict } from '@/lib/api'
 import type { GraphData, Claim, ClaimType, ReasoningResult, Conflict, GraphNode } from '@/lib/api'
 import { SESSION_KEY, shortId, confPct, CONFLICT_SEVERITY_META, CLAIM_TYPE_META } from '@/lib/utils'
 
@@ -24,6 +24,8 @@ export default function Home() {
   const [graphLoading,       setGraphLoading]       = useState(false)
   const [activePanel,        setActivePanel]        = useState<'data' | 'graph' | 'review'>('graph')
   const [showConflictBanner, setShowConflictBanner] = useState(true)
+  const [conflictExplanation,  setConflictExplanation]  = useState('')
+  const [conflictExplaining,   setConflictExplaining]   = useState(false)
   const [showAddNode,        setShowAddNode]        = useState(false)
   const [showDedup,          setShowDedup]          = useState(false)
   const [showImport,         setShowImport]         = useState(false)
@@ -265,8 +267,11 @@ export default function Home() {
 
   // Keep idx in bounds; reset when conflict list changes
   useEffect(() => { setConflictIdx(0) }, [conflicts])
-  const safeIdx     = activeConflicts.length === 0 ? 0 : conflictIdx % activeConflicts.length
+  const safeIdx       = activeConflicts.length === 0 ? 0 : conflictIdx % activeConflicts.length
   const shownConflict = activeConflicts[safeIdx] ?? null
+
+  // Clear explanation when the shown conflict changes
+  useEffect(() => { setConflictExplanation(''); setConflictExplaining(false) }, [shownConflict?.id])
 
   const CLAIM_TYPES = Object.keys(CLAIM_TYPE_META) as ClaimType[]
 
@@ -343,6 +348,26 @@ export default function Home() {
               <span className="ml-1 opacity-50 font-normal">(click to focus)</span>
             </button>
 
+            {/* Explain this conflict */}
+            {sessionId && (
+              <button
+                className="shrink-0 text-xs px-2 py-0.5 rounded hover:opacity-70 disabled:opacity-40"
+                style={{ color: meta.text, background: meta.border + '55' }}
+                disabled={conflictExplaining}
+                onClick={async () => {
+                  setConflictExplaining(true)
+                  setConflictExplanation('')
+                  try {
+                    const text = await explainConflict(sessionId, shownConflict)
+                    setConflictExplanation(text)
+                  } catch { /* silently ignore — LLM may be unavailable */ }
+                  finally { setConflictExplaining(false) }
+                }}
+                title="Get LLM explanation for this conflict">
+                {conflictExplaining ? '…' : '✦ Explain'}
+              </button>
+            )}
+
             {/* Dismiss this conflict */}
             <button
               className="shrink-0 text-xs px-2 py-0.5 rounded hover:opacity-70"
@@ -358,6 +383,21 @@ export default function Home() {
               style={{ color: meta.text }}
               onClick={() => setShowConflictBanner(false)}
               title="Hide conflict bar">✕</button>
+          </div>
+        )
+      })()}
+
+      {/* ── Conflict explanation panel ─────────────────────────────────────── */}
+      {showConflictBanner && conflictExplanation && (() => {
+        const meta = CONFLICT_SEVERITY_META[shownConflict?.severity ?? 'info']
+        return (
+          <div className="px-4 py-2 text-xs shrink-0 flex items-start gap-2"
+            style={{ background: meta.bg + 'cc', borderBottom: `1px solid ${meta.border}` }}>
+            <span className="shrink-0 opacity-60 mt-0.5">✦</span>
+            <p style={{ color: meta.text, lineHeight: 1.6 }}>{conflictExplanation}</p>
+            <button className="shrink-0 opacity-50 hover:opacity-80 ml-auto"
+              style={{ color: meta.text }}
+              onClick={() => setConflictExplanation('')}>✕</button>
           </div>
         )
       })()}

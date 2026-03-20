@@ -327,6 +327,20 @@ export interface ManualClaim {
   derived_from?:          string[]   // explicit claimIds selected by the user
 }
 
+export async function explainConflict(
+  sessionId: string,
+  conflict: Pick<Conflict, 'type' | 'severity' | 'message' | 'affected_claim_ids'>,
+): Promise<string> {
+  const res = await fetch(`${API_URL}/api/graph/${sessionId}/conflicts/explain`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(conflict),
+  })
+  if (!res.ok) throw await parseError(res)
+  const data = await res.json()
+  return data.explanation as string
+}
+
 export async function addManualClaim(sessionId: string, claim: ManualClaim): Promise<void> {
   const res = await fetch(`${API_URL}/api/graph/${sessionId}/claims`, {
     method: 'POST',

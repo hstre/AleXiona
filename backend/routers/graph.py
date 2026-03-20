@@ -3,7 +3,7 @@ from models import GraphData, NodeUpdate, CounterfactualResult, Claim, ClaimType
 from pydantic import BaseModel, field_validator
 from typing import Optional
 from neo4j_client import get_db
-from llm_client import run_counterfactual, analyze_reasoning
+from llm_client import run_counterfactual, analyze_reasoning, explain_conflict as _explain_conflict
 from conflict_engine import detect_conflicts
 from api_errors import internal_error, validation_error, not_found
 
@@ -154,6 +154,66 @@ async def import_session(session_id: str, payload: ImportPayload):
     try:
         result = get_db().import_session(session_id, payload.claims)
         return result
+    except Exception as e:
+        raise internal_error(e)
+
+
+class ConflictExplainPayload(BaseModel):
+    type:                str
+    severity:            str
+    message:             str
+    affected_claim_ids:  list[str] = []
+
+
+@router.post("/{session_id}/conflicts/explain")
+async def explain_conflict(session_id: str, payload: ConflictExplainPayload):
+    try:
+        claims = get_db().get_all_claims_for_session(session_id)
+        explanation = _explain_conflict(payload.model_dump(), claims)
+        if not explanation:
+            raise validation_error("LLM explanation unavailable", code="llm_unavailable")
+        return {"explanation": explanation}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise internal_error(e)
+
+
+@router.get("/{session_id}/claims/{claim_id}/chain")
+async def get_claim_chain(session_id: str, claim_id: str):
+    """Return all claim IDs reachable via DERIVES_FROM edges (ancestors + descendants)."""
+    try:
+        db = get_db()
+        claims = db.get_all_claims_for_session(session_id)
+        claim_ids = {c["id"] for c in claims}
+        if claim_id not in claim_ids:
+            raise not_found("Claim not found in session")
+        # Build adjacency from derived_from lists (stored on each claim)
+        parents:  dict[str, list[str]] = {}   # claim -> list of sources it derives from
+        children: dict[str, list[str]] = {}   # claim -> list of claims that derive from it
+        for c in claims:
+            cid = c["id"]
+            parents.setdefault(cid, [])
+            children.setdefault(cid, [])
+            for src in c.get("derived_from") or []:
+                if src in claim_ids:
+                    parents[cid].append(src)
+                    children.setdefault(src, []).append(cid)
+
+        visited: set[str] = set()
+        queue = [claim_id]
+        while queue:
+            cur = queue.pop()
+            if cur in visited:
+                continue
+            visited.add(cur)
+            queue.extend(parents.get(cur, []))
+            queue.extend(children.get(cur, []))
+
+        chain = list(visited - {claim_id})
+        return {"claim_id": claim_id, "chain": chain}
+    except HTTPException:
+        raise
     except Exception as e:
         raise internal_error(e)
 

@@ -293,6 +293,47 @@ def run_counterfactual(
         return None
 
 
+CONFLICT_EXPLAIN_PROMPT = """You are AleXiona, a clinical reasoning assistant (NOT a diagnosing physician).
+A conflict detection rule has flagged a potential inconsistency in the clinical evidence graph.
+
+Explain in plain clinical language (3-4 sentences):
+1. Why this is clinically concerning
+2. What the most likely cause of the conflict is
+3. One concrete action the clinician should take to resolve it
+
+Use cautious, evidence-grounded language. Do not make autonomous diagnostic decisions."""
+
+
+def explain_conflict(conflict: dict, claims: list[dict]) -> str:
+    """Return a plain-language clinical explanation of a detected conflict."""
+    affected_ids = set(conflict.get("affected_claim_ids", []))
+    affected_claims = [c for c in claims if c["id"] in affected_ids]
+    claims_text = "\n".join(
+        f"- [{c['claim_type'].upper()}] {c['text']} (status: {c['status']}, support: {int(c['evidence_support_score']*100)}%)"
+        for c in affected_claims
+    )
+    prompt = (
+        f"Conflict type: {conflict['type']}\n"
+        f"Severity: {conflict['severity']}\n"
+        f"Message: {conflict['message']}\n"
+        f"\nAffected claims:\n{claims_text if claims_text else '(none found)'}"
+    )
+    try:
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": CONFLICT_EXPLAIN_PROMPT},
+                {"role": "user",   "content": prompt},
+            ],
+            temperature=0.3,
+            max_tokens=280,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        log.warning("explain_conflict failed: %s", e)
+        return ""
+
+
 def answer_with_context(
     user_message: str,
     history: list[ChatMessage],
