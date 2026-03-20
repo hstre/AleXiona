@@ -213,3 +213,64 @@ def test_link_possible_related_noop_when_empty_list():
     client.driver = MagicMock()
     client.link_possible_related([], "sess-1")
     client.driver.session.assert_not_called()
+
+
+# ── update_claim notes field ──────────────────────────────────────────────────
+
+def test_update_claim_notes_field():
+    """update_claim must include notes in the SET clause when provided."""
+    client, session = _make_client_with_mock_session()
+    client.update_claim("abc-123", {"notes": "Follow-up echo scheduled"})
+    session.run.assert_called_once()
+    cypher = session.run.call_args[0][0]
+    assert "c.notes = $notes" in cypher
+
+
+def test_update_claim_notes_empty_string():
+    """Empty notes string is a valid value and should be sent to Cypher."""
+    client, session = _make_client_with_mock_session()
+    client.update_claim("abc-123", {"notes": ""})
+    session.run.assert_called_once()
+    kwargs = session.run.call_args[1]
+    assert kwargs["notes"] == ""
+
+
+def test_update_claim_notes_alongside_status():
+    """notes can be updated together with other fields."""
+    client, session = _make_client_with_mock_session()
+    client.update_claim("abc-123", {"status": "resolved", "notes": "Resolved after treatment"})
+    cypher = session.run.call_args[0][0]
+    assert "c.status = $status" in cypher
+    assert "c.notes = $notes" in cypher
+
+
+# ── get_all_claims_for_session notes field ────────────────────────────────────
+
+def _make_session_with_claims(rows):
+    """Return a mocked Neo4jClient whose session.run().data() returns rows."""
+    import neo4j_client as nc
+    with patch.object(nc.Neo4jClient, '__init__', return_value=None):
+        client = nc.Neo4jClient.__new__(nc.Neo4jClient)
+
+    mock_result = MagicMock()
+    mock_result.__iter__ = MagicMock(return_value=iter(rows))
+
+    mock_session = MagicMock()
+    mock_session.run.return_value = mock_result
+
+    mock_driver = MagicMock()
+    mock_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+    mock_driver.session.return_value.__exit__ = MagicMock(return_value=False)
+    client.driver = mock_driver
+    return client, mock_session
+
+
+def test_get_all_claims_notes_present():
+    """get_all_claims_for_session Cypher must SELECT notes column."""
+    client, session = _make_session_with_claims([])
+    try:
+        client.get_all_claims_for_session("sess-1")
+    except Exception:
+        pass  # we only care that the query was built correctly
+    cypher = session.run.call_args[0][0]
+    assert "notes" in cypher

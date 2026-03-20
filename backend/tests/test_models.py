@@ -202,3 +202,37 @@ class TestApiModels:
     def test_chat_message(self):
         m = ChatMessage(role="user", content="Hello")
         assert m.role == "user"
+
+
+# ── NodeUpdate notes field ─────────────────────────────────────────────────────
+
+from models import NodeUpdate
+
+
+class TestNodeUpdateNotes:
+    def test_notes_defaults_to_none(self):
+        u = NodeUpdate()
+        assert u.notes is None
+
+    def test_notes_accepts_string(self):
+        u = NodeUpdate(notes="Follow-up echo scheduled")
+        assert u.notes == "Follow-up echo scheduled"
+
+    def test_notes_accepts_empty_string(self):
+        u = NodeUpdate(notes="")
+        assert u.notes == ""
+
+    def test_notes_accepts_none_explicitly(self):
+        u = NodeUpdate(notes=None)
+        assert u.notes is None
+
+    def test_notes_alongside_other_fields(self):
+        u = NodeUpdate(text="Fever resolved", status="resolved", notes="Apyrexial for 24h")
+        assert u.notes == "Apyrexial for 24h"
+        assert u.text == "Fever resolved"
+
+    def test_node_update_all_none_is_valid(self):
+        """NodeUpdate with no fields set should be valid (partial patch)."""
+        u = NodeUpdate()
+        assert u.text is None
+        assert u.notes is None

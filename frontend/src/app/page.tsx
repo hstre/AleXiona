@@ -11,6 +11,7 @@ import EntityDedupModal   from '@/components/EntityDedupModal'
 import ImportModal        from '@/components/ImportModal'
 import TimeSlider, { parseOffset } from '@/components/TimeSlider'
 import TimelinePanel      from '@/components/TimelinePanel'
+import StatsPanel        from '@/components/StatsPanel'
 import { getGraph, seedDemo, exportSession, explainConflict } from '@/lib/api'
 import type { GraphData, Claim, ClaimType, ReasoningResult, Conflict, GraphNode } from '@/lib/api'
 import { SESSION_KEY, shortId, confPct, CONFLICT_SEVERITY_META, CLAIM_TYPE_META } from '@/lib/utils'
@@ -41,6 +42,8 @@ export default function Home() {
   const [graphLayout,        setGraphLayout]        = useState<GraphLayout>('cose')
   const [fitTrigger,         setFitTrigger]         = useState(0)
   const [showShortcuts,      setShowShortcuts]      = useState(false)
+  const [showStats,          setShowStats]          = useState(false)
+  const [demoLang,           setDemoLang]           = useState<'en' | 'de'>('en')
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   // ── Session ───────────────────────────────────────────────────────────────
@@ -231,7 +234,7 @@ export default function Home() {
     if (!sessionId) return
     setSeeding(true)
     try {
-      const result = await seedDemo(sessionId)
+      const result = await seedDemo(sessionId, demoLang)
       if (result.seeded) await refreshGraph()
       else alert(result.reason ?? 'Session already has data')
     } catch (e: any) {
@@ -258,48 +261,82 @@ export default function Home() {
     }
   }
 
-  // ── Report ────────────────────────────────────────────────────────────────
-  const handleGenerateReport = () => {
+  // ── Report (PDF) ──────────────────────────────────────────────────────────
+  const handleGenerateReport = async () => {
     if (!reasoning) return
-    const lines = [
-      'AleXiona Clinical Reasoning Report',
-      `Session: ${sessionId}`,
-      `Date: ${new Date().toLocaleString()}`,
-      '',
-      'LEADING HYPOTHESIS',
-      reasoning.leading_hypothesis,
-      `Evidence Support Score: ${confPct(reasoning.evidence_support_score)}%`,
-      '',
-      'SUPPORTING EVIDENCE',
-      ...reasoning.supporting_evidence.map(e => `  + ${e}`),
-      '',
-      'CONFLICTING EVIDENCE',
-      ...reasoning.conflicting_evidence.map(e => `  ! ${e}`),
-      '',
-      'MISSING EVIDENCE',
-      ...reasoning.missing_evidence.map(m =>
-        `  - ${m.test_or_type}: ${m.description} [clarifies: ${m.needed_for}]`),
-      '',
-      'ALTERNATIVE HYPOTHESES',
-      ...reasoning.alternatives.map(a => `  - ${a.label} (${confPct(a.evidence_support_score)}%)`),
-      '',
-      'CONFLICTS DETECTED',
-      ...conflicts.map(c => `  [${c.severity.toUpperCase()}] ${c.message}`),
-      '',
-      `EVIDENCE NODES (${allClaims.length})`,
-      ...allClaims.map(c =>
-        `  [${c.claim_type.toUpperCase()} · ${confPct(c.evidence_support_score)}% · ${c.status}] ${c.text}`),
-      '',
-      '---',
-      'This report is a reasoning aid. All conclusions require clinician verification.',
-    ]
-    const blob = new Blob([lines.join('\n')], { type: 'text/plain' })
-    const url  = URL.createObjectURL(blob)
-    const a    = document.createElement('a')
-    a.href = url
-    a.download = `alexiona-report-${shortId(sessionId ?? '')}.txt`
-    a.click()
-    URL.revokeObjectURL(url)
+    const { jsPDF } = await import('jspdf')
+    const doc  = new jsPDF({ unit: 'mm', format: 'a4' })
+    const W    = 190  // usable width
+    const ml   = 10   // left margin
+    let   y    = 15
+
+    const line = (text: string, size = 10, style: 'normal' | 'bold' = 'normal', color = '#111111') => {
+      doc.setFontSize(size)
+      doc.setFont('helvetica', style)
+      doc.setTextColor(color)
+      const lines = doc.splitTextToSize(text, W)
+      lines.forEach((l: string) => {
+        if (y > 275) { doc.addPage(); y = 15 }
+        doc.text(l, ml, y)
+        y += size * 0.45
+      })
+      y += 1
+    }
+
+    const section = (title: string) => {
+      y += 3
+      if (y > 270) { doc.addPage(); y = 15 }
+      doc.setDrawColor('#e5e7eb')
+      doc.setLineWidth(0.3)
+      doc.line(ml, y, ml + W, y)
+      y += 4
+      line(title, 11, 'bold', '#1d4ed8')
+      y += 1
+    }
+
+    // Header
+    line('AleXiona – Clinical Reasoning Report', 16, 'bold', '#111827')
+    line(`Session: ${sessionId}   |   ${new Date().toLocaleString()}`, 8, 'normal', '#6b7280')
+    line('This report is a reasoning aid. All conclusions require clinician verification.', 8, 'normal', '#ef4444')
+    y += 2
+
+    section('Leading Hypothesis')
+    line(reasoning.leading_hypothesis, 11, 'bold')
+    line(`Evidence Support Score: ${confPct(reasoning.evidence_support_score)}%`, 10)
+
+    if (reasoning.supporting_evidence.length > 0) {
+      section('Supporting Evidence')
+      reasoning.supporting_evidence.forEach(e => line(`+ ${e}`, 9))
+    }
+
+    if (reasoning.conflicting_evidence.length > 0) {
+      section('Conflicting Evidence')
+      reasoning.conflicting_evidence.forEach(e => line(`! ${e}`, 9))
+    }
+
+    if (reasoning.missing_evidence.length > 0) {
+      section('Missing Evidence')
+      reasoning.missing_evidence.forEach(m =>
+        line(`- ${m.test_or_type}: ${m.description}  [clarifies: ${m.needed_for}]`, 9))
+    }
+
+    if (reasoning.alternatives.length > 0) {
+      section('Alternative Hypotheses')
+      reasoning.alternatives.forEach(a =>
+        line(`- ${a.label}  (${confPct(a.evidence_support_score)}%)`, 9))
+    }
+
+    if (conflicts.length > 0) {
+      section('Conflicts Detected')
+      conflicts.forEach(c =>
+        line(`[${c.severity.toUpperCase()}] ${c.message}`, 9))
+    }
+
+    section(`Evidence Nodes (${allClaims.length})`)
+    allClaims.forEach(c =>
+      line(`[${c.claim_type.toUpperCase()} · ${confPct(c.evidence_support_score)}% · ${c.status}]  ${c.text}`, 9))
+
+    doc.save(`alexiona-report-${shortId(sessionId ?? '')}.pdf`)
   }
 
   const newSession = () => {
@@ -549,11 +586,26 @@ export default function Home() {
 
         <div className="flex items-center gap-1.5">
           {claimCount === 0 && (
-            <button onClick={handleSeedDemo} disabled={seeding}
-              className="hidden sm:flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-all disabled:opacity-50"
-              style={{ background: 'var(--brand-pale)', color: 'var(--brand)', border: '1px solid var(--brand)' }}>
-              {seeding ? '…' : '▶ Load Demo'}
-            </button>
+            <div className="hidden sm:flex items-center rounded-lg overflow-hidden border"
+              style={{ borderColor: 'var(--brand)' }}>
+              <button onClick={handleSeedDemo} disabled={seeding}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 font-medium transition-all disabled:opacity-50"
+                style={{ background: 'var(--brand-pale)', color: 'var(--brand)' }}>
+                {seeding ? '…' : '▶ Demo'}
+              </button>
+              <div className="flex border-l" style={{ borderColor: 'var(--brand)' }}>
+                {(['en', 'de'] as const).map(l => (
+                  <button key={l} onClick={() => setDemoLang(l)}
+                    className="text-xs px-2 py-1.5 font-medium uppercase"
+                    style={{
+                      background: demoLang === l ? 'var(--brand)' : 'var(--brand-pale)',
+                      color:      demoLang === l ? 'white'        : 'var(--brand)',
+                    }}>
+                    {l}
+                  </button>
+                ))}
+              </div>
+            </div>
           )}
           <button onClick={() => setShowSearch(v => !v)}
             className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors"
@@ -724,6 +776,18 @@ export default function Home() {
                     ))}
                   </div>
                 )}
+                {centerView === 'graph' && (
+                  <button onClick={() => setShowStats(v => !v)}
+                    className="text-xs px-2 py-1 rounded-lg border"
+                    style={{
+                      background: showStats ? 'var(--brand-pale)' : 'var(--surface)',
+                      color:      showStats ? 'var(--brand)'      : 'var(--text-muted)',
+                      borderColor: showStats ? 'var(--brand)'     : 'var(--border)',
+                    }}
+                    title="Toggle stats panel">
+                    ◈ Stats
+                  </button>
+                )}
                 {centerView === 'graph' && typeFilter.size > 0 && (
                   <button onClick={() => setTypeFilter(new Set())}
                     className="text-xs px-2 py-0.5 rounded-full"
@@ -763,6 +827,11 @@ export default function Home() {
                   )
                 })}
               </div>
+            )}
+
+            {/* Stats panel — only in graph mode, toggled */}
+            {centerView === 'graph' && showStats && (
+              <StatsPanel data={filteredGraph} />
             )}
           </div>
 

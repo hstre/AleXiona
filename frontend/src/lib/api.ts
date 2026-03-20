@@ -266,8 +266,8 @@ export async function deleteSession(sessionId: string): Promise<void> {
   if (!res.ok) throw await parseError(res)
 }
 
-export async function seedDemo(sessionId: string): Promise<{ seeded: boolean; claim_count?: number; reason?: string }> {
-  const res = await fetch(`${API_URL}/api/demo/seed/${sessionId}`, { method: 'POST' })
+export async function seedDemo(sessionId: string, lang: 'en' | 'de' = 'en'): Promise<{ seeded: boolean; claim_count?: number; reason?: string }> {
+  const res = await fetch(`${API_URL}/api/demo/seed/${sessionId}?lang=${lang}`, { method: 'POST' })
   if (!res.ok) throw await parseError(res)
   return res.json()
 }

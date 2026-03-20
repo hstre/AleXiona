@@ -123,11 +123,128 @@ DEMO_CLAIMS = [
 ]
 
 
-def seed_demo(session_id: str):
+DEMO_CLAIMS_DE = [
+    # t+0h – Aufnahme
+    {
+        "text": "Patient stellt sich mit Hochfieber (39,4 °C) seit 2 Tagen vor",
+        "claim_type": "symptom", "source_type": "clinician",
+        "time_offset": "t+0h", "trend": "worsening",
+        "evidence_support_score": 0.95, "status": "active",
+        "entities": ["Fieber", "39,4°C"],
+        "relations": [{"from_entity": "Fieber", "to_entity": "Infektion", "type": "indicates"}],
+    },
+    {
+        "text": "Dyspnoe in Ruhe mit O2-Sättigung 91% bei Raumluft",
+        "claim_type": "symptom", "source_type": "clinician",
+        "time_offset": "t+0h", "trend": "worsening",
+        "evidence_support_score": 0.90, "status": "active",
+        "entities": ["Dyspnoe", "O2-Sättigung", "91%"],
+        "relations": [{"from_entity": "Dyspnoe", "to_entity": "Ateminsuffizienz", "type": "indicates"}],
+    },
+    {
+        "text": "Produktiver Husten mit gelblich-grünem Sputum",
+        "claim_type": "symptom", "source_type": "clinician",
+        "time_offset": "t+0h", "trend": "stable",
+        "evidence_support_score": 0.85, "status": "active",
+        "entities": ["Husten", "Sputum"],
+        "relations": [{"from_entity": "Husten", "to_entity": "Pneumonie", "type": "indicates"}],
+    },
+    # t+6h – Laborbefunde
+    {
+        "text": "Leukozyten erhöht: 16.400/μL (Referenz 4.000–10.000)",
+        "claim_type": "lab", "source_type": "lab_system",
+        "time_offset": "t+6h", "trend": "worsening",
+        "evidence_support_score": 0.98, "status": "active",
+        "entities": ["Leukozyten", "16.400/μL"],
+        "relations": [{"from_entity": "Leukozyten", "to_entity": "Leukozytose", "type": "is"},
+                      {"from_entity": "Leukozytose", "to_entity": "Bakterielle Infektion", "type": "indicates"}],
+    },
+    {
+        "text": "CRP deutlich erhöht: 184 mg/L (Referenz <5 mg/L)",
+        "claim_type": "lab", "source_type": "lab_system",
+        "time_offset": "t+6h", "trend": "worsening",
+        "evidence_support_score": 0.97, "status": "active",
+        "entities": ["CRP", "184 mg/L"],
+        "relations": [{"from_entity": "CRP", "to_entity": "Systemische Entzündung", "type": "indicates"}],
+    },
+    {
+        "text": "Procalcitonin 2,8 ng/mL – bakterielle Infektion wahrscheinlich",
+        "claim_type": "lab", "source_type": "lab_system",
+        "time_offset": "t+6h", "trend": "stable",
+        "evidence_support_score": 0.88, "status": "active",
+        "entities": ["Procalcitonin", "2,8 ng/mL"],
+        "relations": [{"from_entity": "Procalcitonin", "to_entity": "Bakterielle Infektion", "type": "supports"}],
+    },
+    # t+8h – Bildgebung
+    {
+        "text": "CT-Thorax: Konsolidierung im rechten Unterlappen mit Luftbronchogramm",
+        "claim_type": "imaging", "source_type": "imaging_model",
+        "time_offset": "t+8h", "trend": "stable",
+        "evidence_support_score": 0.99, "status": "active",
+        "entities": ["Rechter Unterlappen", "Konsolidierung", "Luftbronchogramm"],
+        "relations": [{"from_entity": "Konsolidierung", "to_entity": "Pneumonie", "type": "indicates"}],
+    },
+    {
+        "text": "Kein Pleuraerguss, kein Nachweis einer Lungenembolie im CT",
+        "claim_type": "imaging", "source_type": "imaging_model",
+        "time_offset": "t+8h", "trend": "stable",
+        "evidence_support_score": 0.92, "status": "active",
+        "entities": ["Pleuraerguss", "Lungenembolie"],
+        "relations": [{"from_entity": "CT", "to_entity": "Lungenembolie", "type": "rules_out"}],
+    },
+    # t+8h – Diagnosen
+    {
+        "text": "Ambulant erworbene Pneumonie (CAP) – Leitdiagnose",
+        "claim_type": "diagnosis", "source_type": "llm",
+        "time_offset": "t+8h", "trend": "stable",
+        "evidence_support_score": 0.82, "status": "active",
+        "entities": ["Ambulant erworbene Pneumonie", "CAP"],
+        "relations": [{"from_entity": "CAP", "to_entity": "Bakterielle Infektion", "type": "is"}],
+    },
+    {
+        "text": "Sepsis sekundär bei Pneumonie – kann nicht ausgeschlossen werden",
+        "claim_type": "hypothesis", "source_type": "llm",
+        "time_offset": "t+8h", "trend": "unknown",
+        "evidence_support_score": 0.45, "status": "active",
+        "entities": ["Sepsis", "Pneumonie"],
+        "relations": [{"from_entity": "Pneumonie", "to_entity": "Sepsis", "type": "causes"}],
+    },
+    # t+24h – Verlauf
+    {
+        "text": "Nach antibiotischer Therapie (Amoxicillin-Clavulansäure): Fieber abgeklungen",
+        "claim_type": "finding", "source_type": "clinician",
+        "time_offset": "t+24h", "trend": "improving",
+        "evidence_support_score": 0.90, "status": "active",
+        "entities": ["Amoxicillin-Clavulansäure", "Fieber"],
+        "relations": [{"from_entity": "Amoxicillin-Clavulansäure", "to_entity": "Fieber", "type": "reduces"}],
+    },
+    {
+        "text": "O2-Sättigung auf 96% nach 2L Sauerstoffgabe verbessert",
+        "claim_type": "finding", "source_type": "clinician",
+        "time_offset": "t+24h", "trend": "improving",
+        "evidence_support_score": 0.93, "status": "active",
+        "entities": ["O2-Sättigung", "96%", "Sauerstoffgabe"],
+        "relations": [{"from_entity": "Sauerstoffgabe", "to_entity": "O2-Sättigung", "type": "enables"}],
+    },
+    # t+24h – Überholt
+    {
+        "text": "Initialverdacht auf virale Pneumonie – durch bakterielle Befunde überholt",
+        "claim_type": "hypothesis", "source_type": "llm",
+        "time_offset": "t+0h", "trend": "unknown",
+        "evidence_support_score": 0.20, "status": "superseded",
+        "entities": ["Virale Pneumonie"],
+        "relations": [],
+    },
+]
+
+
+def seed_demo(session_id: str, lang: str = "en"):
     uri      = os.getenv("NEO4J_URI",      "bolt://localhost:7687")
     user     = os.getenv("NEO4J_USER",     "neo4j")
     password = os.getenv("NEO4J_PASSWORD", "alexiona123")
     driver = GraphDatabase.driver(uri, auth=(user, password))
+
+    claims = DEMO_CLAIMS_DE if lang == "de" else DEMO_CLAIMS
 
     with driver.session() as s:
         # Check if already seeded
@@ -142,7 +259,7 @@ def seed_demo(session_id: str):
         created = []
         now_base = datetime.now(timezone.utc)
 
-        for i, claim in enumerate(DEMO_CLAIMS):
+        for i, claim in enumerate(claims):
             cid = str(uuid.uuid4())
             created.append(cid)
             ts  = now_base.isoformat()
@@ -189,4 +306,4 @@ def seed_demo(session_id: str):
                 )
 
     driver.close()
-    return {"seeded": True, "claim_count": len(DEMO_CLAIMS)}
+    return {"seeded": True, "claim_count": len(claims)}
