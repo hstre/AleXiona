@@ -240,6 +240,7 @@ export default function Home() {
           sessionId={sessionId}
           onClose={() => setShowAddNode(false)}
           onCreated={refreshGraph}
+          allClaims={allClaims}
         />
       )}
 

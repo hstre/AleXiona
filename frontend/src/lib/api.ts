@@ -13,7 +13,7 @@ export type SourceType =
 export type ClaimStatus = 'active' | 'resolved' | 'superseded'
 export type ClaimTrend  = 'improving' | 'worsening' | 'stable' | 'unknown'
 
-export type ConflictType     = 'competing_hypothesis' | 'negation' | 'evidence_mismatch' | 'timeline_gap'
+export type ConflictType     = 'competing_hypothesis' | 'negation' | 'evidence_mismatch' | 'timeline_gap' | 'therapy_without_indication' | 'stale_hypothesis' | 'contradictory_values'
 export type ConflictSeverity = 'error' | 'warning' | 'info'
 
 // ── Core models ─────────────────────────────────────────────────────────────
@@ -255,6 +255,7 @@ export interface ManualClaim {
   time_offset:            string
   trend:                  ClaimTrend
   status:                 ClaimStatus
+  derived_from?:          string[]   // explicit claimIds selected by the user
 }
 
 export async function addManualClaim(sessionId: string, claim: ManualClaim): Promise<void> {

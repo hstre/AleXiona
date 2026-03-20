@@ -16,6 +16,7 @@ class ManualClaimPayload(BaseModel):
     time_offset:            Optional[str] = None
     trend:                  ClaimTrend  = ClaimTrend.unknown
     status:                 ClaimStatus = ClaimStatus.active
+    derived_from:           list[str]   = []   # explicit claimIds chosen by the user
 
 router = APIRouter(prefix="/api/graph", tags=["graph"])
 
@@ -34,8 +35,11 @@ async def add_manual_claim(session_id: str, payload: ManualClaimPayload):
             status=payload.status,
             time_offset=payload.time_offset,
             trend=payload.trend,
+            derived_from=payload.derived_from,
         )
-        db.store_claims([claim], session_id)
+        new_ids = db.store_claims([claim], session_id)
+        if payload.derived_from and new_ids:
+            db.link_explicit_derived_from(new_ids[0], payload.derived_from)
         return {"status": "created"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

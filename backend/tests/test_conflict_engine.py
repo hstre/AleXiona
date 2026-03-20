@@ -291,3 +291,187 @@ class TestEdgeCases:
     def test_returns_list_type(self):
         result = detect_conflicts([make_claim("c1", "Some claim")])
         assert isinstance(result, list)
+
+
+# ── Rule 5: Therapy without active indication ─────────────────────────────────
+
+class TestTherapyWithoutIndication:
+    def test_therapy_targets_superseded_diagnosis(self):
+        claims = [
+            make_claim("d1", "Pulmonary embolism diagnosis", claim_type="diagnosis", status="superseded"),
+            make_claim("t1", "Anticoagulation therapy for pulmonary embolism", claim_type="therapy"),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert any(c.type == ConflictType.therapy_without_indication for c in conflicts)
+
+    def test_therapy_targets_resolved_diagnosis(self):
+        claims = [
+            make_claim("d1", "Pneumonia diagnosis confirmed", claim_type="diagnosis", status="resolved"),
+            make_claim("t1", "Antibiotic therapy for pneumonia diagnosis", claim_type="therapy"),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert any(c.type == ConflictType.therapy_without_indication for c in conflicts)
+
+    def test_therapy_with_active_diagnosis_no_conflict(self):
+        """Active diagnosis supports the therapy — no conflict."""
+        claims = [
+            make_claim("d1", "Pulmonary embolism active diagnosis", claim_type="diagnosis"),
+            make_claim("t1", "Anticoagulation therapy for pulmonary embolism", claim_type="therapy"),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert not any(c.type == ConflictType.therapy_without_indication for c in conflicts)
+
+    def test_therapy_no_overlap_no_conflict(self):
+        """Therapy and superseded diagnosis share <2 terms — not linked."""
+        claims = [
+            make_claim("d1", "Cardiac failure diagnosis", claim_type="diagnosis", status="superseded"),
+            make_claim("t1", "Antibiotic treatment for infection", claim_type="therapy"),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert not any(c.type == ConflictType.therapy_without_indication for c in conflicts)
+
+    def test_therapy_without_indication_is_warning(self):
+        claims = [
+            make_claim("d1", "Pneumonia diagnosis treatment plan", claim_type="diagnosis", status="superseded"),
+            make_claim("t1", "Antibiotic therapy for pneumonia treatment", claim_type="therapy"),
+        ]
+        c = next(x for x in detect_conflicts(claims) if x.type == ConflictType.therapy_without_indication)
+        assert c.severity == ConflictSeverity.warning
+
+    def test_affected_ids_include_therapy_and_diagnosis(self):
+        claims = [
+            make_claim("d1", "Pulmonary embolism diagnosis confirmed", claim_type="diagnosis", status="superseded"),
+            make_claim("t1", "Anticoagulation pulmonary embolism therapy", claim_type="therapy"),
+        ]
+        c = next(x for x in detect_conflicts(claims) if x.type == ConflictType.therapy_without_indication)
+        assert "t1" in c.affected_claim_ids
+        assert "d1" in c.affected_claim_ids
+
+
+# ── Rule 6: Stale hypothesis ──────────────────────────────────────────────────
+
+class TestStaleHypothesis:
+    def test_hypothesis_only_superseded_evidence_triggers(self):
+        claims = [
+            make_claim("e1", "CRP elevated troponin result", claim_type="lab", status="superseded"),
+            make_claim("h1", "Cardiac hypothesis elevated troponin", claim_type="hypothesis"),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert any(c.type == ConflictType.stale_hypothesis for c in conflicts)
+
+    def test_hypothesis_with_active_evidence_no_conflict(self):
+        claims = [
+            make_claim("e1", "CRP elevated troponin result", claim_type="lab", status="superseded"),
+            make_claim("e2", "CRP elevated troponin current", claim_type="lab", status="active"),
+            make_claim("h1", "Cardiac hypothesis elevated troponin", claim_type="hypothesis"),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert not any(c.type == ConflictType.stale_hypothesis for c in conflicts)
+
+    def test_hypothesis_no_evidence_overlap_no_conflict(self):
+        """Hypothesis doesn't share terms with any evidence — rule doesn't fire."""
+        claims = [
+            make_claim("e1", "Kidney creatinine level result", claim_type="lab", status="superseded"),
+            make_claim("h1", "Cardiac arrest hypothesis possible", claim_type="hypothesis"),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert not any(c.type == ConflictType.stale_hypothesis for c in conflicts)
+
+    def test_stale_hypothesis_is_warning(self):
+        claims = [
+            make_claim("e1", "Troponin elevated cardiac injury result", claim_type="lab", status="superseded"),
+            make_claim("h1", "Troponin elevated cardiac hypothesis injury", claim_type="hypothesis"),
+        ]
+        c = next(x for x in detect_conflicts(claims) if x.type == ConflictType.stale_hypothesis)
+        assert c.severity == ConflictSeverity.warning
+
+    def test_stale_diagnosis_also_triggers(self):
+        """Rule applies to diagnosis-type claims, not only hypothesis."""
+        claims = [
+            make_claim("e1", "Infiltrate imaging chest finding", claim_type="imaging", status="superseded"),
+            make_claim("d1", "Infiltrate chest imaging diagnosis", claim_type="diagnosis"),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert any(c.type == ConflictType.stale_hypothesis for c in conflicts)
+
+    def test_stale_hypothesis_affected_ids(self):
+        claims = [
+            make_claim("e1", "CRP elevated troponin result", claim_type="lab", status="superseded"),
+            make_claim("h1", "Cardiac hypothesis elevated troponin", claim_type="hypothesis"),
+        ]
+        c = next(x for x in detect_conflicts(claims) if x.type == ConflictType.stale_hypothesis)
+        assert "h1" in c.affected_claim_ids
+        assert "e1" in c.affected_claim_ids
+
+
+# ── Rule 7: Contradictory quantitative values ────────────────────────────────
+
+class TestContradictoryValues:
+    def test_elevated_vs_normal_triggers(self):
+        claims = [
+            make_claim("e1", "CRP elevated above reference range", claim_type="lab"),
+            make_claim("e2", "CRP within normal limits reference range", claim_type="lab"),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert any(c.type == ConflictType.contradictory_values for c in conflicts)
+
+    def test_increased_vs_decreased_triggers(self):
+        claims = [
+            make_claim("e1", "Leukocytes significantly increased blood count", claim_type="lab"),
+            make_claim("e2", "Leukocytes decreased blood count result", claim_type="lab"),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert any(c.type == ConflictType.contradictory_values for c in conflicts)
+
+    def test_german_erhöht_vs_normwertig(self):
+        claims = [
+            make_claim("e1", "Troponin erhöht beim Patienten festgestellt", claim_type="finding"),
+            make_claim("e2", "Troponin normwertig beim Patienten gemessen", claim_type="finding"),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert any(c.type == ConflictType.contradictory_values for c in conflicts)
+
+    def test_both_elevated_no_conflict(self):
+        claims = [
+            make_claim("e1", "CRP elevated above reference", claim_type="lab"),
+            make_claim("e2", "CRP elevated significantly high", claim_type="lab"),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert not any(c.type == ConflictType.contradictory_values for c in conflicts)
+
+    def test_no_shared_terms_no_conflict(self):
+        claims = [
+            make_claim("e1", "CRP elevated above threshold", claim_type="lab"),
+            make_claim("e2", "Troponin within normal limits", claim_type="lab"),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert not any(c.type == ConflictType.contradictory_values for c in conflicts)
+
+    def test_negation_pair_not_double_counted(self):
+        """A pair caught by the negation rule should not also fire contradictory_values."""
+        claims = [
+            make_claim("e1", "Infiltrate elevated found in lung tissue"),
+            make_claim("e2", "No infiltrate elevated found in lung tissue"),
+        ]
+        conflicts = detect_conflicts(claims)
+        types = [c.type for c in conflicts]
+        # negation fires; contradictory_values must not (negation excluded from rule 7)
+        assert ConflictType.negation in types
+        assert ConflictType.contradictory_values not in types
+
+    def test_contradictory_values_is_error_severity(self):
+        claims = [
+            make_claim("e1", "CRP elevated above reference range", claim_type="lab"),
+            make_claim("e2", "CRP within normal limits reference range", claim_type="lab"),
+        ]
+        c = next(x for x in detect_conflicts(claims) if x.type == ConflictType.contradictory_values)
+        assert c.severity == ConflictSeverity.error
+
+    def test_only_evidence_types_checked(self):
+        """contradictory_values only fires on evidence-type claims, not therapy/diagnosis."""
+        claims = [
+            make_claim("t1", "Anticoagulation elevated dose therapy", claim_type="therapy"),
+            make_claim("d1", "Anticoagulation normal dose diagnosis", claim_type="diagnosis"),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert not any(c.type == ConflictType.contradictory_values for c in conflicts)

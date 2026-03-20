@@ -1,28 +1,35 @@
 'use client'
 
 import { useState } from 'react'
-import type { ClaimType, SourceType, ClaimTrend, ClaimStatus, ManualClaim } from '@/lib/api'
+import type { ClaimType, SourceType, ClaimTrend, ClaimStatus, ManualClaim, Claim } from '@/lib/api'
 import { addManualClaim } from '@/lib/api'
-import { getTypeMeta, CLAIM_TYPE_META } from '@/lib/utils'
+import { getTypeMeta, CLAIM_TYPE_META, shortId } from '@/lib/utils'
 
 interface Props {
-  sessionId: string
-  onClose:   () => void
-  onCreated: () => void
+  sessionId:  string
+  onClose:    () => void
+  onCreated:  () => void
+  allClaims?: Claim[]
 }
 
 const CLAIM_TYPES = Object.keys(CLAIM_TYPE_META) as ClaimType[]
 
-export default function AddNodeModal({ sessionId, onClose, onCreated }: Props) {
-  const [text,   setText]   = useState('')
-  const [type,   setType]   = useState<ClaimType>('finding')
-  const [source, setSource] = useState<SourceType>('clinician')
-  const [ref,    setRef]    = useState('')
-  const [offset, setOffset] = useState('')
-  const [trend,  setTrend]  = useState<ClaimTrend>('unknown')
-  const [score,  setScore]  = useState(0.8)
-  const [saving, setSaving] = useState(false)
-  const [error,  setError]  = useState('')
+export default function AddNodeModal({ sessionId, onClose, onCreated, allClaims = [] }: Props) {
+  const [text,        setText]        = useState('')
+  const [type,        setType]        = useState<ClaimType>('finding')
+  const [source,      setSource]      = useState<SourceType>('clinician')
+  const [ref,         setRef]         = useState('')
+  const [offset,      setOffset]      = useState('')
+  const [trend,       setTrend]       = useState<ClaimTrend>('unknown')
+  const [score,       setScore]       = useState(0.8)
+  const [derivedFrom, setDerivedFrom] = useState<string[]>([])
+  const [saving,      setSaving]      = useState(false)
+  const [error,       setError]       = useState('')
+
+  const toggleDerived = (claimId: string) =>
+    setDerivedFrom(prev =>
+      prev.includes(claimId) ? prev.filter(id => id !== claimId) : [...prev, claimId]
+    )
 
   const handleSubmit = async () => {
     if (!text.trim()) { setError('Text is required'); return }
@@ -38,6 +45,7 @@ export default function AddNodeModal({ sessionId, onClose, onCreated }: Props) {
         time_offset:            offset.trim() || '',
         trend,
         status:                 'active',
+        derived_from:           derivedFrom.length > 0 ? derivedFrom : undefined,
       }
       await addManualClaim(sessionId, claim)
       onCreated()
@@ -48,6 +56,9 @@ export default function AddNodeModal({ sessionId, onClose, onCreated }: Props) {
       setSaving(false)
     }
   }
+
+  // Claims eligible as derivation sources (active + has a claimId)
+  const sourceCandidates = allClaims.filter(c => c.status === 'active' && c.claimId)
 
   const meta = getTypeMeta(type)
 
@@ -148,17 +159,61 @@ export default function AddNodeModal({ sessionId, onClose, onCreated }: Props) {
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className={labelCls} style={{ color: 'var(--text-muted)', marginBottom: 0 }}>
-                Evidence Support Score
+                Evidence Support
+                <span className="ml-1 opacity-50">(not probability)</span>
               </label>
-              <span className="text-xs font-bold"
-                style={{ color: score >= 0.75 ? '#22c55e' : score >= 0.5 ? '#f59e0b' : '#ef4444' }}>
-                {Math.round(score * 100)}%
+              <span className="text-xs font-medium px-1.5 py-0.5 rounded-md"
+                style={{
+                  background: score >= 0.75 ? '#f0fdf4' : score >= 0.5 ? '#fffbeb' : '#fef2f2',
+                  color:      score >= 0.75 ? '#14532d' : score >= 0.5 ? '#92400e' : '#b91c1c',
+                }}>
+                {score >= 0.75 ? 'strong' : score >= 0.5 ? 'moderate' : 'low'}
+                {' · '}{Math.round(score * 100)}%
               </span>
             </div>
             <input type="range" min="0" max="1" step="0.05"
               className="w-full" value={score}
               onChange={e => setScore(parseFloat(e.target.value))} />
           </div>
+
+          {/* Explicit derived-from selector */}
+          {sourceCandidates.length > 0 && (
+            <div>
+              <label className={labelCls} style={{ color: 'var(--text-muted)' }}>
+                Derived from
+                <span className="ml-1 opacity-50">(optional — explicit only)</span>
+              </label>
+              <div className="rounded-lg border overflow-y-auto space-y-0.5 p-1.5"
+                style={{ borderColor: 'var(--border)', background: 'var(--surface-2)', maxHeight: '120px' }}>
+                {sourceCandidates.map(c => {
+                  const selected = derivedFrom.includes(c.claimId!)
+                  const m = getTypeMeta(c.claim_type)
+                  return (
+                    <button key={c.claimId} onClick={() => toggleDerived(c.claimId!)}
+                      className="w-full text-left flex items-start gap-2 rounded-md px-2 py-1.5 transition-colors"
+                      style={{
+                        background: selected ? m.bg : 'transparent',
+                        border: `1px solid ${selected ? m.border : 'transparent'}`,
+                      }}>
+                      <span className="shrink-0 text-xs mt-0.5" style={{ color: selected ? m.text : 'var(--text-muted)' }}>
+                        {selected ? '☑' : '☐'}
+                      </span>
+                      <span className="text-xs leading-snug" style={{ color: selected ? m.text : 'var(--text)' }}>
+                        <span className="font-mono opacity-50 mr-1">{shortId(c.claimId!)}</span>
+                        {c.text.length > 70 ? c.text.slice(0, 70) + '…' : c.text}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+              {derivedFrom.length > 0 && (
+                <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                  {derivedFrom.length} source{derivedFrom.length > 1 ? 's' : ''} selected
+                  — explicit <em>derives from</em> edges will be created.
+                </p>
+              )}
+            </div>
+          )}
 
           {error && (
             <p className="text-xs rounded-lg px-3 py-2"

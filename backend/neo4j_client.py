@@ -139,6 +139,21 @@ class Neo4jClient:
                         nc_id=nc["id"], oc_id=src_id,
                     )
 
+    def link_explicit_derived_from(self, new_claim_id: str, source_ids: list[str]) -> None:
+        """Create explicit DERIVES_FROM edges from a new claim to each listed source claim.
+        These are set by the user, not inferred — they carry epistemic weight.
+        """
+        with self.driver.session() as s:
+            for src_id in source_ids:
+                s.run(
+                    """
+                    MATCH (nc:Claim {id: $nc_id})
+                    MATCH (oc:Claim {id: $oc_id})
+                    MERGE (nc)-[:DERIVES_FROM]->(oc)
+                    """,
+                    nc_id=new_claim_id, oc_id=src_id,
+                )
+
     def update_claim(self, claim_id: str, fields: dict) -> None:
         """Update any non-None fields on a Claim node."""
         # Convert enum values to strings for Neo4j

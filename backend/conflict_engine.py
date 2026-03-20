@@ -10,6 +10,16 @@ _NEGATION_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Contradictory quantitative qualifiers (Rule 7)
+_HIGH_RE = re.compile(
+    r'\b(elevated|increased|high|raised|positive|erhöht|angestiegen|hoch|erhöhter|positiv)\b',
+    re.IGNORECASE,
+)
+_LOW_RE = re.compile(
+    r'\b(decreased|low|lowered|normal|reduced|within normal|erniedrigt|gesunken|niedrig|normwertig|unauffällig)\b',
+    re.IGNORECASE,
+)
+
 _KEY_TERM_RE = re.compile(r'\b[a-zA-ZäöüÄÖÜß]{4,}\b')
 
 
@@ -100,6 +110,90 @@ def detect_conflicts(claims: list[dict]) -> list[Conflict]:
                         "Review whether it is still valid."
                     ),
                     affected_claim_ids=[c["id"], dep_id],
+                ))
+
+    # ── Rule 5: Active therapy with no active supporting indication ──────────
+    # Fires when an active therapy shares ≥2 key terms with at least one
+    # superseded/resolved lead, but zero active leads with the same overlap.
+    inactive_leads = [
+        c for c in claims
+        if c.get("claim_type") in lead_types
+        and c.get("status") in ("superseded", "resolved")
+    ]
+    active_therapies = [c for c in active if c.get("claim_type") == "therapy"]
+    for therapy in active_therapies:
+        th_terms = _key_terms(therapy["text"])
+        matching_inactive = [l for l in inactive_leads if len(th_terms & _key_terms(l["text"])) >= 2]
+        matching_active   = [l for l in leads         if len(th_terms & _key_terms(l["text"])) >= 2]
+        if matching_inactive and not matching_active:
+            top = matching_inactive[0]
+            conflicts.append(Conflict(
+                id=f"conflict-therapy-{therapy['id']}",
+                type=ConflictType.therapy_without_indication,
+                severity=ConflictSeverity.warning,
+                message=(
+                    f'Therapy "{therapy["text"][:60]}" appears to target '
+                    f'"{top["text"][:50]}" which is now {top.get("status", "inactive")}. '
+                    "Verify whether treatment is still indicated."
+                ),
+                affected_claim_ids=[therapy["id"]] + [l["id"] for l in matching_inactive[:2]],
+            ))
+
+    # ── Rule 6: Active hypothesis supported only by superseded evidence ───────
+    superseded_evidence = [
+        c for c in claims
+        if c.get("claim_type") in evidence_types and c.get("status") == "superseded"
+    ]
+    for hyp in leads:  # leads = active diagnoses/hypotheses
+        hyp_terms = _key_terms(hyp["text"])
+        stale_support  = [e for e in superseded_evidence if len(hyp_terms & _key_terms(e["text"])) >= 2]
+        active_support = [
+            e for e in active
+            if e.get("claim_type") in evidence_types
+            and len(hyp_terms & _key_terms(e["text"])) >= 2
+        ]
+        if stale_support and not active_support:
+            conflicts.append(Conflict(
+                id=f"conflict-stale-hyp-{hyp['id']}",
+                type=ConflictType.stale_hypothesis,
+                severity=ConflictSeverity.warning,
+                message=(
+                    f'Hypothesis "{hyp["text"][:60]}" is supported only by '
+                    f"superseded evidence ({len(stale_support)} superseded finding(s)). "
+                    "Verify with current data."
+                ),
+                affected_claim_ids=[hyp["id"]] + [e["id"] for e in stale_support[:3]],
+            ))
+
+    # ── Rule 7: Contradictory quantitative values for same finding ────────────
+    # Two active evidence claims share ≥2 key terms; one has a HIGH qualifier
+    # and the other a LOW qualifier — e.g. "CRP elevated" vs "CRP within normal".
+    # Distinct from negation (which catches "no fever" / "not present" patterns).
+    for i, c1 in enumerate(active):
+        if c1.get("claim_type") not in evidence_types:
+            continue
+        for j, c2 in enumerate(active):
+            if j <= i or c2.get("claim_type") not in evidence_types:
+                continue
+            if len(_key_terms(c1["text"]) & _key_terms(c2["text"])) < 2:
+                continue
+            # Skip pairs already caught by the negation rule
+            if _NEGATION_RE.search(c1["text"]) or _NEGATION_RE.search(c2["text"]):
+                continue
+            high1, low1 = bool(_HIGH_RE.search(c1["text"])), bool(_LOW_RE.search(c1["text"]))
+            high2, low2 = bool(_HIGH_RE.search(c2["text"])), bool(_LOW_RE.search(c2["text"]))
+            if (high1 and low2) or (low1 and high2):
+                t1, t2 = c1["text"], c2["text"]
+                conflicts.append(Conflict(
+                    id=f"conflict-values-{i}-{j}",
+                    type=ConflictType.contradictory_values,
+                    severity=ConflictSeverity.error,
+                    message=(
+                        f'Contradictory values for the same finding: '
+                        f'"{t1[:60]}{"…" if len(t1) > 60 else ""}" '
+                        f'vs "{t2[:60]}{"…" if len(t2) > 60 else ""}"'
+                    ),
+                    affected_claim_ids=[c1["id"], c2["id"]],
                 ))
 
     return conflicts

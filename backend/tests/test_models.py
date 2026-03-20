@@ -29,7 +29,10 @@ class TestEnums:
         assert {e.value for e in ClaimTrend} == {"improving", "worsening", "stable", "unknown"}
 
     def test_conflict_type_values(self):
-        expected = {"competing_hypothesis", "negation", "evidence_mismatch", "timeline_gap"}
+        expected = {
+            "competing_hypothesis", "negation", "evidence_mismatch", "timeline_gap",
+            "therapy_without_indication", "stale_hypothesis", "contradictory_values",
+        }
         assert {e.value for e in ConflictType} == expected
 
     def test_conflict_severity_values(self):

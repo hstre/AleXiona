@@ -108,10 +108,13 @@ class ConflictSeverity(str, Enum):
 
 
 class ConflictType(str, Enum):
-    competing_hypothesis = "competing_hypothesis"
-    negation             = "negation"
-    evidence_mismatch    = "evidence_mismatch"
-    timeline_gap         = "timeline_gap"
+    competing_hypothesis      = "competing_hypothesis"
+    negation                  = "negation"
+    evidence_mismatch         = "evidence_mismatch"
+    timeline_gap              = "timeline_gap"
+    therapy_without_indication = "therapy_without_indication"
+    stale_hypothesis          = "stale_hypothesis"
+    contradictory_values      = "contradictory_values"
 
 
 class Conflict(BaseModel):
