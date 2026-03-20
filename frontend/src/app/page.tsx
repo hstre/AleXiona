@@ -542,27 +542,35 @@ export default function Home() {
       })()}
 
       {/* ── Top Nav ───────────────────────────────────────────────────────── */}
-      <nav className="flex items-center justify-between px-4 py-2.5 border-b shrink-0"
-        style={{ background: 'var(--surface)', borderColor: 'var(--border)', boxShadow: 'var(--shadow-sm)' }}>
+      <nav className="top-nav flex items-center justify-between px-4 py-2.5 shrink-0">
 
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-              <path d="M12 2L4 7v10l8 5 8-5V7L12 2z" stroke="var(--brand)" strokeWidth="1.5" fill="var(--brand-pale)" />
-              <path d="M12 2v20M4 7l8 5 8-5" stroke="var(--brand)" strokeWidth="1.5" />
-            </svg>
-            <span className="text-base font-bold tracking-tight">
-              Ale<span style={{ color: 'var(--brand)' }}>X</span>iona
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
+              style={{ background: 'linear-gradient(135deg, var(--brand) 0%, var(--teal) 100%)' }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8">
+                <path d="M12 2L4 7v10l8 5 8-5V7L12 2z" />
+                <path d="M12 2v20M4 7l8 5 8-5" />
+              </svg>
+            </div>
+            <span className="text-base font-bold tracking-tight" style={{ letterSpacing: '-0.02em' }}>
+              Ale<span className="gradient-text">X</span>iona
             </span>
           </div>
-          <div className="hidden sm:block border-l pl-3" style={{ borderColor: 'var(--border)' }}>
-            <span className="text-sm" style={{ color: 'var(--text-muted)' }}>AI Clinical Evidence Graph</span>
+          <div className="hidden sm:block border-l pl-3 ml-1" style={{ borderColor: 'var(--border)' }}>
+            <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>AI Clinical Evidence Graph</span>
           </div>
         </div>
 
         <div className="hidden md:flex items-center gap-4 text-xs" style={{ color: 'var(--text-muted)' }}>
-          <span><strong style={{ color: 'var(--text)' }}>{claimCount}</strong> claims</span>
-          <span><strong style={{ color: 'var(--text)' }}>{entityCount}</strong> entities</span>
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg" style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+            <span className="font-semibold tabular-nums" style={{ color: 'var(--brand-light)' }}>{claimCount}</span>
+            <span style={{ color: 'var(--text-light)' }}>claims</span>
+          </div>
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg" style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+            <span className="font-semibold tabular-nums" style={{ color: 'var(--teal)' }}>{entityCount}</span>
+            <span style={{ color: 'var(--text-light)' }}>entities</span>
+          </div>
           {conflicts.length > 0 && (
             <button className="flex items-center gap-1 hover:opacity-70"
               style={{ color: conflicts.some(c => c.severity === 'error') ? '#ef4444' : '#f59e0b' }}
@@ -676,8 +684,7 @@ export default function Home() {
             </svg>
           </button>
           <button onClick={newSession}
-            className="hidden sm:flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg border hover:bg-gray-50"
-            style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}>
+            className="hidden sm:flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg btn-ghost">
             + New
           </button>
           <div className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold text-white"
@@ -689,8 +696,8 @@ export default function Home() {
 
       {/* ── Search bar ────────────────────────────────────────────────────── */}
       {showSearch && (
-        <div className="px-4 py-2 border-b shrink-0 flex items-center gap-2"
-          style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+        <div className="px-4 py-2 border-b shrink-0 flex items-center gap-2.5"
+          style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border)' }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2">
             <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
           </svg>
@@ -698,19 +705,19 @@ export default function Home() {
             ref={searchInputRef}
             autoFocus
             type="text"
-            placeholder="Search claims and entities… (/ to focus)"
+            placeholder="Search claims and entities…"
             className="flex-1 outline-none text-sm bg-transparent"
             style={{ color: 'var(--text)' }}
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
           />
           {searchQuery && (
-            <button onClick={() => setSearchQuery('')} style={{ color: 'var(--text-muted)' }}>✕</button>
-          )}
-          {searchQuery && (
-            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+            <span className="text-xs px-2 py-0.5 rounded-md" style={{ background: 'var(--surface-2)', color: 'var(--text-muted)' }}>
               {filteredGraph.nodes.filter(n => n.type === 'Claim').length} results
             </span>
+          )}
+          {searchQuery && (
+            <button onClick={() => setSearchQuery('')} className="text-xs px-1.5" style={{ color: 'var(--text-muted)' }}>✕</button>
           )}
         </div>
       )}
@@ -721,7 +728,7 @@ export default function Home() {
         {/* LEFT: Evidence Nodes */}
         <div className={`border-r shrink-0 md:flex flex-col overflow-hidden
             ${activePanel === 'data' ? 'flex flex-1' : 'hidden'} md:w-72`}
-          style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+          style={{ background: 'var(--surface)', borderColor: 'var(--border-light)' }}>
           <DataPanel
             key={sessionId}
             sessionId={sessionId}
@@ -739,11 +746,11 @@ export default function Home() {
 
           {/* Graph sub-header */}
           <div className="border-b shrink-0"
-            style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+            style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border-light)' }}>
             <div className="px-4 py-2 flex items-center justify-between">
               {/* Graph / Timeline toggle */}
-              <div className="flex rounded-lg overflow-hidden border text-xs"
-                style={{ borderColor: 'var(--border)' }}>
+              <div className="flex rounded-lg overflow-hidden text-xs p-0.5"
+                style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
                 {([
                   ['graph',           '◈ Graph'],
                   ['timeline',        '⏱ Timeline'],
@@ -752,10 +759,11 @@ export default function Home() {
                   ['handover',        '📋 Übergabe'],
                 ] as [typeof centerView, string][]).map(([v, label]) => (
                   <button key={v} onClick={() => setCenterView(v)}
-                    className="px-3 py-1"
+                    className="px-2.5 py-1 rounded-md transition-all"
                     style={{
-                      background: centerView === v ? 'var(--brand)' : 'var(--surface)',
+                      background: centerView === v ? 'var(--brand)' : 'transparent',
                       color:      centerView === v ? 'white' : 'var(--text-muted)',
+                      boxShadow:  centerView === v ? '0 1px 4px rgba(59,142,234,0.4)' : 'none',
                     }}>
                     {label}
                   </button>
@@ -765,8 +773,8 @@ export default function Home() {
               <div className="flex items-center gap-2">
                 {/* Layout picker */}
                 {centerView === 'graph' && (
-                  <div className="flex rounded-lg overflow-hidden border text-xs"
-                    style={{ borderColor: 'var(--border)' }}>
+                  <div className="flex rounded-lg overflow-hidden text-xs p-0.5"
+                    style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
                     {([
                       ['cose',         '⊛', 'Force'],
                       ['breadthfirst', '⊤', 'Tree'],
@@ -774,11 +782,11 @@ export default function Home() {
                       ['grid',         '⊞', 'Grid'],
                     ] as [GraphLayout, string, string][]).map(([name, icon, label]) => (
                       <button key={name} onClick={() => setGraphLayout(name)}
-                        className="px-2 py-1 flex items-center gap-0.5"
+                        className="px-2 py-1 rounded-md flex items-center gap-0.5 transition-all"
                         title={`${label} layout`}
                         style={{
-                          background: graphLayout === name ? 'var(--brand)' : 'var(--surface)',
-                          color:      graphLayout === name ? 'white' : 'var(--text-muted)',
+                          background: graphLayout === name ? 'var(--surface-3)' : 'transparent',
+                          color:      graphLayout === name ? 'var(--text)'      : 'var(--text-muted)',
                         }}>
                         <span>{icon}</span>
                         <span className="hidden lg:inline">{label}</span>
@@ -861,7 +869,7 @@ export default function Home() {
             {/* Time slider — inside graph mode only */}
             {maxTimeOffset > 0 && (
               <div className="px-4 py-2 border-t shrink-0"
-                style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+                style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border-light)' }}>
                 <TimeSlider
                   claimNodes={claimNodes}
                   currentHours={Math.min(timeHours, maxTimeOffset)}
@@ -922,7 +930,7 @@ export default function Home() {
         {/* RIGHT: Clinical Reasoning */}
         <div className={`border-l shrink-0 md:flex flex-col overflow-hidden
             ${activePanel === 'review' ? 'flex flex-1' : 'hidden'} md:w-72`}
-          style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+          style={{ borderColor: 'var(--border-light)' }}>
           <ReviewPanel
             reasoning={reasoning}
             loading={false}
