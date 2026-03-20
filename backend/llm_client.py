@@ -93,13 +93,15 @@ Respond ONLY with valid JSON:
   "focus_points": ["string - key area to investigate"]
 }
 
-Max 2 alternatives, 3 missing evidence items, 2 focus points."""
+Max 2 alternatives, 3 missing evidence items, 2 focus points.
+Respond in the same language as the input claims."""
 
 
 QUERY_PROMPT = """You are AleXiona, a clinical reasoning assistant.
 You have access to a structured knowledge graph built from clinical notes.
 Answer questions by referencing specific claims from the context.
-Use cautious, evidence-grounded language. Never claim certainty about diagnoses."""
+Use cautious, evidence-grounded language. Never claim certainty about diagnoses.
+Respond in the same language the user is writing in."""
 
 
 # ── Counterfactual ────────────────────────────────────────────────────────────
@@ -118,7 +120,8 @@ Respond ONLY with valid JSON:
     {"hypothesis": "string", "score_before": 0.72, "score_after": 0.55}
   ],
   "reasoning_trace": "string - explanation of why the change occurred"
-}"""
+}
+Respond in the same language as the input claims."""
 
 
 # ── Retry helper ──────────────────────────────────────────────────────────────
@@ -301,7 +304,8 @@ Explain in plain clinical language (3-4 sentences):
 2. What the most likely cause of the conflict is
 3. One concrete action the clinician should take to resolve it
 
-Use cautious, evidence-grounded language. Do not make autonomous diagnostic decisions."""
+Use cautious, evidence-grounded language. Do not make autonomous diagnostic decisions.
+Respond in the same language as the affected claims."""
 
 
 def explain_conflict(conflict: dict, claims: list[dict]) -> str:
