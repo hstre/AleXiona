@@ -24,6 +24,16 @@ def _normalize_time_offset(v: str | None) -> str | None:
     return v.strip()
 
 
+def _parse_offset_hours(v: str | None) -> float | None:
+    """Return the numeric hours from a normalised offset string, or None if unparseable."""
+    if not v:
+        return None
+    m = _TIME_RE.match(v.strip())
+    if m:
+        return float(m.group(1))
+    return None
+
+
 class ClaimType(str, Enum):
     symptom     = "symptom"
     finding     = "finding"
@@ -135,6 +145,7 @@ class ConflictType(str, Enum):
     therapy_without_indication = "therapy_without_indication"
     stale_hypothesis          = "stale_hypothesis"
     contradictory_values      = "contradictory_values"
+    temporal_inconsistency    = "temporal_inconsistency"
 
 
 class Conflict(BaseModel):

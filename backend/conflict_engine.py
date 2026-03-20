@@ -3,7 +3,7 @@ Rule-based conflict detection for AleXiona V0.
 Operates on claim dicts returned from Neo4j.
 """
 import re
-from models import Conflict, ConflictType, ConflictSeverity
+from models import Conflict, ConflictType, ConflictSeverity, _parse_offset_hours
 
 _NEGATION_RE = re.compile(
     r'\b(kein[e]?|nicht|nein|ohne|fehlt|negativ|absent|no\b|not\b|without|negative|ruled out)\b',
@@ -194,6 +194,29 @@ def detect_conflicts(claims: list[dict]) -> list[Conflict]:
                         f'vs "{t2[:60]}{"…" if len(t2) > 60 else ""}"'
                     ),
                     affected_claim_ids=[c1["id"], c2["id"]],
+                ))
+
+    # ── Rule 8: Temporal inconsistency ────────────────────────────────────────
+    # A claim has a time_offset earlier than one or more of the claims it
+    # explicitly derives from — the child cannot logically precede its source.
+    # Applies to all claims (not just active) — data-integrity issue regardless.
+    offset_by_id = {c["id"]: _parse_offset_hours(c.get("time_offset")) for c in claims}
+    for c in claims:
+        child_h = _parse_offset_hours(c.get("time_offset"))
+        if child_h is None:
+            continue
+        for src_id in c.get("derived_from", []):
+            src_h = offset_by_id.get(src_id)
+            if src_h is not None and child_h < src_h:
+                conflicts.append(Conflict(
+                    id=f"conflict-temporal-{c['id']}-{src_id}",
+                    type=ConflictType.temporal_inconsistency,
+                    severity=ConflictSeverity.error,
+                    message=(
+                        f'Claim "{c["text"][:55]}" (t+{child_h}h) is timestamped '
+                        f'before its source claim (t+{src_h}h) — child cannot precede parent.'
+                    ),
+                    affected_claim_ids=[c["id"], src_id],
                 ))
 
     return conflicts

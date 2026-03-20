@@ -4,7 +4,7 @@ All tests use in-memory claim dicts — no Neo4j or LLM required.
 """
 import pytest
 from conflict_engine import detect_conflicts
-from models import ConflictType, ConflictSeverity
+from models import ConflictType, ConflictSeverity, _parse_offset_hours
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -16,6 +16,7 @@ def make_claim(
     status: str = "active",
     evidence_support_score: float = 0.8,
     derived_from: list[str] | None = None,
+    time_offset: str | None = None,
 ) -> dict:
     return {
         "id": id,
@@ -24,6 +25,7 @@ def make_claim(
         "status": status,
         "evidence_support_score": evidence_support_score,
         "derived_from": derived_from or [],
+        "time_offset": time_offset,
     }
 
 
@@ -475,3 +477,113 @@ class TestContradictoryValues:
         ]
         conflicts = detect_conflicts(claims)
         assert not any(c.type == ConflictType.contradictory_values for c in conflicts)
+
+
+# ── Rule 8: Temporal inconsistency ───────────────────────────────────────────
+
+class TestTemporalInconsistency:
+    def test_child_earlier_than_source_triggers(self):
+        claims = [
+            make_claim("src", "Source finding", time_offset="t+12h"),
+            make_claim("child", "Derived finding", derived_from=["src"], time_offset="t+6h"),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert any(c.type == ConflictType.temporal_inconsistency for c in conflicts)
+
+    def test_child_later_than_source_no_conflict(self):
+        claims = [
+            make_claim("src", "Source finding", time_offset="t+6h"),
+            make_claim("child", "Derived finding", derived_from=["src"], time_offset="t+12h"),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert not any(c.type == ConflictType.temporal_inconsistency for c in conflicts)
+
+    def test_child_same_time_as_source_no_conflict(self):
+        claims = [
+            make_claim("src", "Source finding", time_offset="t+6h"),
+            make_claim("child", "Derived finding", derived_from=["src"], time_offset="t+6h"),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert not any(c.type == ConflictType.temporal_inconsistency for c in conflicts)
+
+    def test_no_time_offset_on_child_no_conflict(self):
+        """Cannot determine ordering without a child time_offset."""
+        claims = [
+            make_claim("src", "Source finding", time_offset="t+12h"),
+            make_claim("child", "Derived finding", derived_from=["src"]),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert not any(c.type == ConflictType.temporal_inconsistency for c in conflicts)
+
+    def test_no_time_offset_on_source_no_conflict(self):
+        """Cannot determine ordering without a source time_offset."""
+        claims = [
+            make_claim("src", "Source finding"),
+            make_claim("child", "Derived finding", derived_from=["src"], time_offset="t+6h"),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert not any(c.type == ConflictType.temporal_inconsistency for c in conflicts)
+
+    def test_temporal_inconsistency_is_error(self):
+        claims = [
+            make_claim("src", "Source finding", time_offset="t+24h"),
+            make_claim("child", "Derived finding", derived_from=["src"], time_offset="t+1h"),
+        ]
+        c = next(x for x in detect_conflicts(claims) if x.type == ConflictType.temporal_inconsistency)
+        assert c.severity == ConflictSeverity.error
+
+    def test_affected_ids_include_both(self):
+        claims = [
+            make_claim("src", "Source finding", time_offset="t+24h"),
+            make_claim("child", "Derived finding", derived_from=["src"], time_offset="t+1h"),
+        ]
+        c = next(x for x in detect_conflicts(claims) if x.type == ConflictType.temporal_inconsistency)
+        assert "src" in c.affected_claim_ids
+        assert "child" in c.affected_claim_ids
+
+    def test_no_derived_from_no_conflict(self):
+        """Without explicit derivation, time comparison is not performed."""
+        claims = [
+            make_claim("src", "Early finding", time_offset="t+24h"),
+            make_claim("later", "Later finding", time_offset="t+1h"),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert not any(c.type == ConflictType.temporal_inconsistency for c in conflicts)
+
+    def test_superseded_child_still_checked(self):
+        """Even superseded claims can expose temporal inconsistencies."""
+        claims = [
+            make_claim("src", "Source finding", time_offset="t+12h"),
+            make_claim("child", "Old derived finding", derived_from=["src"],
+                       time_offset="t+4h", status="superseded"),
+        ]
+        conflicts = detect_conflicts(claims)
+        assert any(c.type == ConflictType.temporal_inconsistency for c in conflicts)
+
+
+# ── _parse_offset_hours unit tests ───────────────────────────────────────────
+
+class TestParseOffsetHours:
+    def test_standard_form(self):
+        assert _parse_offset_hours("t+6h") == 6.0
+
+    def test_decimal(self):
+        assert _parse_offset_hours("t+1.5h") == 1.5
+
+    def test_no_prefix(self):
+        assert _parse_offset_hours("6h") == 6.0
+
+    def test_no_h_suffix(self):
+        assert _parse_offset_hours("t+6") == 6.0
+
+    def test_bare_number(self):
+        assert _parse_offset_hours("6") == 6.0
+
+    def test_none_returns_none(self):
+        assert _parse_offset_hours(None) is None
+
+    def test_empty_string_returns_none(self):
+        assert _parse_offset_hours("") is None
+
+    def test_unrecognized_format_returns_none(self):
+        assert _parse_offset_hours("day2") is None

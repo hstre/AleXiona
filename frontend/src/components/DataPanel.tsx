@@ -1,9 +1,9 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import type { Claim, ChatMessage, ClaimStatus, ReasoningResult, Conflict } from '@/lib/api'
-import { patchClaim, streamMessage } from '@/lib/api'
-import { getTypeMeta, STATUS_META, TREND_META, essLabel, ESS_LABEL_META } from '@/lib/utils'
+import type { Claim, ChatMessage, ClaimStatus, ClaimType, ReasoningResult, Conflict } from '@/lib/api'
+import { patchClaim, batchPatch, batchDelete, streamMessage } from '@/lib/api'
+import { getTypeMeta, STATUS_META, TREND_META, essLabel, ESS_LABEL_META, CLAIM_TYPE_META } from '@/lib/utils'
 
 interface Props {
   sessionId:      string
@@ -21,10 +21,20 @@ export default function DataPanel({
   const [streamingReply, setStreamingReply] = useState('')
   const [history,        setHistory]        = useState<ChatMessage[]>([])
   const [filter,         setFilter]         = useState<'all' | 'active' | 'superseded'>('all')
+
+  // ── Bulk selection ────────────────────────────────────────────────────────
+  const [selected,      setSelected]      = useState<Set<string>>(new Set())
+  const [bulkStatus,    setBulkStatus]    = useState<ClaimStatus>('resolved')
+  const [bulkType,      setBulkType]      = useState<ClaimType>('finding')
+  const [bulkAction,    setBulkAction]    = useState<'status' | 'type'>('status')
+  const [bulkWorking,   setBulkWorking]   = useState(false)
+
+  // Reset selection when filter changes
+  useEffect(() => { setSelected(new Set()) }, [filter])
+
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const replyRef    = useRef<HTMLDivElement>(null)
 
-  // Auto-scroll streaming reply
   useEffect(() => {
     if (replyRef.current) replyRef.current.scrollTop = replyRef.current.scrollHeight
   }, [streamingReply])
@@ -45,10 +55,8 @@ export default function DataPanel({
         if (event.type === 'token') {
           finalReply += event.content
           setStreamingReply(finalReply)
-
         } else if (event.type === 'claims') {
           if (event.claims.length > 0) onNewClaims()
-
         } else if (event.type === 'done') {
           finalReply = event.reply
           setStreamingReply('')
@@ -60,7 +68,6 @@ export default function DataPanel({
             userMsg,
             { role: 'assistant', content: finalReply },
           ])
-
         } else if (event.type === 'error') {
           console.error('Stream error:', event.message)
           setStreamingReply('')
@@ -78,20 +85,73 @@ export default function DataPanel({
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }
   }
 
-  const handleStatusToggle = async (claim: Claim & { claimId?: string }, newStatus: ClaimStatus) => {
+  const handleStatusToggle = async (claim: Claim, newStatus: ClaimStatus) => {
     if (!claim.claimId) return
     await patchClaim(claim.claimId, { status: newStatus })
     onNewClaims()
   }
 
-  const visible = allClaims.filter(c =>
+  const toggleSelect = (id: string) => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
+  const visible    = allClaims.filter(c =>
     filter === 'all' ? true : c.status === filter
   )
+  const selectableIds = visible.filter(c => c.claimId).map(c => c.claimId!)
+  const allVisibleSelected = selectableIds.length > 0 && selectableIds.every(id => selected.has(id))
+
+  const toggleSelectAll = () => {
+    if (allVisibleSelected) {
+      setSelected(prev => {
+        const next = new Set(prev)
+        selectableIds.forEach(id => next.delete(id))
+        return next
+      })
+    } else {
+      setSelected(prev => new Set([...Array.from(prev), ...selectableIds]))
+    }
+  }
+
+  const handleBulkApply = async () => {
+    if (selected.size === 0) return
+    setBulkWorking(true)
+    const ids = Array.from(selected)
+    try {
+      if (bulkAction === 'status') {
+        await batchPatch(ids, { status: bulkStatus })
+      } else {
+        await batchPatch(ids, { claim_type: bulkType })
+      }
+      setSelected(new Set())
+      onNewClaims()
+    } finally {
+      setBulkWorking(false)
+    }
+  }
+
+  const handleBulkDelete = async () => {
+    if (selected.size === 0 || !confirm(`Delete ${selected.size} claim${selected.size > 1 ? 's' : ''}?`)) return
+    setBulkWorking(true)
+    try {
+      await batchDelete(Array.from(selected))
+      setSelected(new Set())
+      onNewClaims()
+    } finally {
+      setBulkWorking(false)
+    }
+  }
+
+  const CLAIM_TYPES = Object.keys(CLAIM_TYPE_META) as ClaimType[]
 
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--border)' }}>
+      <div className="px-4 py-3 border-b shrink-0" style={{ borderColor: 'var(--border)' }}>
         <div className="flex items-center justify-between mb-2">
           <span className="font-semibold text-sm">Evidence Nodes</span>
           <span className="text-xs px-2 py-0.5 rounded-full font-medium"
@@ -113,6 +173,99 @@ export default function DataPanel({
         </div>
       </div>
 
+      {/* Bulk action bar — shown when ≥1 claim selected */}
+      {selected.size > 0 && (
+        <div className="px-3 py-2 border-b shrink-0 space-y-2"
+          style={{ background: 'var(--brand-pale)', borderColor: 'var(--brand)' }}>
+
+          {/* Row 1: count + select-all + clear */}
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold" style={{ color: 'var(--brand)' }}>
+              {selected.size} selected
+            </span>
+            <div className="flex gap-1.5">
+              <button
+                className="text-xs px-2 py-0.5 rounded hover:opacity-70"
+                style={{ color: 'var(--brand)' }}
+                onClick={toggleSelectAll}>
+                {allVisibleSelected ? 'Deselect all' : 'Select all'}
+              </button>
+              <button
+                className="text-xs px-2 py-0.5 rounded hover:opacity-70"
+                style={{ color: 'var(--text-muted)' }}
+                onClick={() => setSelected(new Set())}>
+                ✕ Clear
+              </button>
+            </div>
+          </div>
+
+          {/* Row 2: action type toggle + selector + apply + delete */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {/* Action type tabs */}
+            <div className="flex rounded-md overflow-hidden border text-xs"
+              style={{ borderColor: 'var(--border)' }}>
+              {(['status', 'type'] as const).map(a => (
+                <button key={a} onClick={() => setBulkAction(a)}
+                  className="px-2 py-1 capitalize"
+                  style={{
+                    background: bulkAction === a ? 'var(--brand)' : 'var(--surface)',
+                    color:      bulkAction === a ? 'white' : 'var(--text-muted)',
+                  }}>
+                  {a}
+                </button>
+              ))}
+            </div>
+
+            {/* Value selector */}
+            {bulkAction === 'status' ? (
+              <select value={bulkStatus} onChange={e => setBulkStatus(e.target.value as ClaimStatus)}
+                className="text-xs rounded-md px-1.5 py-1 outline-none"
+                style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)' }}>
+                {(['active', 'resolved', 'superseded'] as ClaimStatus[]).map(s => (
+                  <option key={s} value={s}>{STATUS_META[s].label}</option>
+                ))}
+              </select>
+            ) : (
+              <select value={bulkType} onChange={e => setBulkType(e.target.value as ClaimType)}
+                className="text-xs rounded-md px-1.5 py-1 outline-none"
+                style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)' }}>
+                {CLAIM_TYPES.map(ct => (
+                  <option key={ct} value={ct}>{CLAIM_TYPE_META[ct].icon} {CLAIM_TYPE_META[ct].label}</option>
+                ))}
+              </select>
+            )}
+
+            {/* Apply */}
+            <button onClick={handleBulkApply} disabled={bulkWorking}
+              className="text-xs px-2.5 py-1 rounded-md font-medium disabled:opacity-50"
+              style={{ background: 'var(--brand)', color: 'white' }}>
+              {bulkWorking ? '…' : 'Apply'}
+            </button>
+
+            {/* Delete — separated to avoid accidental clicks */}
+            <button onClick={handleBulkDelete} disabled={bulkWorking}
+              className="ml-auto text-xs px-2.5 py-1 rounded-md disabled:opacity-50"
+              style={{ background: '#fef2f2', color: '#ef4444' }}>
+              Delete {selected.size}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Select-all row when nothing selected yet but there are selectable claims */}
+      {selected.size === 0 && selectableIds.length > 0 && (
+        <div className="px-3 py-1.5 border-b shrink-0 flex items-center justify-between"
+          style={{ borderColor: 'var(--border)' }}>
+          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+            {visible.length} claim{visible.length !== 1 ? 's' : ''}
+          </span>
+          <button className="text-xs hover:opacity-70" style={{ color: 'var(--text-muted)' }}
+            onClick={toggleSelectAll}>
+            Select all
+          </button>
+        </div>
+      )}
+
       {/* Claims list */}
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
         {visible.length === 0 && (
@@ -127,25 +280,41 @@ export default function DataPanel({
         )}
 
         {visible.map((claim, i) => {
-          const meta    = getTypeMeta(claim.claim_type)
-          const level   = essLabel(claim.evidence_support_score)
-          const essMeta = ESS_LABEL_META[level]
-          const trend   = TREND_META[claim.trend ?? 'unknown']
-          const status  = STATUS_META[claim.status ?? 'active']
-          const dimmed  = claim.status === 'superseded' || claim.status === 'resolved'
+          const meta      = getTypeMeta(claim.claim_type)
+          const level     = essLabel(claim.evidence_support_score)
+          const essMeta   = ESS_LABEL_META[level]
+          const trend     = TREND_META[claim.trend ?? 'unknown']
+          const status    = STATUS_META[claim.status ?? 'active']
+          const dimmed    = claim.status === 'superseded' || claim.status === 'resolved'
+          const isSelected = claim.claimId ? selected.has(claim.claimId) : false
 
           return (
-            <div key={i}
-              className="rounded-xl p-3 border-l-4 transition-opacity"
+            <div key={claim.claimId ?? i}
+              className="rounded-xl p-3 border-l-4 transition-all"
               style={{
-                background:      'var(--surface)',
-                borderLeftColor: meta.border,
+                background:      isSelected ? 'var(--brand-pale)' : 'var(--surface)',
+                borderLeftColor: isSelected ? 'var(--brand)' : meta.border,
                 boxShadow:       'var(--shadow-sm)',
-                opacity:         dimmed ? 0.6 : 1,
+                opacity:         dimmed && !isSelected ? 0.6 : 1,
+                outline:         isSelected ? '1px solid var(--brand)' : undefined,
               }}>
 
-              {/* Row 1: type + time + ess label */}
+              {/* Row 1: checkbox + type + time + ess label */}
               <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+                {claim.claimId && (
+                  <button
+                    className="shrink-0 w-4 h-4 rounded border flex items-center justify-center text-xs transition-colors"
+                    style={{
+                      background:   isSelected ? 'var(--brand)' : 'var(--surface-2)',
+                      borderColor:  isSelected ? 'var(--brand)' : 'var(--border)',
+                      color:        'white',
+                    }}
+                    onClick={() => toggleSelect(claim.claimId!)}
+                    title={isSelected ? 'Deselect' : 'Select'}>
+                    {isSelected && '✓'}
+                  </button>
+                )}
+
                 <span className="text-xs font-medium px-1.5 py-0.5 rounded-md"
                   style={{ background: meta.bg, color: meta.text }}>
                   {meta.icon} {meta.label}
@@ -222,7 +391,7 @@ export default function DataPanel({
 
       {/* Streaming reply area */}
       {(loading || streamingReply) && (
-        <div className="mx-3 mb-2 rounded-xl overflow-hidden border"
+        <div className="mx-3 mb-2 rounded-xl overflow-hidden border shrink-0"
           style={{ borderColor: 'var(--border)', background: 'var(--surface-2)' }}>
           <div className="px-3 py-1.5 border-b flex items-center gap-2"
             style={{ borderColor: 'var(--border)' }}>
@@ -247,7 +416,7 @@ export default function DataPanel({
       )}
 
       {/* Input */}
-      <div className="p-3 border-t" style={{ borderColor: 'var(--border)' }}>
+      <div className="p-3 border-t shrink-0" style={{ borderColor: 'var(--border)' }}>
         <div className="rounded-xl overflow-hidden shadow-sm"
           style={{
             border: `1px solid ${loading ? 'var(--brand)' : 'var(--border)'}`,

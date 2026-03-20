@@ -319,6 +319,127 @@ class Neo4jClient:
             for c in claims
         )
 
+    # ── Entity deduplication ─────────────────────────────────────────────────
+
+    def get_entity_groups(self, session_id: str) -> list[dict]:
+        """Return groups of Entity names that normalise to the same key (case-insensitive strip).
+        Only groups with ≥2 members are returned.
+        """
+        with self.driver.session() as s:
+            rows = s.run(
+                """
+                MATCH (e:Entity)<-[:MENTIONS]-(c:Claim {session_id: $sid})
+                RETURN DISTINCT e.name AS name
+                ORDER BY name
+                """,
+                sid=session_id,
+            ).data()
+
+        # Group by normalised key
+        groups: dict[str, list[str]] = {}
+        for row in rows:
+            key = row["name"].strip().lower()
+            groups.setdefault(key, []).append(row["name"])
+
+        return [
+            {"canonical": members[0], "aliases": members[1:], "key": key}
+            for key, members in groups.items()
+            if len(members) >= 2
+        ]
+
+    def merge_entities(self, canonical_name: str, alias_names: list[str]) -> int:
+        """Redirect all MENTIONS/RELATION edges from each alias to the canonical entity,
+        then delete the alias nodes. Returns the count of aliases merged.
+        """
+        merged = 0
+        with self.driver.session() as s:
+            for alias in alias_names:
+                if alias == canonical_name:
+                    continue
+                # Repoint MENTIONS edges from alias to canonical
+                s.run(
+                    """
+                    MATCH (c:Claim)-[:MENTIONS]->(alias:Entity {name: $alias})
+                    MATCH (canonical:Entity {name: $canonical})
+                    MERGE (c)-[:MENTIONS]->(canonical)
+                    """,
+                    alias=alias, canonical=canonical_name,
+                )
+                # Repoint outgoing RELATION edges
+                s.run(
+                    """
+                    MATCH (alias:Entity {name: $alias})-[r:RELATION]->(other:Entity)
+                    MATCH (canonical:Entity {name: $canonical})
+                    MERGE (canonical)-[:RELATION {type: r.type}]->(other)
+                    """,
+                    alias=alias, canonical=canonical_name,
+                )
+                # Repoint incoming RELATION edges
+                s.run(
+                    """
+                    MATCH (other:Entity)-[r:RELATION]->(alias:Entity {name: $alias})
+                    MATCH (canonical:Entity {name: $canonical})
+                    MERGE (other)-[:RELATION {type: r.type}]->(canonical)
+                    """,
+                    alias=alias, canonical=canonical_name,
+                )
+                # Delete alias
+                s.run("MATCH (e:Entity {name: $name}) DETACH DELETE e", name=alias)
+                merged += 1
+        return merged
+
+    # ── Session export / import ───────────────────────────────────────────────
+
+    def export_session(self, session_id: str) -> dict:
+        """Return a full serialisable snapshot of all claims for the session."""
+        claims = self.get_all_claims_for_session(session_id)
+        return {
+            "version":     "1",
+            "session_id":  session_id,
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "claims":      claims,
+        }
+
+    def import_session(self, session_id: str, claims_data: list[dict]) -> dict:
+        """Re-create claims from a snapshot export.
+        Old IDs are remapped to new UUIDs; derived_from edges are re-created.
+        Returns a summary with old→new id mapping.
+        """
+        from models import Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend, Relation
+
+        id_map: dict[str, str] = {}
+
+        # Pass 1: create all claim nodes
+        for c in claims_data:
+            try:
+                claim = Claim(
+                    text=c["text"],
+                    entities=c.get("entities", []),
+                    relations=[Relation(**r) for r in c.get("relations", [])],
+                    evidence_support_score=max(0.0, min(1.0, float(c.get("evidence_support_score", 0.8)))),
+                    claim_type=ClaimType(c.get("claim_type", "finding")),
+                    source_type=SourceType(c.get("source_type", "clinician")),
+                    source_ref=c.get("source_ref", ""),
+                    status=ClaimStatus(c.get("status", "active")),
+                    time_offset=c.get("time_offset"),
+                    trend=ClaimTrend(c.get("trend", "unknown")),
+                )
+            except Exception:
+                continue  # skip malformed records
+            new_ids = self.store_claims([claim], session_id)
+            id_map[c["id"]] = new_ids[0]
+
+        # Pass 2: re-create explicit DERIVES_FROM edges
+        for c in claims_data:
+            old_derived = c.get("derived_from", [])
+            if not old_derived or c["id"] not in id_map:
+                continue
+            mapped = [id_map[old] for old in old_derived if old in id_map]
+            if mapped:
+                self.link_explicit_derived_from(id_map[c["id"]], mapped)
+
+        return {"imported": len(id_map), "skipped": len(claims_data) - len(id_map)}
+
     def list_sessions(self) -> list[dict]:
         with self.driver.session() as s:
             result = s.run(

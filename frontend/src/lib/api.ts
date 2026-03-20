@@ -26,7 +26,7 @@ export type SourceType =
 export type ClaimStatus = 'active' | 'resolved' | 'superseded'
 export type ClaimTrend  = 'improving' | 'worsening' | 'stable' | 'unknown'
 
-export type ConflictType     = 'competing_hypothesis' | 'negation' | 'evidence_mismatch' | 'timeline_gap' | 'therapy_without_indication' | 'stale_hypothesis' | 'contradictory_values'
+export type ConflictType     = 'competing_hypothesis' | 'negation' | 'evidence_mismatch' | 'timeline_gap' | 'therapy_without_indication' | 'stale_hypothesis' | 'contradictory_values' | 'temporal_inconsistency'
 export type ConflictSeverity = 'error' | 'warning' | 'info'
 
 // ── Core models ─────────────────────────────────────────────────────────────
@@ -232,6 +232,16 @@ export async function deleteClaim(claimId: string): Promise<void> {
   if (!res.ok) throw await parseError(res)
 }
 
+/** Patch multiple claims in parallel. Silently skips ids that fail. */
+export async function batchPatch(ids: string[], fields: ClaimPatch): Promise<void> {
+  await Promise.all(ids.map(id => patchClaim(id, fields).catch(() => {})))
+}
+
+/** Delete multiple claims in parallel. Silently skips ids that fail. */
+export async function batchDelete(ids: string[]): Promise<void> {
+  await Promise.all(ids.map(id => deleteClaim(id).catch(() => {})))
+}
+
 export async function runCounterfactual(
   sessionId: string, claimId: string
 ): Promise<CounterfactualResult> {
@@ -255,6 +265,52 @@ export async function deleteSession(sessionId: string): Promise<void> {
 
 export async function seedDemo(sessionId: string): Promise<{ seeded: boolean; claim_count?: number; reason?: string }> {
   const res = await fetch(`${API_URL}/api/demo/seed/${sessionId}`, { method: 'POST' })
+  if (!res.ok) throw await parseError(res)
+  return res.json()
+}
+
+// ── Entity deduplication ─────────────────────────────────────────────────────
+
+export interface EntityGroup {
+  key:       string
+  canonical: string
+  aliases:   string[]
+}
+
+export async function getEntityDuplicates(sessionId: string): Promise<EntityGroup[]> {
+  const res = await fetch(`${API_URL}/api/graph/${sessionId}/entity-duplicates`)
+  if (!res.ok) throw await parseError(res)
+  return res.json()
+}
+
+export async function mergeEntities(
+  sessionId: string, canonical: string, aliases: string[]
+): Promise<{ merged: number }> {
+  const res = await fetch(`${API_URL}/api/graph/${sessionId}/entities/merge`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ canonical, aliases }),
+  })
+  if (!res.ok) throw await parseError(res)
+  return res.json()
+}
+
+// ── Session export / import ──────────────────────────────────────────────────
+
+export async function exportSession(sessionId: string): Promise<object> {
+  const res = await fetch(`${API_URL}/api/graph/${sessionId}/export`)
+  if (!res.ok) throw await parseError(res)
+  return res.json()
+}
+
+export async function importSession(
+  sessionId: string, claims: object[]
+): Promise<{ imported: number; skipped: number }> {
+  const res = await fetch(`${API_URL}/api/graph/${sessionId}/import`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ claims }),
+  })
   if (!res.ok) throw await parseError(res)
   return res.json()
 }

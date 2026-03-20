@@ -2,13 +2,15 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { v4 as uuidv4 } from 'uuid'
-import DataPanel      from '@/components/DataPanel'
-import GraphView      from '@/components/GraphView'
-import ReviewPanel    from '@/components/ReviewPanel'
-import AddNodeModal   from '@/components/AddNodeModal'
+import DataPanel          from '@/components/DataPanel'
+import GraphView          from '@/components/GraphView'
+import ReviewPanel        from '@/components/ReviewPanel'
+import AddNodeModal       from '@/components/AddNodeModal'
+import EntityDedupModal   from '@/components/EntityDedupModal'
+import ImportModal        from '@/components/ImportModal'
 import TimeSlider, { parseOffset } from '@/components/TimeSlider'
-import TimelinePanel  from '@/components/TimelinePanel'
-import { getGraph, seedDemo } from '@/lib/api'
+import TimelinePanel      from '@/components/TimelinePanel'
+import { getGraph, seedDemo, exportSession } from '@/lib/api'
 import type { GraphData, Claim, ClaimType, ReasoningResult, Conflict, GraphNode } from '@/lib/api'
 import { SESSION_KEY, shortId, confPct, CONFLICT_SEVERITY_META, CLAIM_TYPE_META } from '@/lib/utils'
 
@@ -23,6 +25,8 @@ export default function Home() {
   const [activePanel,        setActivePanel]        = useState<'data' | 'graph' | 'review'>('graph')
   const [showConflictBanner, setShowConflictBanner] = useState(true)
   const [showAddNode,        setShowAddNode]        = useState(false)
+  const [showDedup,          setShowDedup]          = useState(false)
+  const [showImport,         setShowImport]         = useState(false)
   const [searchQuery,        setSearchQuery]        = useState('')
   const [showSearch,         setShowSearch]         = useState(false)
   const [timeHours,          setTimeHours]          = useState<number>(999)
@@ -71,6 +75,8 @@ export default function Home() {
         trend:                  n.trend       ?? 'unknown',
         entities:               [],
         relations:              [],
+        claimId:                n.claimId,
+        created_at:             n.created_at,
       })),
     [graphData.nodes]
   )
@@ -157,6 +163,23 @@ export default function Home() {
       alert('Seed failed: ' + e.message)
     } finally {
       setSeeding(false)
+    }
+  }
+
+  // ── Export ────────────────────────────────────────────────────────────────
+  const handleExport = async () => {
+    if (!sessionId) return
+    try {
+      const data = await exportSession(sessionId)
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+      const url  = URL.createObjectURL(blob)
+      const a    = document.createElement('a')
+      a.href     = url
+      a.download = `alexiona-session-${sessionId.slice(0, 8)}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e: any) {
+      alert('Export failed: ' + e.message)
     }
   }
 
@@ -257,6 +280,24 @@ export default function Home() {
           onClose={() => setShowAddNode(false)}
           onCreated={refreshGraph}
           allClaims={allClaims}
+        />
+      )}
+
+      {/* ── Entity Dedup Modal ────────────────────────────────────────────── */}
+      {showDedup && (
+        <EntityDedupModal
+          sessionId={sessionId!}
+          onClose={() => setShowDedup(false)}
+          onMerged={refreshGraph}
+        />
+      )}
+
+      {/* ── Import Modal ──────────────────────────────────────────────────── */}
+      {showImport && (
+        <ImportModal
+          sessionId={sessionId!}
+          onClose={() => setShowImport(false)}
+          onImported={refreshGraph}
         />
       )}
 
@@ -385,6 +426,38 @@ export default function Home() {
             title="Search graph">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+          </button>
+          {/* Export */}
+          <button onClick={handleExport}
+            className="w-8 h-8 rounded-lg flex items-center justify-center hover:opacity-70"
+            style={{ background: 'transparent', color: 'var(--text-muted)' }}
+            title="Export session as JSON">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+          </button>
+          {/* Import */}
+          <button onClick={() => setShowImport(true)}
+            className="w-8 h-8 rounded-lg flex items-center justify-center hover:opacity-70"
+            style={{ background: 'transparent', color: 'var(--text-muted)' }}
+            title="Import session from JSON">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+              <polyline points="17 8 12 3 7 8"/>
+              <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+          </button>
+          {/* Entity dedup */}
+          <button onClick={() => setShowDedup(true)}
+            className="w-8 h-8 rounded-lg flex items-center justify-center hover:opacity-70"
+            style={{ background: 'transparent', color: 'var(--text-muted)' }}
+            title="Deduplicate entities">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="8" cy="8" r="4"/><circle cx="16" cy="16" r="4"/>
+              <line x1="12" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="8" y2="16"/>
             </svg>
           </button>
           <button onClick={() => setShowAddNode(true)}

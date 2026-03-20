@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from models import GraphData, NodeUpdate, CounterfactualResult, Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend, _clamp_ess, _normalize_time_offset
+from models import GraphData, NodeUpdate, CounterfactualResult, Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend, _clamp_ess, _normalize_time_offset, _parse_offset_hours
 from pydantic import BaseModel, field_validator
 from typing import Optional
 from neo4j_client import get_db
@@ -38,13 +38,25 @@ async def add_manual_claim(session_id: str, payload: ManualClaimPayload):
     db = get_db()
     try:
         if payload.derived_from:
-            existing_ids = {c["id"] for c in db.get_all_claims_for_session(session_id)}
-            unknown = [i for i in payload.derived_from if i not in existing_ids]
+            existing_claims = db.get_all_claims_for_session(session_id)
+            existing_by_id  = {c["id"]: c for c in existing_claims}
+            unknown = [i for i in payload.derived_from if i not in existing_by_id]
             if unknown:
                 raise validation_error(
                     f"Unknown claim IDs in derived_from: {unknown}",
                     code="invalid_derived_from",
                 )
+            # Temporal consistency: new claim must not be earlier than any source
+            child_h = _parse_offset_hours(payload.time_offset)
+            if child_h is not None:
+                for src_id in payload.derived_from:
+                    src_h = _parse_offset_hours(existing_by_id[src_id].get("time_offset"))
+                    if src_h is not None and child_h < src_h:
+                        raise validation_error(
+                            f"time_offset t+{child_h}h is earlier than source claim's "
+                            f"t+{src_h}h — a derived claim cannot precede its source.",
+                            code="temporal_inconsistency",
+                        )
         claim = Claim(
             text=payload.text,
             entities=[], relations=[],
@@ -99,6 +111,49 @@ async def counterfactual(session_id: str, claim_id: str):
         return result
     except HTTPException:
         raise
+    except Exception as e:
+        raise internal_error(e)
+
+
+@router.get("/{session_id}/entity-duplicates")
+async def get_entity_duplicates(session_id: str):
+    try:
+        return get_db().get_entity_groups(session_id)
+    except Exception as e:
+        raise internal_error(e)
+
+
+class MergeEntitiesPayload(BaseModel):
+    canonical: str
+    aliases:   list[str]
+
+
+@router.post("/{session_id}/entities/merge")
+async def merge_entities(session_id: str, payload: MergeEntitiesPayload):
+    try:
+        merged = get_db().merge_entities(payload.canonical, payload.aliases)
+        return {"merged": merged}
+    except Exception as e:
+        raise internal_error(e)
+
+
+@router.get("/{session_id}/export")
+async def export_session(session_id: str):
+    try:
+        return get_db().export_session(session_id)
+    except Exception as e:
+        raise internal_error(e)
+
+
+class ImportPayload(BaseModel):
+    claims: list[dict]
+
+
+@router.post("/{session_id}/import")
+async def import_session(session_id: str, payload: ImportPayload):
+    try:
+        result = get_db().import_session(session_id, payload.claims)
+        return result
     except Exception as e:
         raise internal_error(e)
 

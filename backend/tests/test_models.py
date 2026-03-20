@@ -32,6 +32,7 @@ class TestEnums:
         expected = {
             "competing_hypothesis", "negation", "evidence_mismatch", "timeline_gap",
             "therapy_without_indication", "stale_hypothesis", "contradictory_values",
+            "temporal_inconsistency",
         }
         assert {e.value for e in ConflictType} == expected
 
