@@ -372,6 +372,58 @@ def normalize_to_candidates(
     return candidates
 
 
+def candidate_to_claim(
+    candidate: ClaimCandidate,
+    source_type: str,
+    evidence_tier: str = EvidenceTier.patient_generated,
+    patient_data_ref: str = "",
+) -> "Claim":
+    """Convert a validated ClaimCandidate into a Claim.
+
+    Used by the measurements intake path (no LLM needed for structured data).
+    The evidence_tier and source_type are always enforced from the API boundary.
+    """
+    from datetime import timezone
+    from models import Claim, ClaimType, ClaimStatus, ClaimTrend  # local import avoids circular
+
+    now = datetime.now(timezone.utc)
+
+    ct_map = {
+        "lab":     ClaimType.lab,
+        "finding": ClaimType.finding,
+        "symptom": ClaimType.symptom,
+        "therapy": ClaimType.therapy,
+        "imaging": ClaimType.imaging,
+    }
+    claim_type = ct_map.get(candidate.candidate_type, ClaimType.finding)
+
+    event_time = None
+    if candidate.event_time_iso:
+        try:
+            event_time = datetime.fromisoformat(candidate.event_time_iso)
+        except ValueError:
+            pass
+
+    return Claim(
+        text=candidate.candidate_text,
+        entities=[candidate.normalized_token] if candidate.normalized_token else [],
+        relations=[],
+        evidence_support_score=candidate.confidence,
+        claim_type=claim_type,
+        source_type=source_type,
+        source_ref=candidate.observation.source_ref,
+        evidence_tier=evidence_tier,
+        status=ClaimStatus.observed,
+        trend=ClaimTrend.unknown,
+        normalized_token=candidate.normalized_token,
+        uncertainty_flag=candidate.observation.uncertainty_hint,
+        assumptions=[],
+        event_time=event_time,
+        assertion_time=now,
+        patient_data_ref=patient_data_ref or candidate.observation.source_ref,
+    )
+
+
 def _add_trend_candidate(
     candidates: list[ClaimCandidate],
     trend: TrendSignal,

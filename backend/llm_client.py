@@ -480,6 +480,215 @@ def explain_conflict(conflict: dict, claims: list[dict]) -> str:
         return ""
 
 
+# ── Source/tier maps for intake endpoints ────────────────────────────────────
+
+_CLINICAL_TYPE_MAP: dict[str, tuple[str, str]] = {
+    # input_type → (source_type, evidence_tier)
+    "lab":        ("lab_system",        "lab_confirmed"),
+    "medication":  ("clinician",         "clinician_observed"),
+    "document":   ("imported_document", "clinician_observed"),
+    "vitals":     ("clinician",         "clinician_observed"),
+}
+
+_PATIENT_SOURCE_TYPES = {"patient_report", "wearable", "home_device", "caregiver_report"}
+
+# ── Intake: patient conversation extraction ───────────────────────────────────
+
+CONVERSATION_EXTRACTION_PROMPT = """\
+You are a clinical knowledge extraction engine processing a patient or caregiver conversation.
+All claims extracted here are PATIENT-REPORTED or CAREGIVER-REPORTED — NOT clinically confirmed.
+
+Rules:
+- source_type: use only patient_report or caregiver_report
+- evidence_tier: always patient_generated
+- status: use "observed" for directly stated facts, "inferred" for interpreted symptoms
+- claim_type: use symptom (subjective complaints), finding (self-observed), risk_factor, or therapy
+  NEVER use "diagnosis" — patients do not diagnose themselves
+- uncertainty_flag: true whenever hedging language appears
+  ("I think", "maybe", "vielleicht", "ich glaube", "possibly", "not sure")
+- negation_hint is expressed by prefixing text with "[negated]"
+
+For each claim extract:
+- text, entities, relations, evidence_support_score (0.0–1.0),
+  claim_type, source_type, source_ref, evidence_tier, status,
+  time_offset (null or "t+Nh"), event_time (ISO 8601 or null),
+  trend (improving|worsening|stable|unknown), uncertainty_flag, assumptions
+
+Respond ONLY with valid JSON: { "claims": [ {...}, ... ] }
+Extract 1–8 meaningful claims. Use the input language.\
+"""
+
+
+def extract_claims_conversation(
+    text: str,
+    source_type: str = "patient_report",
+    source_ref: str = "",
+) -> ClaimExtractionResult:
+    """Extract claims from a patient/caregiver conversation.
+
+    Forces evidence_tier=patient_generated on every claim regardless of LLM output.
+    Also enforces epistemic safeguards: no 'diagnosis' claim_type, no 'confirmed' status.
+    """
+    data = _llm_json(
+        messages=[
+            {"role": "system", "content": CONVERSATION_EXTRACTION_PROMPT},
+            {"role": "user",   "content": text},
+        ],
+        temperature=0.1,
+        validate_fn=_validate_extraction_schema,
+    )
+    if not data:
+        return ClaimExtractionResult(claims=[])
+
+    claims: list[Claim] = []
+    for c in data.get("claims", []):
+        try:
+            enriched = _normalize_candidate(c)
+
+            # Override source/tier from API boundary — never trust LLM here
+            enriched["source_type"]   = source_type
+            enriched["evidence_tier"] = "patient_generated"
+            if source_ref:
+                enriched["source_ref"] = source_ref
+
+            # Epistemic safeguards: patients cannot diagnose or confirm
+            if enriched.get("claim_type") == "diagnosis":
+                enriched["claim_type"] = "finding"
+            if enriched.get("status") == "confirmed":
+                enriched["status"] = "observed"
+
+            relations = [
+                Relation(from_entity=r["from_entity"], to_entity=r["to_entity"], type=r["type"])
+                for r in enriched.get("relations", [])
+            ]
+            claims.append(Claim(
+                text=enriched["text"],
+                entities=enriched.get("entities", []),
+                relations=relations,
+                evidence_support_score=float(enriched.get("evidence_support_score", 0.5)),
+                claim_type=enriched.get("claim_type", "symptom"),
+                source_type=enriched["source_type"],
+                source_ref=enriched.get("source_ref", ""),
+                evidence_tier=enriched["evidence_tier"],
+                status=enriched.get("status", "observed"),
+                time_offset=enriched.get("time_offset"),
+                event_time=enriched.get("event_time"),
+                assertion_time=enriched.get("assertion_time"),
+                trend=enriched.get("trend", "unknown"),
+                uncertainty_flag=bool(enriched.get("uncertainty_flag", False)),
+                assumptions=enriched.get("assumptions", []),
+                normalized_token=enriched.get("normalized_token"),
+            ))
+        except (ValidationError, KeyError, TypeError) as e:
+            log.warning("Skipping malformed conversation claim: %s — %s", c, e)
+
+    return ClaimExtractionResult(claims=claims)
+
+
+# ── Intake: clinical data extraction ─────────────────────────────────────────
+
+CLINICAL_EXTRACTION_PROMPT = """\
+You are a clinical knowledge extraction engine processing structured clinical data.
+The input is a {input_type} record. Extract claims at the appropriate clinical epistemic level.
+
+Source type for all claims: {source_type}
+Evidence tier for all claims: {evidence_tier}
+Source reference: {source_ref}
+
+Rules:
+- status: "observed" for directly documented values; "inferred" for interpretations
+- claim_type: lab (numeric results), finding (clinical observations),
+  therapy (medication/treatment), diagnosis (confirmed diagnoses from documents),
+  risk_factor (comorbidities)
+- uncertainty_flag: true if marked as preliminary, suspected, or uncertain in the source
+- For lab values: include numeric value and unit in the claim text where present
+
+For each claim extract:
+- text, entities, relations, evidence_support_score (0.0–1.0),
+  claim_type, source_type, source_ref, evidence_tier, status,
+  time_offset (null or "t+Nh"), event_time (ISO 8601 or null),
+  trend (improving|worsening|stable|unknown), uncertainty_flag, assumptions
+
+Respond ONLY with valid JSON: {{ "claims": [ {{...}}, ... ] }}
+Extract 1–10 meaningful claims. Use the input language.\
+"""
+
+
+def extract_claims_clinical(
+    text: str,
+    input_type: str,
+    source_ref: str = "",
+    event_time_hint: str | None = None,
+) -> ClaimExtractionResult:
+    """Extract claims from a clinical input (lab, medication, document, vitals).
+
+    Forces source_type and evidence_tier from the input_type mapping —
+    never derived from LLM output for clinical data.
+    """
+    source_type, evidence_tier = _CLINICAL_TYPE_MAP.get(
+        input_type, ("clinician", "clinician_observed")
+    )
+
+    system_prompt = CLINICAL_EXTRACTION_PROMPT.format(
+        input_type=input_type,
+        source_type=source_type,
+        evidence_tier=evidence_tier,
+        source_ref=source_ref or input_type,
+    )
+    user_content = text
+    if event_time_hint:
+        user_content = f"[Recorded at: {event_time_hint}]\n\n{text}"
+
+    data = _llm_json(
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user",   "content": user_content},
+        ],
+        temperature=0.1,
+        validate_fn=_validate_extraction_schema,
+    )
+    if not data:
+        return ClaimExtractionResult(claims=[])
+
+    claims: list[Claim] = []
+    for c in data.get("claims", []):
+        try:
+            enriched = _normalize_candidate(c)
+
+            # Override from API boundary
+            enriched["source_type"]   = source_type
+            enriched["evidence_tier"] = evidence_tier
+            if source_ref:
+                enriched["source_ref"] = source_ref
+
+            relations = [
+                Relation(from_entity=r["from_entity"], to_entity=r["to_entity"], type=r["type"])
+                for r in enriched.get("relations", [])
+            ]
+            claims.append(Claim(
+                text=enriched["text"],
+                entities=enriched.get("entities", []),
+                relations=relations,
+                evidence_support_score=float(enriched.get("evidence_support_score", 0.8)),
+                claim_type=enriched.get("claim_type", "finding"),
+                source_type=enriched["source_type"],
+                source_ref=enriched.get("source_ref", ""),
+                evidence_tier=enriched["evidence_tier"],
+                status=enriched.get("status", "observed"),
+                time_offset=enriched.get("time_offset"),
+                event_time=enriched.get("event_time"),
+                assertion_time=enriched.get("assertion_time"),
+                trend=enriched.get("trend", "unknown"),
+                uncertainty_flag=bool(enriched.get("uncertainty_flag", False)),
+                assumptions=enriched.get("assumptions", []),
+                normalized_token=enriched.get("normalized_token"),
+            ))
+        except (ValidationError, KeyError, TypeError) as e:
+            log.warning("Skipping malformed clinical claim: %s — %s", c, e)
+
+    return ClaimExtractionResult(claims=claims)
+
+
 def answer_with_context(
     user_message: str,
     history: list[ChatMessage],

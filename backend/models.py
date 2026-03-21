@@ -405,3 +405,56 @@ class NodeUpdate(BaseModel):
 class GraphData(BaseModel):
     nodes: list[dict]
     edges: list[dict]
+
+
+# ── Intake Layer ──────────────────────────────────────────────────────────────
+
+class IntakeConversationRequest(BaseModel):
+    """Patient or caregiver free-text conversation → Claims (patient_generated tier)."""
+    text:        str
+    session_id:  str
+    source_type: str = "patient_report"   # patient_report | caregiver_report
+    source_ref:  str = ""                  # e.g. "Erstgespräch 2024-03-21"
+
+
+class IntakeConversationResponse(BaseModel):
+    claims:     list[Claim]
+    session_id: str
+
+
+class IntakeMeasurementsRequest(BaseModel):
+    """Wearable / home-device measurements + optional PatientObservations → Claims + Trends."""
+    measurements: list[PatientGeneratedMeasurement]
+    observations: list[PatientObservation]          = []
+    session_id:   str
+
+
+class IntakeMeasurementsResponse(BaseModel):
+    claims:        list[Claim]
+    trend_signals: list[TrendSignal]
+    session_id:    str
+
+
+class ClinicalInputType(str, Enum):
+    lab        = "lab"        # → source_type=lab_system,   evidence_tier=lab_confirmed
+    medication = "medication" # → source_type=clinician,    evidence_tier=clinician_observed
+    document   = "document"   # → source_type=imported_document, tier=clinician_observed
+    vitals     = "vitals"     # → source_type=clinician,    evidence_tier=clinician_observed
+
+
+class ClinicalInput(BaseModel):
+    text:        str
+    input_type:  ClinicalInputType
+    source_ref:  str               = ""       # e.g. "Synlab-Befund 2024-03-21"
+    event_time:  Optional[datetime] = None
+
+
+class IntakeClinicalRequest(BaseModel):
+    """Structured clinical data (lab, medication, document, vitals) → Claims."""
+    inputs:     list[ClinicalInput]
+    session_id: str
+
+
+class IntakeClinicalResponse(BaseModel):
+    claims:     list[Claim]
+    session_id: str
