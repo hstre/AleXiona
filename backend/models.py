@@ -119,6 +119,7 @@ class CounterfactualResult(BaseModel):
     changed_evidence:    list[str]
     shifts:              list[CounterfactualShift]
     reasoning_trace:     str
+    guideline_shift:     Optional[dict] = None  # {hypothesis_text: {before: {...}, after: {...}}}
 
 
 class HypothesisCounterfactualResult(BaseModel):

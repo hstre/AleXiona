@@ -12,7 +12,7 @@ from models import (
     HypothesisCounterfactualResult,
     Relation, ClaimType, SourceType, ClaimStatus, ClaimTrend,
 )
-from reasoning_engine import build_reasoning_context
+from reasoning_engine import build_reasoning_context, evaluate_all_guidelines
 
 log = logging.getLogger(__name__)
 
@@ -273,6 +273,14 @@ def run_counterfactual(
         for c in remaining
     )
 
+    # Compute guideline-layer shift before and after exclusion
+    guideline_before = evaluate_all_guidelines(all_claims)
+    guideline_after  = evaluate_all_guidelines(remaining)
+    guideline_shift  = {
+        hyp: {"before": guideline_before.get(hyp, {}), "after": guideline_after.get(hyp, {})}
+        for hyp in set(guideline_before) | set(guideline_after)
+    }
+
     try:
         data = _llm_json(
             messages=[
@@ -293,6 +301,7 @@ def run_counterfactual(
             changed_evidence=data.get("changed_evidence", []),
             shifts=[CounterfactualShift(**s) for s in data.get("shifts", [])],
             reasoning_trace=data.get("reasoning_trace", ""),
+            guideline_shift=guideline_shift,
         )
     except Exception:
         return None

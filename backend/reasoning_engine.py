@@ -32,6 +32,30 @@ _LOW_RE = re.compile(
 _EVIDENCE_TYPES = {"finding", "lab", "imaging", "symptom"}
 _LEAD_TYPES     = {"diagnosis", "hypothesis"}
 
+# ── Hypothesis alias map ──────────────────────────────────────────────────────
+# Maps canonical guideline keys to common synonyms/abbreviations.
+# Used by normalize_hypothesis() so CAP, community-acquired pneumonia, etc.
+# all resolve to the "pneumonia" guideline key.
+HYPOTHESIS_ALIASES: dict[str, list[str]] = {
+    "pneumonia": [
+        "pneumonia", "cap", "community acquired pneumonia",
+        "community-acquired pneumonia", "pneumonie",
+    ],
+    "pulmonary embolism": [
+        "pulmonary embolism", "lung embolism", "lungenembolie", "pe ", "pe-",
+    ],
+    "sepsis": [
+        "sepsis", "septic shock", "septischer schock", "urosepsis",
+    ],
+    "myocardial infarction": [
+        "myocardial infarction", "heart attack", "stemi", "nstemi",
+        "acute coronary", "acs", "herzinfarkt",
+    ],
+    "heart failure": [
+        "heart failure", "cardiac failure", "herzinsuffizienz", "chf",
+    ],
+}
+
 # ── Source-type weights ───────────────────────────────────────────────────────
 # Guideline- and lab-system-sourced claims carry more epistemic authority;
 # LLM-generated claims are down-weighted until confirmed by a clinician.
@@ -90,6 +114,40 @@ GUIDELINES: dict[str, dict[str, list[str]]] = {
 
 def _key_terms(text: str) -> set[str]:
     return set(_KEY_TERM_RE.findall(text.lower()))
+
+
+def _key_terms_with_negation(text: str) -> set[str]:
+    """Extract key terms, prefixing terms immediately after a negation with 'negated_'.
+
+    E.g. "no fever present"       → {"negated_fever", "present"}
+         "fever confirmed"         → {"fever", "confirmed"}
+         "kein Fieber vorhanden"   → {"negated_fieber", "vorhanden"}
+    """
+    t = text.lower()
+    negation_end_positions = [m.end() for m in _NEGATION_RE.finditer(t)]
+    result: set[str] = set()
+    for m in _KEY_TERM_RE.finditer(t):
+        word = m.group(0)
+        pos  = m.start()
+        # Negation must end within 20 chars before this word starts
+        is_negated = any(ne <= pos <= ne + 20 for ne in negation_end_positions)
+        result.add(f"negated_{word}" if is_negated else word)
+    return result
+
+
+def normalize_hypothesis(text: str) -> str:
+    """Map hypothesis text to its canonical guideline key via alias lookup.
+
+    Falls back to direct GUIDELINES substring match, then the lowercased text.
+    """
+    t = text.lower()
+    for canonical, aliases in HYPOTHESIS_ALIASES.items():
+        if any(alias in t for alias in aliases):
+            return canonical
+    for key in GUIDELINES:
+        if key in t or t in key:
+            return key
+    return t
 
 
 def _overlap_weight(overlap_count: int) -> float:
@@ -165,8 +223,19 @@ def score_hypothesis(hypothesis: dict, all_claims: list[dict]) -> HypothesisScor
         if c.get("claim_type") not in _EVIDENCE_TYPES:
             continue
 
-        c_terms  = _key_terms(c["text"])
-        overlap  = len(hyp_terms & c_terms)
+        c_terms_neg = _key_terms_with_negation(c["text"])
+        negated_c   = {t[8:] for t in c_terms_neg if t.startswith("negated_")}
+        c_positive  = {t for t in c_terms_neg if not t.startswith("negated_")}
+
+        # Negated term directly matches a hypothesis term → conflict even with
+        # only 1-term overlap (catches "no fever" vs "fever" patterns)
+        negated_overlap = len(negated_c & hyp_terms)
+        if negated_overlap > 0:
+            conflict_total += _conflict_penalty(c["text"])
+            conflicting_ids.append(c["id"])
+            continue
+
+        overlap = len(hyp_terms & c_positive)
         if overlap < 2:
             continue
 
@@ -292,13 +361,119 @@ def explain_leading(
 def required_evidence_for(hypothesis: str) -> list[str]:
     """
     Return the required evidence terms for a known guideline-defined hypothesis.
-    Matching is substring-based (case-insensitive). Returns [] if unknown.
+    Uses normalize_hypothesis() for alias-aware matching. Returns [] if unknown.
     """
-    normalized = hypothesis.lower()
-    for key, val in GUIDELINES.items():
-        if key in normalized or normalized in key:
-            return val.get("required", [])
-    return []
+    label = normalize_hypothesis(hypothesis)
+    return GUIDELINES.get(label, {}).get("required", [])
+
+
+def _term_present_in_claims(term: str, claims: list[dict]) -> bool:
+    """True if *term* appears non-negated in any active evidence claim text."""
+    t_lower = term.lower()
+    for c in claims:
+        if c.get("status") != "active" or c.get("claim_type") not in _EVIDENCE_TYPES:
+            continue
+        text = c["text"].lower()
+        idx  = text.find(t_lower)
+        if idx == -1:
+            continue
+        # Check the 25-char window before the term for negation words
+        context_before = text[max(0, idx - 25):idx]
+        if not _NEGATION_RE.search(context_before):
+            return True
+    return False
+
+
+def evaluate_guideline(hypothesis_text: str, all_claims: list[dict]) -> dict:
+    """Evaluate how well current claims satisfy guideline criteria for a hypothesis.
+
+    Returns:
+        label                - canonical guideline key (or lowercased text if unknown)
+        rule_found           - whether a guideline entry exists
+        eligible             - True if at least half of required terms are present
+        required_present     - required terms currently evidenced
+        required_missing     - required terms with no active evidence
+        supporting_present   - supporting terms currently evidenced
+        conflicting_present  - conflicting terms currently evidenced
+        missing_priority     - ordered list: required_missing first, then missing supporting
+    """
+    label = normalize_hypothesis(hypothesis_text)
+    rule  = GUIDELINES.get(label)
+    if not rule:
+        return {
+            "label":               label,
+            "rule_found":          False,
+            "eligible":            False,
+            "required_present":    [],
+            "required_missing":    [],
+            "supporting_present":  [],
+            "conflicting_present": [],
+            "missing_priority":    [],
+        }
+
+    required_present    = [r for r in rule["required"]   if _term_present_in_claims(r, all_claims)]
+    required_missing    = [r for r in rule["required"]   if r not in required_present]
+    supporting_present  = [s for s in rule["supporting"] if _term_present_in_claims(s, all_claims)]
+    conflicting_present = [cf for cf in rule["conflicts"] if _term_present_in_claims(cf, all_claims)]
+
+    # Eligible when at least half of required terms have active evidence
+    min_required = max(1, (len(rule["required"]) + 1) // 2)
+    eligible = len(required_present) >= min_required
+
+    supporting_missing = [s for s in rule["supporting"] if s not in supporting_present]
+    missing_priority   = required_missing + supporting_missing
+
+    return {
+        "label":               label,
+        "rule_found":          True,
+        "eligible":            eligible,
+        "required_present":    required_present,
+        "required_missing":    required_missing,
+        "supporting_present":  supporting_present,
+        "conflicting_present": conflicting_present,
+        "missing_priority":    missing_priority,
+    }
+
+
+def guideline_score(hypothesis_text: str, all_claims: list[dict]) -> float:
+    """Weighted guideline-layer score for a hypothesis.
+
+    Weights:
+        +2.0 per required  term present
+        +1.5 per supporting term present
+        −2.5 per conflicting term present
+        −3.0 if hypothesis is not eligible (< half of required terms met)
+    """
+    result = evaluate_guideline(hypothesis_text, all_claims)
+    if not result["rule_found"]:
+        return 0.0
+    score = (
+        2.0 * len(result["required_present"])
+        + 1.5 * len(result["supporting_present"])
+        - 2.5 * len(result["conflicting_present"])
+    )
+    if not result["eligible"]:
+        score -= 3.0
+    return score
+
+
+def evaluate_all_guidelines(all_claims: list[dict]) -> dict[str, dict]:
+    """Evaluate guideline criteria for every active hypothesis/diagnosis claim."""
+    hypotheses = [
+        c for c in all_claims
+        if c.get("claim_type") in _LEAD_TYPES and c.get("status") == "active"
+    ]
+    return {h["text"]: evaluate_guideline(h["text"], all_claims) for h in hypotheses}
+
+
+def prioritize_missing(guideline_result: dict) -> list[str]:
+    """Return missing evidence terms sorted by priority: required first, then supporting."""
+    required_missing   = guideline_result.get("required_missing", [])
+    supporting_missing = [
+        s for s in guideline_result.get("missing_priority", [])
+        if s not in required_missing
+    ]
+    return required_missing + supporting_missing
 
 
 def get_confident_leading(ranked: list[HypothesisScore]) -> dict:
@@ -385,23 +560,31 @@ def build_case_snapshot(all_claims: list[dict]) -> dict:
 def build_reasoning_context(all_claims: list[dict]) -> str:
     """
     Build a structured context string for the LLM reasoning prompt that includes
-    rule-based hypothesis scores as anchor points.
+    rule-based hypothesis scores and guideline evaluations as anchor points.
     """
-    ranked = rank_hypotheses(all_claims)
+    ranked     = rank_hypotheses(all_claims)
     confidence = get_confident_leading(ranked)
-    lines = []
+    guidelines = evaluate_all_guidelines(all_claims)
+    lines: list[str] = []
 
     if ranked:
         lines.append("=== RULE-BASED HYPOTHESIS SCORES (source-weighted; use as anchors) ===")
         if confidence["status"] == "insufficient":
             lines.append(f"  ⚠ {confidence['reason']}")
         for h in ranked:
+            g = guidelines.get(h["text"], {})
+            g_score  = guideline_score(h["text"], all_claims)
+            g_status = "✓ eligible" if g.get("eligible") else ("– no rule" if not g.get("rule_found") else "✗ not eligible")
             lines.append(
                 f"  [{h['claim_type'].upper()}] {h['text'][:80]}"
                 f" → rule_score={h['rule_based_score']:.2f}"
-                f" (supporting: {len(h['supporting_claim_ids'])}"
+                f"  guideline_score={g_score:.1f} ({g_status})"
+                f"  (supporting: {len(h['supporting_claim_ids'])}"
                 f", conflicting: {len(h['conflicting_claim_ids'])})"
             )
+            if g.get("missing_priority"):
+                top_missing = prioritize_missing(g)[:3]
+                lines.append(f"    missing: {', '.join(top_missing)}")
         lines.append("")
 
     lines.append("=== ALL CLAIMS ===")
