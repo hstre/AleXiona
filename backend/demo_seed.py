@@ -1,12 +1,56 @@
 """
 Demo seed: creates a complete pneumonia/sepsis clinical scenario
 with multiple claim types, temporal progression, and conflicts.
+
+All seeding now goes through neo4j_client.store_claims() so every Claim
+receives full provenance fields (evidence_tier, uncertainty_flag, etc.)
+and an AuditEvent is generated for each seeded claim.
 """
 import uuid
 from datetime import datetime, timezone
-from neo4j import GraphDatabase
 import os
 import json
+
+# ── evidence_tier derivation (mirrors intake layer logic) ────────────────────
+
+_EVIDENCE_TIER_MAP = {
+    "lab_system":        "lab_confirmed",
+    "clinician":         "clinician_observed",
+    "llm":               "clinician_observed",
+    "imaging_model":     "instrument_measured",
+    "imported_document": "clinician_observed",
+    "guideline":         "guideline_structured",
+    "patient_report":    "patient_generated",
+    "caregiver_report":  "patient_generated",
+    "wearable":          "patient_generated",
+    "home_device":       "patient_generated",
+}
+
+
+def _dict_to_claim(d: dict):
+    """Convert a raw seed-dict to a validated Claim model instance."""
+    from models import Claim, Relation
+
+    source_type = d.get("source_type", "llm")
+    relations = [
+        Relation(from_entity=r["from_entity"], to_entity=r["to_entity"], type=r["type"])
+        for r in d.get("relations", [])
+    ]
+    return Claim(
+        text=d["text"],
+        entities=d.get("entities", []),
+        relations=relations,
+        evidence_support_score=d.get("evidence_support_score", 0.8),
+        claim_type=d.get("claim_type", "finding"),
+        source_type=source_type,
+        source_ref=d.get("source_ref", ""),
+        evidence_tier=_EVIDENCE_TIER_MAP.get(source_type, "clinician_observed"),
+        status=d.get("status", "active"),
+        time_offset=d.get("time_offset"),
+        trend=d.get("trend", "unknown"),
+        uncertainty_flag=bool(d.get("uncertainty_flag", False)),
+        assumptions=d.get("assumptions", []),
+    )
 
 DEMO_CLAIMS = [
     # t+0h – Admission
@@ -118,6 +162,26 @@ DEMO_CLAIMS = [
         "time_offset": "t+0h", "trend": "unknown",
         "evidence_support_score": 0.20, "status": "superseded",
         "entities": ["Viral Pneumonia"],
+        "relations": [],
+    },
+    # ── patient-generated layer ───────────────────────────────────────────────
+    # These are added to the demo to illustrate the intake layer epistemic split
+    {
+        "text": "I've had a fever and difficulty breathing since yesterday — I measured 38.8 °C at home",
+        "claim_type": "symptom", "source_type": "patient_report",
+        "time_offset": "t+0h", "trend": "worsening",
+        "evidence_support_score": 0.55, "status": "observed",
+        "uncertainty_flag": False,
+        "entities": ["Fever", "38.8°C", "Dyspnea"],
+        "relations": [],
+    },
+    {
+        "text": "SpO2 91% via home pulse oximeter",
+        "claim_type": "lab", "source_type": "home_device",
+        "time_offset": "t+0h", "trend": "worsening",
+        "evidence_support_score": 0.72, "status": "observed",
+        "uncertainty_flag": False,
+        "entities": ["SpO2", "91%"],
         "relations": [],
     },
 ]
@@ -233,6 +297,25 @@ DEMO_CLAIMS_DE = [
         "time_offset": "t+0h", "trend": "unknown",
         "evidence_support_score": 0.20, "status": "superseded",
         "entities": ["Virale Pneumonie"],
+        "relations": [],
+    },
+    # ── patientengenerierte Daten (Intake Layer Demo) ─────────────────────────
+    {
+        "text": "Ich habe seit gestern Fieber und Atemnot – zuhause 38,8 °C gemessen",
+        "claim_type": "symptom", "source_type": "patient_report",
+        "time_offset": "t+0h", "trend": "worsening",
+        "evidence_support_score": 0.55, "status": "observed",
+        "uncertainty_flag": False,
+        "entities": ["Fieber", "38,8 °C", "Atemnot"],
+        "relations": [],
+    },
+    {
+        "text": "SpO2 91% via häusliches Pulsoximeter",
+        "claim_type": "lab", "source_type": "home_device",
+        "time_offset": "t+0h", "trend": "worsening",
+        "evidence_support_score": 0.72, "status": "observed",
+        "uncertainty_flag": False,
+        "entities": ["SpO2", "91%"],
         "relations": [],
     },
 ]
@@ -351,6 +434,25 @@ PE_CLAIMS = [
         "entities": ["rtPA", "Thrombolysis"],
         "relations": [{"from_entity": "rtPA", "to_entity": "Pulmonary Embolism", "type": "reduces"}],
     },
+    # ── patient-generated layer ───────────────────────────────────────────────
+    {
+        "text": "Sudden chest pain and shortness of breath — started during a long flight about 2 hours ago",
+        "claim_type": "symptom", "source_type": "patient_report",
+        "time_offset": "t+0h", "trend": "worsening",
+        "evidence_support_score": 0.60, "status": "observed",
+        "uncertainty_flag": False,
+        "entities": ["Chest Pain", "Dyspnea"],
+        "relations": [],
+    },
+    {
+        "text": "Heart rate 122 bpm via smartwatch — elevated for the last 3 hours",
+        "claim_type": "finding", "source_type": "wearable",
+        "time_offset": "t+0h", "trend": "worsening",
+        "evidence_support_score": 0.68, "status": "observed",
+        "uncertainty_flag": False,
+        "entities": ["Heart Rate", "122 bpm"],
+        "relations": [],
+    },
 ]
 
 
@@ -466,6 +568,25 @@ ARDS_SEPSIS_CLAIMS = [
         "evidence_support_score": 0.98, "status": "active",
         "entities": ["E. coli", "Bacteremia", "Blood Cultures"],
         "relations": [{"from_entity": "E. coli", "to_entity": "Gram-negative Bacteremia", "type": "is"}],
+    },
+    # ── patient-generated layer ───────────────────────────────────────────────
+    {
+        "text": "I'm struggling to breathe — I think my oxygen is really low",
+        "claim_type": "symptom", "source_type": "patient_report",
+        "time_offset": "t+0h", "trend": "worsening",
+        "evidence_support_score": 0.50, "status": "observed",
+        "uncertainty_flag": True,
+        "entities": ["Dyspnea"],
+        "relations": [],
+    },
+    {
+        "text": "SpO2 84% via wearable pulse oximeter — multiple readings over 30 min",
+        "claim_type": "lab", "source_type": "wearable",
+        "time_offset": "t+0h", "trend": "worsening",
+        "evidence_support_score": 0.63, "status": "observed",
+        "uncertainty_flag": False,
+        "entities": ["SpO2", "84%"],
+        "relations": [],
     },
 ]
 
@@ -584,6 +705,25 @@ NSTEMI_CLAIMS = [
         "entities": ["Troponin I", "3.2 ng/mL", "Delta Troponin"],
         "relations": [{"from_entity": "Rising Troponin", "to_entity": "Myocardial Infarction", "type": "confirms"}],
     },
+    # ── patient-generated layer ───────────────────────────────────────────────
+    {
+        "text": "I have chest pressure for 2 hours — feels like something squeezing my chest, also left arm pain",
+        "claim_type": "symptom", "source_type": "patient_report",
+        "time_offset": "t+0h", "trend": "worsening",
+        "evidence_support_score": 0.65, "status": "observed",
+        "uncertainty_flag": False,
+        "entities": ["Chest Pain", "Left Arm Pain"],
+        "relations": [],
+    },
+    {
+        "text": "Blood pressure 158/95 mmHg via home BP monitor (taken 30 min ago)",
+        "claim_type": "finding", "source_type": "home_device",
+        "time_offset": "t+0h", "trend": "stable",
+        "evidence_support_score": 0.70, "status": "observed",
+        "uncertainty_flag": False,
+        "entities": ["Blood Pressure", "158/95 mmHg"],
+        "relations": [],
+    },
 ]
 
 
@@ -596,72 +736,41 @@ SCENARIO_MAP = {
 
 
 def seed_demo(session_id: str, lang: str = "en", scenario: str = "cap"):
-    uri      = os.getenv("NEO4J_URI",      "bolt://localhost:7687")
-    user     = os.getenv("NEO4J_USER",     "neo4j")
-    password = os.getenv("NEO4J_PASSWORD", "alexiona123")
-    driver = GraphDatabase.driver(uri, auth=(user, password))
+    """Seed a demo session with a pre-built clinical scenario.
 
-    en_claims, de_claims = SCENARIO_MAP.get(scenario, (DEMO_CLAIMS, DEMO_CLAIMS_DE))
-    claims = de_claims if lang == "de" else en_claims
+    Uses neo4j_client.store_claims() so all provenance fields are persisted
+    and an AuditEvent (actor=system) is generated for every seeded Claim.
+    """
+    from neo4j_client import get_db
+    from audit_log import log_created_batch
+    from models import AuditActor
 
-    with driver.session() as s:
-        # Check if already seeded
+    db = get_db()
+
+    # Guard: refuse to seed if session already has claims
+    with db.driver.session() as s:
         result = s.run(
             "MATCH (c:Claim {session_id: $sid}) RETURN count(c) AS n",
-            sid=session_id
+            sid=session_id,
         )
         if result.single()["n"] > 0:
-            driver.close()
             return {"seeded": False, "reason": "Session already has claims"}
 
-        created = []
-        now_base = datetime.now(timezone.utc)
+    en_claims, de_claims = SCENARIO_MAP.get(scenario, (DEMO_CLAIMS, DEMO_CLAIMS_DE))
+    raw_claims = de_claims if lang == "de" else en_claims
 
-        for i, claim in enumerate(claims):
-            cid = str(uuid.uuid4())
-            created.append(cid)
-            ts  = now_base.isoformat()
+    # Convert raw dicts → validated Claim model instances (with evidence_tier)
+    claim_objects = [_dict_to_claim(c) for c in raw_claims]
 
-            s.run(
-                """
-                CREATE (c:Claim {
-                    id: $id, text: $text, session_id: $sid,
-                    evidence_support_score: $ess, claim_type: $ct,
-                    source_type: $st, source_ref: $sr,
-                    derived_from: $df, status: $status,
-                    time_offset: $to, trend: $trend,
-                    created_at: $now
-                })
-                """,
-                id=cid, text=claim["text"], sid=session_id,
-                ess=claim["evidence_support_score"],
-                ct=claim["claim_type"], st=claim["source_type"],
-                sr="", df="[]", status=claim["status"],
-                to=claim["time_offset"], trend=claim["trend"],
-                now=ts,
-            )
+    # Persist through the official pipeline (includes all provenance fields)
+    claim_ids = db.store_claims(claim_objects, session_id)
 
-            for entity in claim.get("entities", []):
-                s.run(
-                    """
-                    MERGE (e:Entity {name: $name})
-                    WITH e MATCH (c:Claim {id: $cid})
-                    MERGE (c)-[:MENTIONS]->(e)
-                    """,
-                    name=entity, cid=cid,
-                )
+    # Audit trail: every seeded claim gets an AuditEvent
+    log_created_batch(
+        claim_ids, claim_objects, session_id,
+        actor=AuditActor.system,
+        pipeline_stage="Demo seed",
+        meta={"scenario": scenario, "lang": lang},
+    )
 
-            for rel in claim.get("relations", []):
-                s.run(
-                    """
-                    MERGE (f:Entity {name: $from_name})
-                    MERGE (t:Entity {name: $to_name})
-                    MERGE (f)-[r:RELATION {type: $rel_type}]->(t)
-                    """,
-                    from_name=rel["from_entity"],
-                    to_name=rel["to_entity"],
-                    rel_type=rel["type"],
-                )
-
-    driver.close()
-    return {"seeded": True, "claim_count": len(claims)}
+    return {"seeded": True, "claim_count": len(claim_objects)}
