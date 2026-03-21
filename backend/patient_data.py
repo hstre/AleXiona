@@ -421,6 +421,12 @@ def candidate_to_claim(
         event_time=event_time,
         assertion_time=now,
         patient_data_ref=patient_data_ref or candidate.observation.source_ref,
+        projection_confidence=candidate.confidence,
+        projection_method=(
+            "rule_based_measurement"
+            if candidate.observation.source_ref.startswith("measurement:")
+            else "rule_based_observation"
+        ),
     )
 
 

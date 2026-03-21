@@ -260,11 +260,12 @@ def extract_claims(text: str) -> ClaimExtractionResult:
                 Relation(from_entity=r["from_entity"], to_entity=r["to_entity"], type=r["type"])
                 for r in enriched.get("relations", [])
             ]
+            ess = float(enriched.get("evidence_support_score", 0.8))
             claims.append(Claim(               # Stage 3 — Pydantic validation
                 text=enriched["text"],
                 entities=enriched.get("entities", []),
                 relations=relations,
-                evidence_support_score=float(enriched.get("evidence_support_score", 0.8)),
+                evidence_support_score=ess,
                 claim_type=enriched.get("claim_type", "finding"),
                 source_type=enriched.get("source_type", "llm"),
                 source_ref=enriched.get("source_ref", ""),
@@ -277,6 +278,8 @@ def extract_claims(text: str) -> ClaimExtractionResult:
                 assumptions=enriched.get("assumptions", []),
                 normalized_token=enriched.get("normalized_token"),
                 evidence_tier=enriched.get("evidence_tier"),
+                projection_confidence=ess,
+                projection_method="llm_extraction",
             ))
         except (ValidationError, KeyError, TypeError) as e:
             log.warning("Skipping malformed claim from LLM: %s — %s", c, e)
@@ -561,11 +564,12 @@ def extract_claims_conversation(
                 Relation(from_entity=r["from_entity"], to_entity=r["to_entity"], type=r["type"])
                 for r in enriched.get("relations", [])
             ]
+            ess = float(enriched.get("evidence_support_score", 0.5))
             claims.append(Claim(
                 text=enriched["text"],
                 entities=enriched.get("entities", []),
                 relations=relations,
-                evidence_support_score=float(enriched.get("evidence_support_score", 0.5)),
+                evidence_support_score=ess,
                 claim_type=enriched.get("claim_type", "symptom"),
                 source_type=enriched["source_type"],
                 source_ref=enriched.get("source_ref", ""),
@@ -578,6 +582,8 @@ def extract_claims_conversation(
                 uncertainty_flag=bool(enriched.get("uncertainty_flag", False)),
                 assumptions=enriched.get("assumptions", []),
                 normalized_token=enriched.get("normalized_token"),
+                projection_confidence=ess,
+                projection_method="llm_extraction",
             ))
         except (ValidationError, KeyError, TypeError) as e:
             log.warning("Skipping malformed conversation claim: %s — %s", c, e)
@@ -665,11 +671,12 @@ def extract_claims_clinical(
                 Relation(from_entity=r["from_entity"], to_entity=r["to_entity"], type=r["type"])
                 for r in enriched.get("relations", [])
             ]
+            ess = float(enriched.get("evidence_support_score", 0.8))
             claims.append(Claim(
                 text=enriched["text"],
                 entities=enriched.get("entities", []),
                 relations=relations,
-                evidence_support_score=float(enriched.get("evidence_support_score", 0.8)),
+                evidence_support_score=ess,
                 claim_type=enriched.get("claim_type", "finding"),
                 source_type=enriched["source_type"],
                 source_ref=enriched.get("source_ref", ""),
@@ -682,6 +689,8 @@ def extract_claims_clinical(
                 uncertainty_flag=bool(enriched.get("uncertainty_flag", False)),
                 assumptions=enriched.get("assumptions", []),
                 normalized_token=enriched.get("normalized_token"),
+                projection_confidence=ess,
+                projection_method="llm_extraction",
             ))
         except (ValidationError, KeyError, TypeError) as e:
             log.warning("Skipping malformed clinical claim: %s — %s", c, e)

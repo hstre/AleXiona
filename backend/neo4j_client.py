@@ -101,7 +101,9 @@ class Neo4jClient:
                         patient_data_ref: $patient_data_ref,
                         event_time: $event_time,
                         assertion_time: $assertion_time,
-                        supersedes_claim_id: $supersedes_claim_id
+                        supersedes_claim_id: $supersedes_claim_id,
+                        projection_confidence: $projection_confidence,
+                        projection_method: $projection_method
                     })
                     """,
                     id=cid, text=claim.text, session_id=session_id,
@@ -122,6 +124,8 @@ class Neo4jClient:
                     event_time=event_time_iso,
                     assertion_time=assertion_time_iso,
                     supersedes_claim_id=claim.supersedes_claim_id,
+                    projection_confidence=claim.projection_confidence,
+                    projection_method=claim.projection_method,
                 )
 
                 for entity_name in claim.entities:

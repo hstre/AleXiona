@@ -88,6 +88,27 @@ _SOURCE_WEIGHTS: dict[str, float] = {
 # Patient-generated source types — subject to extra safeguards in scoring
 _PATIENT_SOURCES = {"patient_report", "wearable", "home_device", "caregiver_report"}
 
+# ── Trend signal scoring ──────────────────────────────────────────────────────
+# TrendSignals stored as Claims carry a clinical_flag in brackets, e.g.
+# "heart_rate rising 15.2% over 3.1h [tachycardia_trend]"
+# When a trend claim with a relevant clinical_flag co-occurs with a hypothesis,
+# its base support contribution is multiplied by _TREND_BOOST.
+_TREND_FLAG_RE = re.compile(r'\[([a-z_]+_trend)\]')
+_TREND_BOOST   = 1.4   # 40% boost — directional signals are strong evidence
+
+# clinical_flag → hypothesis keywords that this trend strengthens
+_TREND_HYPOTHESIS_KEYWORDS: dict[str, list[str]] = {
+    "hypoxia_trend":      ["pneumonia", "embolism", "ards", "respiratory", "hypoxia"],
+    "tachycardia_trend":  ["sepsis", "embolism", "failure", "shock", "tachycardia"],
+    "bradycardia_trend":  ["block", "hypothyroid", "vagal"],
+    "fever_trend":        ["sepsis", "pneumonia", "infection", "meningitis", "endocarditis"],
+    "tachypnea_trend":    ["pneumonia", "ards", "embolism", "acidosis", "tachypnea"],
+    "hypotension_trend":  ["sepsis", "embolism", "failure", "shock", "hypotension"],
+    "hypertension_trend": ["hypertension", "renal", "hyperaldosteronism"],
+    "hyperglycemia_trend":["sepsis", "diabetes", "pancreatitis", "hyperglycemia"],
+    "hypoglycemia_trend": ["sepsis", "hepatic", "insulin", "hypoglycemia"],
+}
+
 # ── Conflict-penalty weights ──────────────────────────────────────────────────
 # Contradiction severity drives the penalty deducted from the hypothesis score.
 # Direct negation ("no fever") is the hardest refutation; quantitative clash
@@ -341,6 +362,34 @@ def score_hypothesis(hypothesis: dict, all_claims: list[dict]) -> HypothesisScor
             confirm_w     = 1.0 if is_patient else (_CONFIRMED_BOOST if c_status == "confirmed" else 1.0)
             patient_diag_w = 0.5 if (is_patient and is_diagnosis) else 1.0
             support_score += ess * weight * src_w * t_w * confirm_w * patient_diag_w
+            supporting_ids.append(c["id"])
+
+    # ── Trend signal boost ────────────────────────────────────────────────────
+    # Trend claims (source_ref starts with "trend:") carry a clinical_flag in
+    # brackets.  When the flag maps to keywords present in the hypothesis text,
+    # multiply the trend claim's marginal support by _TREND_BOOST.
+    hyp_text_lower = hypothesis["text"].lower()
+    for c in all_claims:
+        src_ref = c.get("source_ref", "")
+        if not (src_ref.startswith("trend:") or src_ref.startswith("trend_signal:")):
+            continue
+        if c.get("status", "active") not in _ACTIVE_STATUSES:
+            continue
+        flag_match = _TREND_FLAG_RE.search(c.get("text", ""))
+        if not flag_match:
+            continue
+        flag     = flag_match.group(1)
+        keywords = _TREND_HYPOTHESIS_KEYWORDS.get(flag, [])
+        if not any(kw in hyp_text_lower for kw in keywords):
+            continue
+        # Compute the trend claim's base contribution and apply boost
+        ess   = float(c.get("evidence_support_score", 0.5))
+        src_w = _source_weight(c.get("source_type", "wearable"))
+        t_w   = _temporal_weight(c)
+        # Trend boost is added as additional support (not replacing base scoring)
+        boost = ess * src_w * t_w * (_TREND_BOOST - 1.0)
+        support_score += boost
+        if c["id"] not in supporting_ids:
             supporting_ids.append(c["id"])
 
     raw   = support_score - conflict_total

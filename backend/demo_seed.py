@@ -50,6 +50,8 @@ def _dict_to_claim(d: dict):
         trend=d.get("trend", "unknown"),
         uncertainty_flag=bool(d.get("uncertainty_flag", False)),
         assumptions=d.get("assumptions", []),
+        projection_confidence=d.get("evidence_support_score", 0.8),
+        projection_method="demo_seed",
     )
 
 DEMO_CLAIMS = [

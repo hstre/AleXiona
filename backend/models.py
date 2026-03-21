@@ -166,6 +166,10 @@ class Claim(BaseModel):
     evidence_tier:          Optional[str]        = None   # EvidenceTier value; None = derive from source_type
     patient_data_ref:       Optional[str]        = None   # ID of originating PatientObservation or PGM
 
+    # ── Projection metadata (Alexandria: every claim carries its projection origin) ──
+    projection_confidence:  Optional[float]      = None   # confidence at projection time (0.0–1.0)
+    projection_method:      Optional[str]        = None   # "llm_extraction" | "rule_based_measurement" | "rule_based_observation" | "demo_seed"
+
 
 class ClaimExtractionResult(BaseModel):
     claims: list[Claim]
