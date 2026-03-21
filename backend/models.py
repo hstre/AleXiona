@@ -508,6 +508,42 @@ class AuditTrailResponse(BaseModel):
     events:    list[AuditEvent]
 
 
+# ── Clinical Orchestrator ─────────────────────────────────────────────────────
+
+class OrchestratorScoreBreakdown(BaseModel):
+    """Per-factor contribution to the orchestrated_score (all values in [0,1])."""
+    evidence:  float   # base evidence weight × WEIGHT_EVIDENCE
+    guideline: float   # guideline compliance × WEIGHT_GUIDELINE
+    composite: float   # composite score normalised × WEIGHT_COMPOSITE
+    temporal:  float   # freshness × WEIGHT_TEMPORAL
+    conflict:  float   # penalty (negative) from conflict load
+
+
+class OrchestratorAlternative(BaseModel):
+    text:                        str
+    score:                       float
+    composite_score_contribution: float
+
+
+class OrchestratorState(BaseModel):
+    """
+    Single authoritative clinical state produced by the orchestrator.
+    Merges evidence, guideline, composite scores, temporal decay, and conflicts
+    into one transparent output with a German verdict and concrete next action.
+    """
+    session_id:         str
+    leading_hypothesis: Optional[str]
+    orchestrated_score: float                    # weighted combined score [0,1]
+    status:             str                      # "confident" | "undecided" | "contested" | "insufficient"
+    why:                str                      # German 2-4 sentence verdict
+    key_conflicts:      list[str]                # top 3 conflict messages
+    missing_critical:   list[str]                # top 3 missing tests/criteria
+    next_action:        str                      # single most important next step
+    score_breakdown:    OrchestratorScoreBreakdown
+    alternatives:       list[OrchestratorAlternative]
+    generated_at:       str
+
+
 # ── Priority Explanation ──────────────────────────────────────────────────────
 
 class PriorityFactor(BaseModel):

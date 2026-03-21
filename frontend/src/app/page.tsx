@@ -15,7 +15,8 @@ import StatsPanel        from '@/components/StatsPanel'
 import EvidenceMatrix    from '@/components/EvidenceMatrix'
 import CounterfactualPanel from '@/components/CounterfactualPanel'
 import HandoverPanel     from '@/components/HandoverPanel'
-import ReportPanel      from '@/components/ReportPanel'
+import ReportPanel         from '@/components/ReportPanel'
+import OrchestratorPanel  from '@/components/OrchestratorPanel'
 import { getGraph, seedDemo, exportSession, explainConflict } from '@/lib/api'
 import type { GraphData, Claim, ClaimType, ReasoningResult, Conflict, GraphNode, DemoScenario } from '@/lib/api'
 import { SESSION_KEY, shortId, confPct, essLabel, CONFLICT_SEVERITY_META, CLAIM_TYPE_META } from '@/lib/utils'
@@ -42,7 +43,7 @@ export default function Home() {
   const [seeding,            setSeeding]            = useState(false)
   const [typeFilter,         setTypeFilter]         = useState<Set<ClaimType>>(new Set())
   const [focusClaimIds,      setFocusClaimIds]      = useState<string[]>([])
-  const [centerView,         setCenterView]         = useState<'graph' | 'timeline' | 'matrix' | 'counterfactual' | 'handover' | 'report'>('graph')
+  const [centerView,         setCenterView]         = useState<'orchestrator' | 'graph' | 'timeline' | 'matrix' | 'counterfactual' | 'handover' | 'report'>('orchestrator')
   const [graphLayout,        setGraphLayout]        = useState<GraphLayout>('cose')
   const [fitTrigger,         setFitTrigger]         = useState(0)
   const [showShortcuts,      setShowShortcuts]      = useState(false)
@@ -776,6 +777,7 @@ export default function Home() {
               <div className="flex rounded-lg overflow-hidden text-xs p-0.5"
                 style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
                 {([
+                  ['orchestrator',    '◎ Zustand'],
                   ['graph',           '◈ Graph'],
                   ['timeline',        '⏱ Timeline'],
                   ['matrix',          '⊞ Matrix'],
@@ -955,6 +957,13 @@ export default function Home() {
           {centerView === 'report' && sessionId && (
             <div className="flex-1 overflow-hidden">
               <ReportPanel sessionId={sessionId} />
+            </div>
+          )}
+
+          {/* Clinical Orchestrator — single unified clinical state */}
+          {centerView === 'orchestrator' && sessionId && (
+            <div className="flex-1 overflow-hidden">
+              <OrchestratorPanel sessionId={sessionId} />
             </div>
           )}
         </div>

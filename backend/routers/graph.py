@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
-from models import GraphData, NodeUpdate, CounterfactualResult, HypothesisCounterfactualResult, Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend, _clamp_ess, _normalize_time_offset, _parse_offset_hours, AuditActor, MEDResult, ReasoningExplanation, HypothesisExplanation, ClaimContribution, GuidelineEvaluation, RiskScoreResponse, RiskScoreItem, ClinicalRoleView, RoleAlert, RoleViewSection, ClinicalReport, ReportSection, GenerateReportRequest, ReportTypeDef, ReportSectionDef, PriorityExplanation, PriorityFactor
+from models import GraphData, NodeUpdate, CounterfactualResult, HypothesisCounterfactualResult, Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend, _clamp_ess, _normalize_time_offset, _parse_offset_hours, AuditActor, MEDResult, ReasoningExplanation, HypothesisExplanation, ClaimContribution, GuidelineEvaluation, RiskScoreResponse, RiskScoreItem, ClinicalRoleView, RoleAlert, RoleViewSection, ClinicalReport, ReportSection, GenerateReportRequest, ReportTypeDef, ReportSectionDef, PriorityExplanation, PriorityFactor, OrchestratorState, OrchestratorScoreBreakdown, OrchestratorAlternative
+from clinical_orchestrator import orchestrate, WEIGHT_EVIDENCE, WEIGHT_GUIDELINE, WEIGHT_COMPOSITE, WEIGHT_TEMPORAL, WEIGHT_CONFLICT
 from pydantic import BaseModel, field_validator
 from typing import Optional
 from neo4j_client import get_db
@@ -319,6 +320,51 @@ async def get_reasoning_explanation(session_id: str):
             session_id=session_id,
             hypotheses=hypotheses,
             generated_at=datetime.now(timezone.utc).isoformat(),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise internal_error(e)
+
+
+@router.get("/{session_id}/orchestrate", response_model=OrchestratorState)
+async def get_orchestrator_state(session_id: str):
+    """
+    Return the single authoritative clinical state for this session.
+
+    The Clinical Orchestrator is the central reasoning layer that merges all
+    sub-engine signals into ONE output:
+      • leading_hypothesis  — who is winning, and why
+      • orchestrated_score  — weighted combined score (evidence 40%, guideline 25%,
+                              composite scores 15%, temporal freshness 10%, conflicts -10%)
+      • status              — confident | undecided | contested | insufficient
+      • why                 — German 2-4 sentence verdict
+      • key_conflicts       — top 3 conflicts (error-first)
+      • missing_critical    — top 3 missing tests or guideline criteria
+      • next_action         — single most important concrete next step
+      • score_breakdown     — transparent per-factor contributions
+      • alternatives        — runner-up hypotheses with their scores
+
+    No LLM call is made — all computation is deterministic and synchronous.
+    For the full per-claim breakdown use /reasoning/explain.
+    For the priority decomposition use /priority.
+    """
+    db = get_db()
+    try:
+        claims = db.get_all_claims_for_session(session_id)
+        state  = orchestrate(session_id, claims)
+        return OrchestratorState(
+            session_id=state["session_id"],
+            leading_hypothesis=state["leading_hypothesis"],
+            orchestrated_score=state["orchestrated_score"],
+            status=state["status"],
+            why=state["why"],
+            key_conflicts=state["key_conflicts"],
+            missing_critical=state["missing_critical"],
+            next_action=state["next_action"],
+            score_breakdown=OrchestratorScoreBreakdown(**state["score_breakdown"]),
+            alternatives=[OrchestratorAlternative(**a) for a in state["alternatives"]],
+            generated_at=state["generated_at"],
         )
     except HTTPException:
         raise
