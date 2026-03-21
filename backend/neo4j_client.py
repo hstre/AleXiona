@@ -103,7 +103,11 @@ class Neo4jClient:
                         assertion_time: $assertion_time,
                         supersedes_claim_id: $supersedes_claim_id,
                         projection_confidence: $projection_confidence,
-                        projection_method: $projection_method
+                        projection_method: $projection_method,
+                        spl_unit_id: $spl_unit_id,
+                        spl_projection_id: $spl_projection_id,
+                        spl_emission_rule: $spl_emission_rule,
+                        spl_h_norm: $spl_h_norm
                     })
                     """,
                     id=cid, text=claim.text, session_id=session_id,
@@ -126,6 +130,10 @@ class Neo4jClient:
                     supersedes_claim_id=claim.supersedes_claim_id,
                     projection_confidence=claim.projection_confidence,
                     projection_method=claim.projection_method,
+                    spl_unit_id=claim.spl_unit_id,
+                    spl_projection_id=claim.spl_projection_id,
+                    spl_emission_rule=claim.spl_emission_rule,
+                    spl_h_norm=claim.spl_h_norm,
                 )
 
                 for entity_name in claim.entities:

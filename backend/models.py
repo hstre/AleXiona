@@ -170,6 +170,12 @@ class Claim(BaseModel):
     projection_confidence:  Optional[float]      = None   # confidence at projection time (0.0–1.0)
     projection_method:      Optional[str]        = None   # "llm_extraction" | "rule_based_measurement" | "rule_based_observation" | "demo_seed"
 
+    # ── SPL provenance (Semantic Projection Layer — WP2) ─────────────────────
+    spl_unit_id:            Optional[str]        = None   # SemanticUnit.unit_id
+    spl_projection_id:      Optional[str]        = None   # SemanticProjection.projection_id
+    spl_emission_rule:      Optional[str]        = None   # "E1" | "E2" | "E3" | "E0"
+    spl_h_norm:             Optional[float]      = None   # normalised Shannon entropy ∈ [0,1]
+
 
 class ClaimExtractionResult(BaseModel):
     claims: list[Claim]

@@ -6,6 +6,7 @@ from typing import AsyncIterator
 from openai import OpenAI, AsyncOpenAI
 from pydantic import ValidationError
 from datetime import datetime, timezone
+from clinical_spl import run_spl_pipeline
 from models import (
     Claim, ClaimExtractionResult, ChatMessage,
     ReasoningResult, Alternative, MissingEvidence,
@@ -564,26 +565,59 @@ def extract_claims_conversation(
                 Relation(from_entity=r["from_entity"], to_entity=r["to_entity"], type=r["type"])
                 for r in enriched.get("relations", [])
             ]
-            ess = float(enriched.get("evidence_support_score", 0.5))
+            ess         = float(enriched.get("evidence_support_score", 0.5))
+            claim_type  = enriched.get("claim_type", "symptom")
+            entities    = enriched.get("entities", [])
+
+            # ── SPL gate: probabilistic projection → emission rule ─────────────
+            spl = run_spl_pipeline(
+                claim_text=enriched["text"],
+                claim_type=claim_type,
+                ess=ess,
+                source_ref=enriched.get("source_ref", ""),
+                subject=entities[0] if entities else "",
+                object_=entities[1] if len(entities) > 1 else "",
+            )
+
+            # E0 (structural violation) → discard; all others propagate
+            if spl.blocked:
+                log.info("SPL E0 blocked conversation claim: %r", enriched["text"][:60])
+                continue
+
+            # E3 (ambiguous) → force uncertainty regardless of LLM output
+            uncertainty_flag = bool(enriched.get("uncertainty_flag", False)) or spl.force_uncertain
+            status_override  = "tentative" if spl.force_uncertain else enriched.get("status", "observed")
+
+            assumptions = list(enriched.get("assumptions", []))
+            assumptions.append(
+                f"SPL: emission_rule={spl.emission_rule} "
+                f"h_norm={spl.h_norm:.3f} "
+                f"relation_score={spl.relation_score:.3f}"
+            )
+
             claims.append(Claim(
                 text=enriched["text"],
-                entities=enriched.get("entities", []),
+                entities=entities,
                 relations=relations,
                 evidence_support_score=ess,
-                claim_type=enriched.get("claim_type", "symptom"),
+                claim_type=claim_type,
                 source_type=enriched["source_type"],
                 source_ref=enriched.get("source_ref", ""),
                 evidence_tier=enriched["evidence_tier"],
-                status=enriched.get("status", "observed"),
+                status=status_override,
                 time_offset=enriched.get("time_offset"),
                 event_time=enriched.get("event_time"),
                 assertion_time=enriched.get("assertion_time"),
                 trend=enriched.get("trend", "unknown"),
-                uncertainty_flag=bool(enriched.get("uncertainty_flag", False)),
-                assumptions=enriched.get("assumptions", []),
+                uncertainty_flag=uncertainty_flag,
+                assumptions=assumptions,
                 normalized_token=enriched.get("normalized_token"),
                 projection_confidence=ess,
                 projection_method="llm_extraction",
+                spl_unit_id=spl.unit_id,
+                spl_projection_id=spl.projection_id,
+                spl_emission_rule=spl.emission_rule,
+                spl_h_norm=round(spl.h_norm, 4),
             ))
         except (ValidationError, KeyError, TypeError) as e:
             log.warning("Skipping malformed conversation claim: %s — %s", c, e)
