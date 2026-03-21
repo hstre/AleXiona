@@ -329,13 +329,329 @@ def compute_grace_acs(all_claims: list[dict]) -> CompositeScore:
     )
 
 
+# ── HEART Score ───────────────────────────────────────────────────────────────
+
+def compute_heart(all_claims: list[dict]) -> CompositeScore:
+    """HEART Score for major adverse cardiac events (Backus et al., 2010).
+
+    H: History       — 0 (slightly suspicious) / 1 (moderately) / 2 (highly)
+    E: ECG           — 0 (normal) / 1 (non-specific) / 2 (significant)
+    A: Age           — 0 (<45) / 1 (45–64) / 2 (≥65)
+    R: Risk factors  — 0 (none) / 1 (1–2) / 2 (≥3 or known atherosclerosis)
+    T: Troponin      — 0 (≤normal) / 1 (1–3× normal) / 2 (>3× normal)
+
+    Score ≤3 → low (1.7% MACE); 4–6 → intermediate (12–65%); ≥7 → high (>65%)
+    """
+    criteria_met:     list[str] = []
+    criteria_missing: list[str] = []
+    points: int = 0
+
+    # H — History (chest pain characteristics)
+    if _claim_has_term(all_claims, ["typical chest pain", "typical angina", "klassische angina",
+                                     "crushing", "radiation arm", "radiation jaw",
+                                     "typical cardiac", "exertional chest"]):
+        criteria_met.append("H: Highly suspicious history (+2)")
+        points += 2
+    elif _claim_has_term(all_claims, ["chest pain", "chest pressure", "chest tightness",
+                                       "brustschmerz", "brustdruck", "palpitations"]):
+        criteria_met.append("H: Moderately suspicious history (+1)")
+        points += 1
+    else:
+        criteria_missing.append("H: Cardiac history characterisation")
+
+    # E — ECG
+    if _claim_has_term(all_claims, ["st elevation", "stemi", "lbbb", "left bundle branch",
+                                     "st depression", "t wave inversion", "significant ecg"]):
+        criteria_met.append("E: Significant ECG changes (+2)")
+        points += 2
+    elif _claim_has_term(all_claims, ["non-specific", "non specific", "lvh", "early repolarisation",
+                                       "bundle branch", "ecg change", "ekg veränderung", "nstemi"]):
+        criteria_met.append("E: Non-specific ECG changes (+1)")
+        points += 1
+    elif _claim_has_term(all_claims, ["normal ecg", "normal ekg", "ecg normal", "sinus rhythm"]):
+        criteria_met.append("E: Normal ECG (+0)")
+    else:
+        criteria_missing.append("E: ECG")
+
+    # A — Age
+    if _claim_has_term(all_claims, ["65", "66", "67", "68", "69", "70", "71", "72", "73",
+                                     "74", "75", "76", "77", "78", "79", "80",
+                                     "81", "82", "83", "84", "85", "86", "87", "88", "89",
+                                     "90", "91", "92", "93", "94", "95"]):
+        criteria_met.append("A: Age ≥65 (+2)")
+        points += 2
+    elif _claim_has_term(all_claims, ["45", "46", "47", "48", "49", "50", "51", "52", "53",
+                                       "54", "55", "56", "57", "58", "59", "60", "61", "62",
+                                       "63", "64", "years old", "jahre alt"]):
+        criteria_met.append("A: Age 45–64 (+1)")
+        points += 1
+    else:
+        criteria_missing.append("A: Age")
+
+    # R — Risk factors (hypertension, hyperlipidaemia, diabetes, obesity, smoking, family history)
+    risk_terms = ["hypertension", "hyperlipidaemia", "hyperlipidemia", "diabetes",
+                   "obesity", "obese", "smoking", "smoker", "family history cardiac",
+                   "koronare", "cad", "coronary artery disease", "atherosclerosis",
+                   "hypertonus", "hypercholesterinämie", "raucher"]
+    risk_count = sum(
+        1 for term in risk_terms
+        if _claim_has_term(all_claims, [term])
+    )
+    known_cad = _claim_has_term(all_claims, ["known cad", "prior mi", "prior stemi",
+                                               "coronary artery disease", "percutaneous",
+                                               "bypass", "stent"])
+    if risk_count >= 3 or known_cad:
+        criteria_met.append(f"R: ≥3 risk factors or known atherosclerosis (+2)")
+        points += 2
+    elif risk_count >= 1:
+        criteria_met.append(f"R: {risk_count} risk factor(s) (+1)")
+        points += 1
+    else:
+        criteria_missing.append("R: Cardiovascular risk factors")
+
+    # T — Troponin
+    trop_qual = qualitative_for_token("troponin", all_claims)
+    if trop_qual == "high":
+        # Check if markedly elevated (>3× normal)
+        if _claim_has_term(all_claims, ["highly elevated", "markedly elevated",
+                                         "3x", "3 times", "dreifach", ">3"]):
+            criteria_met.append("T: Troponin >3× normal (+2)")
+            points += 2
+        else:
+            criteria_met.append("T: Troponin 1–3× normal (+1)")
+            points += 1
+    elif trop_qual == "normal" or trop_qual == "low":
+        criteria_met.append("T: Troponin ≤normal (+0)")
+    else:
+        if _claim_has_term(all_claims, ["elevated troponin", "troponin positive",
+                                          "troponin erhöht"]):
+            criteria_met.append("T: Troponin elevated (textual, +1)")
+            points += 1
+        else:
+            criteria_missing.append("T: Troponin")
+
+    if points >= 7:
+        interpretation = "high"
+    elif points >= 4:
+        interpretation = "intermediate"
+    else:
+        interpretation = "low"
+
+    return CompositeScore(
+        name="HEART",
+        score=points,
+        interpretation=interpretation,
+        criteria_met=criteria_met,
+        criteria_missing=criteria_missing,
+    )
+
+
+# ── PERC Rule ─────────────────────────────────────────────────────────────────
+
+def compute_perc(all_claims: list[dict]) -> CompositeScore:
+    """PERC Rule for PE exclusion in low pre-test probability (Kline et al., 2004).
+
+    All 8 criteria must be ABSENT to rule out PE without D-Dimer.
+    Any criterion PRESENT → PERC positive → further workup required.
+
+    Criteria:
+      Age ≥ 50 | HR ≥ 100 | SpO2 < 95% | Unilateral leg swelling
+      Haemoptysis | Recent surgery/trauma | Prior DVT/PE | Hormone use
+    """
+    criteria_met:     list[str] = []   # criteria PRESENT (= PERC positive factors)
+    criteria_missing: list[str] = []   # criteria not documented (cannot rule out)
+
+    # Age ≥ 50
+    age_terms = [str(i) for i in range(50, 100)] + ["years old", "jahre alt"]
+    if _claim_has_term(all_claims, age_terms):
+        criteria_met.append("Age ≥50")
+    else:
+        criteria_missing.append("Age")
+
+    # HR ≥ 100
+    hr_qual = qualitative_for_token("heart_rate", all_claims)
+    if hr_qual == "high" or _claim_has_term(all_claims, ["tachycardia", "tachykardie", "hr > 100", "hr>100"]):
+        criteria_met.append("HR ≥100 bpm")
+    elif hr_qual is None:
+        criteria_missing.append("Heart rate")
+
+    # SpO2 < 95%
+    spo2_qual = qualitative_for_token("spo2", all_claims)
+    if spo2_qual == "low" or _claim_has_term(all_claims, ["hypoxia", "hypoxemia", "desaturation",
+                                                            "spo2 < 95", "spo2 <95", "o2 sat low"]):
+        criteria_met.append("SpO2 <95%")
+    elif spo2_qual is None:
+        criteria_missing.append("SpO2")
+
+    # Unilateral leg swelling (DVT signs)
+    if _claim_has_term(all_claims, ["leg swelling", "calf swelling", "unilateral swelling",
+                                     "dvt", "beinvenenthrombose", "unterschenkelödem"]):
+        criteria_met.append("Unilateral leg swelling")
+
+    # Haemoptysis
+    if _claim_has_term(all_claims, ["haemoptysis", "hemoptysis", "bluthusten", "blood in sputum"]):
+        criteria_met.append("Haemoptysis")
+
+    # Recent surgery / trauma (within 4 weeks)
+    if _claim_has_term(all_claims, ["surgery", "operation", "trauma", "injury",
+                                     "operation recent", "postoperative", "postop"]):
+        criteria_met.append("Recent surgery/trauma")
+    else:
+        criteria_missing.append("Recent surgery/trauma")
+
+    # Prior DVT / PE
+    if _claim_has_term(all_claims, ["prior dvt", "prior pe", "previous dvt", "previous pe",
+                                     "history of dvt", "history of pe", "vorherige embolie"]):
+        criteria_met.append("Prior DVT/PE")
+
+    # Hormone use (OCP, HRT)
+    if _claim_has_term(all_claims, ["oral contraceptive", "ocp", "contraceptive pill",
+                                     "hormone replacement", "hrt", "östrogen", "estrogen"]):
+        criteria_met.append("Hormone use")
+
+    # PERC NEGATIVE = no criteria present (rule out PE without D-Dimer)
+    perc_negative = len(criteria_met) == 0
+    score         = len(criteria_met)
+
+    return CompositeScore(
+        name="PERC",
+        score=score,
+        interpretation="low" if perc_negative else "high",
+        criteria_met=criteria_met,   # present risk factors
+        criteria_missing=criteria_missing,
+    )
+
+
+# ── CURB-65 ───────────────────────────────────────────────────────────────────
+
+def compute_curb65(all_claims: list[dict]) -> CompositeScore:
+    """CURB-65 pneumonia severity score (Lim et al., Thorax 2003).
+
+    C: Confusion      — new confusion / disorientation
+    U: Urea > 7 mmol/L (BUN > 19 mg/dL)
+    R: Respiratory rate ≥ 30/min
+    B: Blood pressure — SBP < 90 or DBP ≤ 60 mmHg
+    65: Age ≥ 65
+
+    Score 0–1: low (outpatient); 2: intermediate (brief admission);
+    Score 3–5: high (ICU consideration)
+    """
+    criteria_met:     list[str] = []
+    criteria_missing: list[str] = []
+    points: int = 0
+
+    # C — Confusion
+    gcs_qual = qualitative_for_token("gcs", all_claims)
+    if gcs_qual == "low" or _claim_has_term(all_claims, ["confusion", "confused", "disoriented",
+                                                           "altered mental", "verwirrt",
+                                                           "desorientiert", "agitation"]):
+        criteria_met.append("C: Confusion (+1)")
+        points += 1
+    else:
+        criteria_missing.append("C: Confusion / mental status")
+
+    # U — Urea > 7 mmol/L
+    bun_qual = qualitative_for_token("bun", all_claims)
+    urea_qual = qualitative_for_token("urea", all_claims)
+    if bun_qual == "high" or urea_qual == "high":
+        criteria_met.append("U: Urea/BUN elevated (+1)")
+        points += 1
+    elif bun_qual is None and urea_qual is None:
+        if _claim_has_term(all_claims, ["elevated bun", "elevated urea", "harnstoff erhöht"]):
+            criteria_met.append("U: Urea elevated (textual, +1)")
+            points += 1
+        else:
+            criteria_missing.append("U: Urea/BUN")
+
+    # R — RR ≥ 30/min
+    rr_qual = qualitative_for_token("respiratory_rate", all_claims)
+    if rr_qual == "high" or _claim_has_term(all_claims, ["tachypnea", "tachypnoea",
+                                                           "rr 30", "atemfrequenz erhöht",
+                                                           "respiratory distress"]):
+        criteria_met.append("R: RR ≥30/min (+1)")
+        points += 1
+    else:
+        criteria_missing.append("R: Respiratory rate")
+
+    # B — Low BP
+    sbp_qual = qualitative_for_token("systolic_bp", all_claims)
+    dbp_qual = qualitative_for_token("diastolic_bp", all_claims)
+    if (sbp_qual == "low" or dbp_qual == "low"
+            or _claim_has_term(all_claims, ["hypotension", "hypotonie", "low bp",
+                                             "low blood pressure", "blutdruckabfall"])):
+        criteria_met.append("B: Low BP (+1)")
+        points += 1
+    else:
+        criteria_missing.append("B: Blood pressure")
+
+    # 65 — Age ≥ 65
+    age_terms_65 = [str(i) for i in range(65, 100)] + ["years old", "jahre alt"]
+    if _claim_has_term(all_claims, age_terms_65):
+        criteria_met.append("65: Age ≥65 (+1)")
+        points += 1
+    else:
+        criteria_missing.append("65: Age")
+
+    if points >= 3:
+        interpretation = "high"
+    elif points == 2:
+        interpretation = "intermediate"
+    else:
+        interpretation = "low"
+
+    return CompositeScore(
+        name="CURB-65",
+        score=points,
+        interpretation=interpretation,
+        criteria_met=criteria_met,
+        criteria_missing=criteria_missing,
+    )
+
+
 # ── Dispatcher ────────────────────────────────────────────────────────────────
 
 _SCORE_RELEVANCE: dict[str, list[str]] = {
-    "qSOFA":    ["sepsis", "septic shock", "urosepsis"],
-    "Wells-PE": ["pulmonary embolism", "lungenembolie", "pe "],
+    "qSOFA":     ["sepsis", "septic shock", "urosepsis"],
+    "Wells-PE":  ["pulmonary embolism", "lungenembolie", "pe "],
     "GRACE-ACS": ["myocardial infarction", "stemi", "nstemi", "acs",
                   "acute coronary", "herzinfarkt"],
+    "HEART":     ["chest pain", "brustschmerz", "myocardial infarction",
+                  "acs", "coronary", "cardiac"],
+    "PERC":      ["pulmonary embolism", "lungenembolie", "pe ", "pe-"],
+    "CURB-65":   ["pneumonia", "pneumonie", "cap"],
+}
+
+# Human-readable recommendation per score level
+_RECOMMENDATIONS: dict[str, dict[str, str]] = {
+    "HEART": {
+        "low":          "Consider discharge with outpatient follow-up (1.7% MACE risk)",
+        "intermediate": "Observation unit, serial troponin, stress test (12–65% MACE risk)",
+        "high":         "Early invasive strategy recommended (>65% MACE risk)",
+    },
+    "PERC": {
+        "low":          "PERC NEGATIVE — PE can be excluded without D-Dimer in low pre-test probability",
+        "high":         "PERC POSITIVE — D-Dimer or imaging required",
+    },
+    "CURB-65": {
+        "low":          "Low severity — outpatient treatment appropriate (30-day mortality ~1%)",
+        "intermediate": "Moderate severity — brief hospitalisation recommended (~9% mortality)",
+        "high":         "Severe — hospitalisation/ICU consideration required (>22% mortality)",
+    },
+    "qSOFA": {
+        "low":          "Low sepsis risk — monitor clinically",
+        "intermediate": "Intermediate risk — assess organ function",
+        "high":         "High sepsis risk — immediate assessment, blood cultures, IV antibiotics",
+    },
+    "Wells-PE": {
+        "low":          "Low probability — D-Dimer to rule out (PERC first if applicable)",
+        "intermediate": "Intermediate probability — D-Dimer or CT-PA depending on clinical context",
+        "high":         "High probability — CT-PA or empiric anticoagulation",
+    },
+    "GRACE-ACS": {
+        "low":          "Low risk ACS — conservative management, non-urgent angiography",
+        "intermediate": "Intermediate risk — semi-urgent angiography within 24–72h",
+        "high":         "High risk ACS — urgent angiography within 24h",
+    },
 }
 
 
@@ -365,3 +681,50 @@ def compute_relevant_scores(all_claims: list[dict]) -> list[CompositeScore]:
     # Sort high-risk first
     order = {"high": 0, "intermediate": 1, "low": 2}
     return sorted(scores, key=lambda s: order.get(s.interpretation, 3))
+
+
+def compute_all_scores(all_claims: list[dict]) -> list[dict]:
+    """
+    Compute all six validated risk scores and return structured dicts.
+
+    Each score runs regardless of active hypotheses (unlike compute_relevant_scores).
+    The `relevant` flag indicates whether the score applies to the current
+    differential based on active hypothesis texts.
+
+    Returns a list sorted by: relevance first, then severity (high → low).
+    """
+    active_texts = " ".join(
+        c.get("text", "").lower()
+        for c in all_claims
+        if c.get("status") in ("active", "observed", "confirmed")
+           and c.get("claim_type") in ("hypothesis", "diagnosis")
+    )
+
+    all_scorers = [
+        ("qSOFA",    compute_qsofa),
+        ("Wells-PE", compute_wells_pe),
+        ("GRACE-ACS",compute_grace_acs),
+        ("HEART",    compute_heart),
+        ("PERC",     compute_perc),
+        ("CURB-65",  compute_curb65),
+    ]
+
+    results = []
+    for score_name, scorer in all_scorers:
+        cs        = scorer(all_claims)
+        relevant  = any(term in active_texts for term in _SCORE_RELEVANCE.get(score_name, []))
+        rec_map   = _RECOMMENDATIONS.get(score_name, {})
+        results.append({
+            "name":              cs.name,
+            "score":             cs.score,
+            "interpretation":    cs.interpretation,
+            "criteria_met":      cs.criteria_met,
+            "criteria_missing":  cs.criteria_missing,
+            "relevant":          relevant,
+            "recommendation":    rec_map.get(cs.interpretation, ""),
+        })
+
+    # Relevant + high-risk first; then irrelevant; within group by severity
+    sev_order = {"high": 0, "intermediate": 1, "low": 2}
+    results.sort(key=lambda r: (not r["relevant"], sev_order.get(r["interpretation"], 3)))
+    return results

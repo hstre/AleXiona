@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from models import GraphData, NodeUpdate, CounterfactualResult, HypothesisCounterfactualResult, Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend, _clamp_ess, _normalize_time_offset, _parse_offset_hours, AuditActor, MEDResult
+from models import GraphData, NodeUpdate, CounterfactualResult, HypothesisCounterfactualResult, Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend, _clamp_ess, _normalize_time_offset, _parse_offset_hours, AuditActor, MEDResult, ReasoningExplanation, HypothesisExplanation, ClaimContribution, GuidelineEvaluation, RiskScoreResponse, RiskScoreItem
 from pydantic import BaseModel, field_validator
 from typing import Optional
 from neo4j_client import get_db
@@ -8,6 +8,8 @@ from conflict_engine import detect_conflicts
 from api_errors import internal_error, validation_error, not_found
 from audit_log import log_created_batch, log_updated, log_deleted
 from med_engine import compute_med
+from reasoning_engine import explain_hypothesis_scores
+from composite_scores import compute_all_scores
 
 
 class ManualClaimPayload(BaseModel):
@@ -263,6 +265,86 @@ async def update_claim(claim_id: str, update: NodeUpdate):
             meta={"changed_fields": list(changes.keys())},
         )
         return {"status": "updated"}
+    except Exception as e:
+        raise internal_error(e)
+
+
+@router.get("/{session_id}/reasoning/explain", response_model=ReasoningExplanation)
+async def get_reasoning_explanation(session_id: str):
+    """
+    Per-claim contribution breakdown for every active hypothesis.
+
+    For each hypothesis returns:
+    - contributions: ordered list of claims with direction, magnitude,
+      source_weight, temporal_weight, spl_emission_rule, trend_boosted
+    - total_support / total_conflict: raw sums before score clamping
+    - guideline: required/supporting/missing evidence per guideline rule
+    """
+    from datetime import datetime, timezone
+    db = get_db()
+    try:
+        claims = db.get_all_claims_for_session(session_id)
+        explanations_raw = explain_hypothesis_scores(claims)
+
+        hypotheses = []
+        for e in explanations_raw:
+            g = e["guideline"]
+            hypotheses.append(HypothesisExplanation(
+                hypothesis_id=e["id"],
+                hypothesis_text=e["text"],
+                claim_type=e["claim_type"],
+                rule_based_score=e["rule_based_score"],
+                total_support=e["total_support"],
+                total_conflict=e["total_conflict"],
+                contributions=[
+                    ClaimContribution(**c) for c in e["contributions"]
+                ],
+                guideline=GuidelineEvaluation(
+                    label=g.get("label", ""),
+                    rule_found=g.get("rule_found", False),
+                    eligible=g.get("eligible", False),
+                    required_present=g.get("required_present", []),
+                    required_missing=g.get("required_missing", []),
+                    supporting_present=g.get("supporting_present", []),
+                    conflicting_present=g.get("conflicting_present", []),
+                    missing_priority=g.get("missing_priority", []),
+                ),
+            ))
+
+        return ReasoningExplanation(
+            session_id=session_id,
+            hypotheses=hypotheses,
+            generated_at=datetime.now(timezone.utc).isoformat(),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise internal_error(e)
+
+
+@router.get("/{session_id}/risk-scores", response_model=RiskScoreResponse)
+async def get_risk_scores(session_id: str):
+    """
+    Compute all six validated bedside risk scores from the current claim graph.
+
+    Scores computed: qSOFA, Wells-PE, GRACE-ACS, HEART, PERC, CURB-65.
+    Each score includes criteria_met, criteria_missing, interpretation,
+    and an evidence-based recommendation. The `relevant` flag indicates
+    whether the score applies to the active differential diagnoses.
+    Results are sorted: relevant + highest-risk first.
+    """
+    from datetime import datetime, timezone
+    db = get_db()
+    try:
+        claims = db.get_all_claims_for_session(session_id)
+        raw    = compute_all_scores(claims)
+        return RiskScoreResponse(
+            session_id=session_id,
+            scores=[RiskScoreItem(**r) for r in raw],
+            generated_at=datetime.now(timezone.utc).isoformat(),
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         raise internal_error(e)
 

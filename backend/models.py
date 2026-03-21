@@ -508,6 +508,71 @@ class AuditTrailResponse(BaseModel):
     events:    list[AuditEvent]
 
 
+# ── Risk Score Response ────────────────────────────────────────────────────────
+
+class RiskScoreItem(BaseModel):
+    name:             str
+    score:            float
+    interpretation:   str              # "low" | "intermediate" | "high"
+    criteria_met:     list[str]        # criteria that fired (with point values)
+    criteria_missing: list[str]        # criteria that couldn't be determined
+    relevant:         bool             # applies to current active hypotheses
+    recommendation:   str = ""         # clinical action guidance
+
+
+class RiskScoreResponse(BaseModel):
+    session_id:   str
+    scores:       list[RiskScoreItem]  # sorted: relevant+high-risk first
+    generated_at: str
+
+
+# ── Claim Contribution Analysis ───────────────────────────────────────────────
+
+class ClaimContribution(BaseModel):
+    """Per-claim contribution to a hypothesis score."""
+    claim_id:          str
+    claim_text:        str
+    claim_type:        str
+    source_type:       str
+    evidence_tier:     Optional[str]   = None
+    spl_emission_rule: Optional[str]   = None   # "E1"|"E2"|"E3"|"E4" — epistemic quality
+    direction:         str             # "supporting" | "conflicting"
+    contribution:      float           # magnitude (always ≥ 0); direction carries sign
+    ess:               float           # evidence_support_score of this claim
+    overlap_weight:    float           # term-overlap weight (0.0 for conflicting)
+    source_weight:     float           # epistemic authority multiplier
+    temporal_weight:   float           # [0.25, 1.0] decay factor
+    trend_boosted:     bool = False    # True if this is a trend signal with keyword boost
+
+
+class GuidelineEvaluation(BaseModel):
+    label:               str
+    rule_found:          bool
+    eligible:            bool
+    required_present:    list[str]
+    required_missing:    list[str]
+    supporting_present:  list[str]
+    conflicting_present: list[str]
+    missing_priority:    list[str]
+
+
+class HypothesisExplanation(BaseModel):
+    hypothesis_id:    str
+    hypothesis_text:  str
+    claim_type:       str
+    rule_based_score: float
+    total_support:    float
+    total_conflict:   float
+    contributions:    list[ClaimContribution]   # sorted: supporting desc, conflicting desc
+    guideline:        GuidelineEvaluation
+
+
+class ReasoningExplanation(BaseModel):
+    session_id:   str
+    hypotheses:   list[HypothesisExplanation]   # sorted by rule_based_score desc
+    generated_at: str
+
+
 # ── MED Engine (Minimal Evidence to Decision) ─────────────────────────────────
 
 class MEDOutcome(BaseModel):

@@ -301,6 +301,33 @@ class HypothesisScore(TypedDict):
     conflicting_claim_ids:  list[str]
 
 
+class ClaimContributionData(TypedDict):
+    claim_id:          str
+    claim_text:        str
+    claim_type:        str
+    source_type:       str
+    evidence_tier:     str | None
+    spl_emission_rule: str | None
+    direction:         str    # "supporting" | "conflicting"
+    contribution:      float  # always positive magnitude; direction carries the sign
+    ess:               float
+    overlap_weight:    float  # 0.0 for conflicting claims
+    source_weight:     float
+    temporal_weight:   float
+    trend_boosted:     bool
+
+
+class HypothesisExplanationData(TypedDict):
+    id:               str
+    text:             str
+    claim_type:       str
+    rule_based_score: float
+    total_support:    float
+    total_conflict:   float
+    contributions:    list[ClaimContributionData]
+    guideline:        dict
+
+
 def score_hypothesis(hypothesis: dict, all_claims: list[dict]) -> HypothesisScore:
     """
     Compute a rule-based score for a single hypothesis/diagnosis claim.
@@ -418,6 +445,194 @@ def rank_hypotheses(all_claims: list[dict]) -> list[HypothesisScore]:
     ]
     scored = [score_hypothesis(h, all_claims) for h in hypotheses]
     return sorted(scored, key=lambda x: x["rule_based_score"], reverse=True)
+
+
+def _explain_single_hypothesis(
+    hypothesis: dict,
+    all_claims: list[dict],
+) -> HypothesisExplanationData:
+    """
+    Like score_hypothesis() but captures per-claim contribution breakdown.
+    Returns HypothesisExplanationData with full ClaimContributionData list.
+    """
+    hyp_terms      = _key_terms(hypothesis["text"])
+    hyp_text_lower = hypothesis["text"].lower()
+
+    support_score:  float                       = 0.0
+    conflict_total: float                       = 0.0
+    contributions:  list[ClaimContributionData] = []
+    seen_ids:       set[str]                    = set()
+
+    for c in all_claims:
+        if c["id"] == hypothesis.get("id"):
+            continue
+        c_status = c.get("status", "active")
+        if c_status not in _ACTIVE_STATUSES:
+            continue
+        if c.get("claim_type") not in _EVIDENCE_TYPES:
+            continue
+
+        c_terms_neg = _key_terms_with_negation(c["text"])
+        negated_c   = {t[8:] for t in c_terms_neg if t.startswith("negated_")}
+        c_positive  = {t for t in c_terms_neg if not t.startswith("negated_")}
+
+        # Negated overlap → conflict
+        negated_overlap = len(negated_c & hyp_terms)
+        if negated_overlap > 0:
+            penalty = _conflict_penalty(c["text"])
+            conflict_total += penalty
+            contributions.append(ClaimContributionData(
+                claim_id=c["id"],
+                claim_text=c["text"],
+                claim_type=c.get("claim_type", "finding"),
+                source_type=c.get("source_type", "llm"),
+                evidence_tier=c.get("evidence_tier"),
+                spl_emission_rule=c.get("spl_emission_rule"),
+                direction="conflicting",
+                contribution=round(penalty, 4),
+                ess=float(c.get("evidence_support_score", 0.5)),
+                overlap_weight=0.0,
+                source_weight=round(_source_weight(c.get("source_type", "llm")), 3),
+                temporal_weight=round(_temporal_weight(c), 3),
+                trend_boosted=False,
+            ))
+            seen_ids.add(c["id"])
+            continue
+
+        overlap = len(hyp_terms & c_positive)
+        if overlap < 2:
+            continue
+
+        weight = _overlap_weight(overlap)
+        ess    = float(c.get("evidence_support_score", 0.5))
+
+        if _is_contradicting(c["text"], hypothesis["text"]):
+            penalty = _conflict_penalty(c["text"])
+            conflict_total += penalty
+            contributions.append(ClaimContributionData(
+                claim_id=c["id"],
+                claim_text=c["text"],
+                claim_type=c.get("claim_type", "finding"),
+                source_type=c.get("source_type", "llm"),
+                evidence_tier=c.get("evidence_tier"),
+                spl_emission_rule=c.get("spl_emission_rule"),
+                direction="conflicting",
+                contribution=round(penalty, 4),
+                ess=ess,
+                overlap_weight=round(weight, 3),
+                source_weight=round(_source_weight(c.get("source_type", "llm")), 3),
+                temporal_weight=round(_temporal_weight(c), 3),
+                trend_boosted=False,
+            ))
+        else:
+            src_type    = c.get("source_type", "llm")
+            src_w       = _source_weight(src_type)
+            t_w         = _temporal_weight(c)
+            is_patient   = src_type in _PATIENT_SOURCES
+            is_diagnosis = hypothesis.get("claim_type") == "diagnosis"
+            confirm_w    = 1.0 if is_patient else (_CONFIRMED_BOOST if c_status == "confirmed" else 1.0)
+            patient_diag_w = 0.5 if (is_patient and is_diagnosis) else 1.0
+            contrib = ess * weight * src_w * t_w * confirm_w * patient_diag_w
+            support_score += contrib
+            contributions.append(ClaimContributionData(
+                claim_id=c["id"],
+                claim_text=c["text"],
+                claim_type=c.get("claim_type", "finding"),
+                source_type=c.get("source_type", "llm"),
+                evidence_tier=c.get("evidence_tier"),
+                spl_emission_rule=c.get("spl_emission_rule"),
+                direction="supporting",
+                contribution=round(contrib, 4),
+                ess=ess,
+                overlap_weight=round(weight, 3),
+                source_weight=round(src_w, 3),
+                temporal_weight=round(t_w, 3),
+                trend_boosted=False,
+            ))
+        seen_ids.add(c["id"])
+
+    # Trend signal boost — mark boosted claims
+    for c in all_claims:
+        src_ref = c.get("source_ref", "")
+        if not (src_ref.startswith("trend:") or src_ref.startswith("trend_signal:")):
+            continue
+        if c.get("status", "active") not in _ACTIVE_STATUSES:
+            continue
+        flag_match = _TREND_FLAG_RE.search(c.get("text", ""))
+        if not flag_match:
+            continue
+        flag     = flag_match.group(1)
+        keywords = _TREND_HYPOTHESIS_KEYWORDS.get(flag, [])
+        if not any(kw in hyp_text_lower for kw in keywords):
+            continue
+        ess   = float(c.get("evidence_support_score", 0.5))
+        src_w = _source_weight(c.get("source_type", "wearable"))
+        t_w   = _temporal_weight(c)
+        boost = ess * src_w * t_w * (_TREND_BOOST - 1.0)
+        support_score += boost
+        # Update existing entry if seen, else append new
+        existing = next((x for x in contributions if x["claim_id"] == c["id"]), None)
+        if existing:
+            existing["contribution"] = round(existing["contribution"] + boost, 4)
+            existing["trend_boosted"] = True
+        else:
+            contributions.append(ClaimContributionData(
+                claim_id=c["id"],
+                claim_text=c["text"],
+                claim_type=c.get("claim_type", "finding"),
+                source_type=c.get("source_type", "wearable"),
+                evidence_tier=c.get("evidence_tier"),
+                spl_emission_rule=c.get("spl_emission_rule"),
+                direction="supporting",
+                contribution=round(boost, 4),
+                ess=ess,
+                overlap_weight=0.0,
+                source_weight=round(src_w, 3),
+                temporal_weight=round(t_w, 3),
+                trend_boosted=True,
+            ))
+
+    raw   = support_score - conflict_total
+    score = max(0.0, min(1.0, raw))
+
+    # Sort contributions: supporting first (desc), then conflicting (desc by magnitude)
+    contributions.sort(key=lambda x: (x["direction"] != "supporting", -x["contribution"]))
+
+    return HypothesisExplanationData(
+        id=hypothesis.get("id", ""),
+        text=hypothesis["text"],
+        claim_type=hypothesis.get("claim_type", "hypothesis"),
+        rule_based_score=round(score, 3),
+        total_support=round(support_score, 3),
+        total_conflict=round(conflict_total, 3),
+        contributions=contributions,
+        guideline=evaluate_guideline(hypothesis["text"], all_claims),
+    )
+
+
+def explain_hypothesis_scores(
+    all_claims: list[dict],
+) -> list[HypothesisExplanationData]:
+    """
+    Full per-claim contribution breakdown for all active hypotheses.
+
+    Returns one HypothesisExplanationData per hypothesis, sorted by
+    rule_based_score descending — same order as rank_hypotheses().
+
+    Each entry contains:
+    - contributions: ordered list of ClaimContributionData with
+      direction, contribution magnitude, ess, source_weight,
+      temporal_weight, spl_emission_rule, and trend_boosted flag
+    - total_support / total_conflict: raw sums before clamping
+    - guideline: evaluate_guideline() output for the hypothesis
+    """
+    hypotheses = [
+        c for c in all_claims
+        if c.get("claim_type") in _LEAD_TYPES
+        and c.get("status") in _ACTIVE_STATUSES
+    ]
+    explained = [_explain_single_hypothesis(h, all_claims) for h in hypotheses]
+    return sorted(explained, key=lambda x: x["rule_based_score"], reverse=True)
 
 
 def get_missing_evidence_for_differential(
