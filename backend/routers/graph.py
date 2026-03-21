@@ -1,11 +1,12 @@
 from fastapi import APIRouter, HTTPException
-from models import GraphData, NodeUpdate, CounterfactualResult, HypothesisCounterfactualResult, Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend, _clamp_ess, _normalize_time_offset, _parse_offset_hours
+from models import GraphData, NodeUpdate, CounterfactualResult, HypothesisCounterfactualResult, Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend, _clamp_ess, _normalize_time_offset, _parse_offset_hours, AuditActor
 from pydantic import BaseModel, field_validator
 from typing import Optional
 from neo4j_client import get_db
 from llm_client import run_counterfactual, run_hypothesis_counterfactual, analyze_reasoning, explain_conflict as _explain_conflict
 from conflict_engine import detect_conflicts
 from api_errors import internal_error, validation_error, not_found
+from audit_log import log_created_batch, log_updated, log_deleted
 
 
 class ManualClaimPayload(BaseModel):
@@ -72,6 +73,11 @@ async def add_manual_claim(session_id: str, payload: ManualClaimPayload):
         new_ids = db.store_claims([claim], session_id)
         if payload.derived_from and new_ids:
             db.link_explicit_derived_from(new_ids[0], payload.derived_from)
+        log_created_batch(
+            new_ids, [claim], session_id,
+            actor=AuditActor.graph_manual,
+            pipeline_stage="Manual claim creation via graph router",
+        )
         return {"status": "created"}
     except HTTPException:
         raise
@@ -241,8 +247,20 @@ async def get_claim_chain(session_id: str, claim_id: str):
 
 @router.patch("/claim/{claim_id}")
 async def update_claim(claim_id: str, update: NodeUpdate):
+    db = get_db()
     try:
-        get_db().update_claim(claim_id, update.model_dump(exclude_none=True))
+        before = db.get_claim_by_id(claim_id)
+        session_id = (before or {}).get("session_id", "")
+        changes = update.model_dump(exclude_none=True)
+        db.update_claim(claim_id, changes)
+        after = db.get_claim_by_id(claim_id)
+        log_updated(
+            claim_id, session_id,
+            actor=AuditActor.graph_manual,
+            before=before,
+            after=after,
+            meta={"changed_fields": list(changes.keys())},
+        )
         return {"status": "updated"}
     except Exception as e:
         raise internal_error(e)
@@ -250,8 +268,16 @@ async def update_claim(claim_id: str, update: NodeUpdate):
 
 @router.delete("/claim/{claim_id}")
 async def delete_claim(claim_id: str):
+    db = get_db()
     try:
-        get_db().delete_claim(claim_id)
+        before = db.get_claim_by_id(claim_id)
+        session_id = (before or {}).get("session_id", "")
+        db.delete_claim(claim_id)
+        log_deleted(
+            claim_id, session_id,
+            actor=AuditActor.graph_manual,
+            before=before,
+        )
         return {"status": "deleted"}
     except Exception as e:
         raise internal_error(e)

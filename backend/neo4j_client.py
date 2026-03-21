@@ -6,6 +6,22 @@ from datetime import datetime, timezone
 from neo4j import GraphDatabase
 from models import Claim, GraphData
 
+
+def _deserialize_audit_row(node: dict) -> dict:
+    """Convert a raw Neo4j AuditEvent node to a plain Python dict."""
+    return {
+        "id":             node["id"],
+        "event_type":     node["event_type"],
+        "claim_id":       node["claim_id"],
+        "session_id":     node["session_id"],
+        "actor":          node["actor"],
+        "pipeline_stage": node["pipeline_stage"],
+        "timestamp":      node["timestamp"],
+        "before":         json.loads(node["before"]) if node.get("before") else None,
+        "after":          json.loads(node["after"])  if node.get("after")  else None,
+        "meta":           json.loads(node["meta"])   if node.get("meta")   else {},
+    }
+
 # ── Singleton ─────────────────────────────────────────────────────────────────
 
 _instance: "Neo4jClient | None" = None
@@ -42,6 +58,9 @@ class Neo4jClient:
             s.run("CREATE CONSTRAINT claim_id IF NOT EXISTS FOR (c:Claim) REQUIRE c.id IS UNIQUE")
             s.run("CREATE CONSTRAINT entity_name IF NOT EXISTS FOR (e:Entity) REQUIRE e.name IS UNIQUE")
             s.run("CREATE INDEX claim_session IF NOT EXISTS FOR (c:Claim) ON (c.session_id)")
+            s.run("CREATE CONSTRAINT audit_event_id IF NOT EXISTS FOR (a:AuditEvent) REQUIRE a.id IS UNIQUE")
+            s.run("CREATE INDEX audit_claim IF NOT EXISTS FOR (a:AuditEvent) ON (a.claim_id)")
+            s.run("CREATE INDEX audit_session IF NOT EXISTS FOR (a:AuditEvent) ON (a.session_id)")
 
     def close(self):
         self.driver.close()
@@ -56,6 +75,16 @@ class Neo4jClient:
                 claim_ids.append(cid)
                 now = datetime.now(timezone.utc).isoformat()
 
+                # Resolve optional datetime fields to ISO strings
+                event_time_iso = (
+                    claim.event_time.isoformat() if claim.event_time else None
+                )
+                assertion_time_iso = (
+                    claim.assertion_time.isoformat()
+                    if claim.assertion_time
+                    else now
+                )
+
                 s.run(
                     """
                     CREATE (c:Claim {
@@ -65,7 +94,14 @@ class Neo4jClient:
                         derived_from: $df, related_to: $rt,
                         status: $status,
                         time_offset: $to, trend: $trend,
-                        created_at: $now
+                        created_at: $now,
+                        evidence_tier: $evidence_tier,
+                        uncertainty_flag: $uncertainty_flag,
+                        normalized_token: $normalized_token,
+                        patient_data_ref: $patient_data_ref,
+                        event_time: $event_time,
+                        assertion_time: $assertion_time,
+                        supersedes_claim_id: $supersedes_claim_id
                     })
                     """,
                     id=cid, text=claim.text, session_id=session_id,
@@ -79,6 +115,13 @@ class Neo4jClient:
                     to=claim.time_offset,
                     trend=claim.trend.value,
                     now=now,
+                    evidence_tier=claim.evidence_tier,
+                    uncertainty_flag=claim.uncertainty_flag,
+                    normalized_token=claim.normalized_token,
+                    patient_data_ref=claim.patient_data_ref,
+                    event_time=event_time_iso,
+                    assertion_time=assertion_time_iso,
+                    supersedes_claim_id=claim.supersedes_claim_id,
                 )
 
                 for entity_name in claim.entities:
@@ -176,6 +219,76 @@ class Neo4jClient:
     def delete_claim(self, claim_id: str):
         with self.driver.session() as s:
             s.run("MATCH (c:Claim {id: $id}) DETACH DELETE c", id=claim_id)
+
+    # ── Audit ─────────────────────────────────────────────────────────────────
+
+    def store_audit_event(self, event: "AuditEvent") -> None:  # type: ignore[name-defined]
+        """Persist an AuditEvent node and link it to its Claim (if it exists)."""
+        from models import AuditEvent as _AuditEvent  # avoid circular at module level
+        with self.driver.session() as s:
+            s.run(
+                """
+                CREATE (a:AuditEvent {
+                    id: $id, event_type: $event_type,
+                    claim_id: $claim_id, session_id: $session_id,
+                    actor: $actor, pipeline_stage: $pipeline_stage,
+                    timestamp: $timestamp,
+                    before: $before, after: $after,
+                    meta: $meta
+                })
+                WITH a
+                OPTIONAL MATCH (c:Claim {id: $claim_id})
+                FOREACH (_ IN CASE WHEN c IS NOT NULL THEN [1] ELSE [] END |
+                    MERGE (a)-[:AUDITS]->(c)
+                )
+                """,
+                id=event.id,
+                event_type=event.event_type.value,
+                claim_id=event.claim_id,
+                session_id=event.session_id,
+                actor=event.actor,
+                pipeline_stage=event.pipeline_stage,
+                timestamp=event.timestamp.isoformat(),
+                before=json.dumps(event.before) if event.before is not None else None,
+                after=json.dumps(event.after) if event.after is not None else None,
+                meta=json.dumps(event.meta),
+            )
+
+    def get_claim_audit_trail(self, claim_id: str) -> list[dict]:
+        """Return all AuditEvents for a single Claim, oldest first."""
+        with self.driver.session() as s:
+            result = s.run(
+                """
+                MATCH (a:AuditEvent {claim_id: $claim_id})
+                RETURN a ORDER BY a.timestamp ASC
+                """,
+                claim_id=claim_id,
+            )
+            return [_deserialize_audit_row(r["a"]) for r in result]
+
+    def get_session_audit_trail(self, session_id: str) -> list[dict]:
+        """Return all AuditEvents for a session, oldest first."""
+        with self.driver.session() as s:
+            result = s.run(
+                """
+                MATCH (a:AuditEvent {session_id: $session_id})
+                RETURN a ORDER BY a.timestamp ASC
+                """,
+                session_id=session_id,
+            )
+            return [_deserialize_audit_row(r["a"]) for r in result]
+
+    def get_claim_by_id(self, claim_id: str) -> dict | None:
+        """Return a single Claim's properties as a dict, or None if not found."""
+        with self.driver.session() as s:
+            result = s.run(
+                "MATCH (c:Claim {id: $id}) RETURN c LIMIT 1",
+                id=claim_id,
+            )
+            row = result.single()
+            if row is None:
+                return None
+            return dict(row["c"])
 
     # ── Read ─────────────────────────────────────────────────────────────────
 

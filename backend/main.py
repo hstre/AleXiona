@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from routers import chat, graph, sessions, demo, intake
+from routers import chat, graph, sessions, demo, intake, audit
 
 
 @asynccontextmanager
@@ -35,6 +35,7 @@ app.include_router(graph.router)
 app.include_router(sessions.router)
 app.include_router(demo.router)
 app.include_router(intake.router)
+app.include_router(audit.router)
 
 
 @app.get("/health")

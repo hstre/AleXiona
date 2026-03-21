@@ -38,6 +38,8 @@ from models import (
     TrendSignal,
 )
 from neo4j_client import get_db
+from audit_log import log_created_batch
+from models import AuditActor
 from patient_data import (
     ingest_measurement,
     ingest_patient_observation,
@@ -79,7 +81,13 @@ async def intake_conversation(request: IntakeConversationRequest):
             ),
         )
         if extraction.claims:
-            db.store_claims(extraction.claims, request.session_id)
+            claim_ids = db.store_claims(extraction.claims, request.session_id)
+            log_created_batch(
+                claim_ids, extraction.claims, request.session_id,
+                actor=AuditActor.intake_conversation,
+                pipeline_stage="Stage 1–3: LLM extraction + patient_generated override",
+                meta={"source_type": request.source_type, "source_ref": request.source_ref},
+            )
 
         return IntakeConversationResponse(
             claims=extraction.claims,
@@ -167,7 +175,13 @@ async def intake_measurements(request: IntakeMeasurementsRequest):
             claims.append(trend_claim)
 
         if claims:
-            db.store_claims(claims, request.session_id)
+            claim_ids = db.store_claims(claims, request.session_id)
+            log_created_batch(
+                claim_ids, claims, request.session_id,
+                actor=AuditActor.intake_measurements,
+                pipeline_stage="Stage 2: Rule-based measurement normalization",
+                meta={"n_measurements": len(request.measurements), "n_trends": len(trend_signals)},
+            )
 
         return IntakeMeasurementsResponse(
             claims=claims,
@@ -215,7 +229,14 @@ async def intake_clinical(request: IntakeClinicalRequest):
             all_claims.extend(extraction.claims)
 
         if all_claims:
-            db.store_claims(all_claims, request.session_id)
+            claim_ids = db.store_claims(all_claims, request.session_id)
+            input_types = list({ci.input_type.value for ci in request.inputs})
+            log_created_batch(
+                claim_ids, all_claims, request.session_id,
+                actor=AuditActor.intake_clinical,
+                pipeline_stage="Stage 1–3: LLM extraction + clinical tier override",
+                meta={"input_types": input_types, "n_inputs": len(request.inputs)},
+            )
 
         return IntakeClinicalResponse(
             claims=all_claims,

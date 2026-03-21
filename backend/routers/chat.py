@@ -11,6 +11,8 @@ from llm_client import (
 )
 from neo4j_client import get_db
 from conflict_engine import detect_conflicts
+from audit_log import log_created_batch
+from models import AuditActor
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 _executor = ThreadPoolExecutor()
@@ -26,7 +28,12 @@ async def chat(request: ChatRequest):
         extraction = extract_claims(request.message)
 
         if extraction.claims:
-            db.store_claims(extraction.claims, request.session_id)
+            claim_ids = db.store_claims(extraction.claims, request.session_id)
+            log_created_batch(
+                claim_ids, extraction.claims, request.session_id,
+                actor=AuditActor.chat,
+                pipeline_stage="Stage 1–3: LLM extraction via /api/chat",
+            )
 
         all_claims    = db.get_all_claims_for_session(request.session_id)
         graph_context = db.get_context_for_query(request.session_id)
@@ -72,8 +79,13 @@ async def chat_stream(request: ChatRequest):
             return
 
         if extraction.claims:
-            await loop.run_in_executor(
+            claim_ids = await loop.run_in_executor(
                 _executor, db.store_claims, extraction.claims, request.session_id
+            )
+            log_created_batch(
+                claim_ids, extraction.claims, request.session_id,
+                actor=AuditActor.chat,
+                pipeline_stage="Stage 1–3: LLM extraction via /api/chat/stream",
             )
 
         # 2. Emit extracted claims immediately (so UI can refresh graph early)

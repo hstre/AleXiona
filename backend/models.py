@@ -458,3 +458,41 @@ class IntakeClinicalRequest(BaseModel):
 class IntakeClinicalResponse(BaseModel):
     claims:     list[Claim]
     session_id: str
+
+
+# ── Audit Layer ───────────────────────────────────────────────────────────────
+
+class AuditEventType(str, Enum):
+    claim_created    = "claim_created"
+    claim_updated    = "claim_updated"
+    claim_deleted    = "claim_deleted"
+    claim_superseded = "claim_superseded"
+
+
+class AuditActor(str, Enum):
+    """Which layer / endpoint triggered the mutation."""
+    chat                = "chat"
+    intake_conversation = "intake_conversation"
+    intake_measurements = "intake_measurements"
+    intake_clinical     = "intake_clinical"
+    graph_manual        = "graph_manual"   # clinician edits via graph router
+    system              = "system"
+
+
+class AuditEvent(BaseModel):
+    id:             str
+    event_type:     AuditEventType
+    claim_id:       str
+    session_id:     str
+    actor:          str          # AuditActor value
+    pipeline_stage: str          # human-readable: "Stage 1: LLM extraction", "Manual edit", …
+    timestamp:      datetime
+    before:         Optional[dict] = None   # claim state before mutation (None for create)
+    after:          Optional[dict] = None   # claim state after mutation  (None for delete)
+    meta:           dict          = {}      # extra context, e.g. {input_type: "lab"}
+
+
+class AuditTrailResponse(BaseModel):
+    claim_id:  Optional[str] = None
+    session_id: Optional[str] = None
+    events:    list[AuditEvent]
