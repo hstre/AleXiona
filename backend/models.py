@@ -500,3 +500,34 @@ class AuditTrailResponse(BaseModel):
     claim_id:  Optional[str] = None
     session_id: Optional[str] = None
     events:    list[AuditEvent]
+
+
+# ── MED Engine (Minimal Evidence to Decision) ─────────────────────────────────
+
+class MEDOutcome(BaseModel):
+    """One simulated outcome for a candidate test."""
+    label:              str           # e.g. "elevated (>0.5 µg/mL)"
+    synthetic_text:     str           # text of the simulated claim
+    score_delta:        float         # change in leading hypothesis score (signed)
+    leading_after:      str           # leading hypothesis after this outcome
+    leading_score_after: float
+    hypothesis_flipped: bool          # True if leading hypothesis changes
+
+
+class MEDTestResult(BaseModel):
+    """Simulated impact of one candidate test on the current differential."""
+    test:                  str
+    category:              str        # "lab" | "imaging" | "ecg" | "clinical"
+    impact_score:          float      # 0.0–1.0 information gain
+    rationale:             str        # clinical explanation
+    differentiates_between: list[str] # which hypotheses this separates
+    outcomes:              list[MEDOutcome]
+    already_evidenced:     bool       # True if this test is already in the graph
+
+
+class MEDResult(BaseModel):
+    """Full MED analysis for a session."""
+    session_id:          str
+    current_leading:     str
+    current_score:       float
+    minimal_decision_set: list[MEDTestResult]   # sorted by impact_score desc

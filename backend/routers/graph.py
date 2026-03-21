@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from models import GraphData, NodeUpdate, CounterfactualResult, HypothesisCounterfactualResult, Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend, _clamp_ess, _normalize_time_offset, _parse_offset_hours, AuditActor
+from models import GraphData, NodeUpdate, CounterfactualResult, HypothesisCounterfactualResult, Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend, _clamp_ess, _normalize_time_offset, _parse_offset_hours, AuditActor, MEDResult
 from pydantic import BaseModel, field_validator
 from typing import Optional
 from neo4j_client import get_db
@@ -7,6 +7,7 @@ from llm_client import run_counterfactual, run_hypothesis_counterfactual, analyz
 from conflict_engine import detect_conflicts
 from api_errors import internal_error, validation_error, not_found
 from audit_log import log_created_batch, log_updated, log_deleted
+from med_engine import compute_med
 
 
 class ManualClaimPayload(BaseModel):
@@ -262,6 +263,20 @@ async def update_claim(claim_id: str, update: NodeUpdate):
             meta={"changed_fields": list(changes.keys())},
         )
         return {"status": "updated"}
+    except Exception as e:
+        raise internal_error(e)
+
+
+@router.get("/{session_id}/med", response_model=MEDResult)
+async def get_med(session_id: str):
+    """Compute the Minimal Evidence to Decision set for the current session."""
+    db = get_db()
+    try:
+        claims = db.get_all_claims_for_session(session_id)
+        result = compute_med(claims, session_id=session_id)
+        return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise internal_error(e)
 
