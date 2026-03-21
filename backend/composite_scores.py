@@ -728,3 +728,8 @@ def compute_all_scores(all_claims: list[dict]) -> list[dict]:
     sev_order = {"high": 0, "intermediate": 1, "low": 2}
     results.sort(key=lambda r: (not r["relevant"], sev_order.get(r["interpretation"], 3)))
     return results
+
+
+def score_keywords_for(score_name: str) -> list[str]:
+    """Return the hypothesis-matching keywords that make this score relevant."""
+    return list(_SCORE_RELEVANCE.get(score_name, []))

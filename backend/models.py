@@ -508,6 +508,32 @@ class AuditTrailResponse(BaseModel):
     events:    list[AuditEvent]
 
 
+# ── Priority Explanation ──────────────────────────────────────────────────────
+
+class PriorityFactor(BaseModel):
+    """One contributing factor to the leading hypothesis score."""
+    name:         str    # e.g. "evidence", "guideline", "composite_scores", "conflicts", "evidence_gap"
+    label:        str    # German human-readable label
+    contribution: float  # positive = supporting, negative = detractor
+    direction:    str    # "supporting" | "detractor" | "neutral"
+    explanation:  str    # 1-sentence German explanation
+
+
+class PriorityExplanation(BaseModel):
+    """
+    Structured explanation of WHY the current leading hypothesis is ranked first.
+    Merges evidence score, guideline compliance, composite score boost,
+    conflict load, and evidence gaps into a single traceable breakdown.
+    """
+    session_id:        str
+    hypothesis_text:   Optional[str]
+    final_score:       float
+    factors:           list[PriorityFactor]
+    confidence_status: str   # "confident" | "insufficient"
+    verdict:           str   # concise German summary sentence
+    generated_at:      str
+
+
 # ── Clinical Reports (Arztbrief, Entlassbrief, Konsilbrief, Befundbericht) ────
 
 class ReportSectionDef(BaseModel):

@@ -15,7 +15,7 @@ import re
 from datetime import datetime, timezone
 from typing import TypedDict
 from lab_parser import parse_lab_value, qualitative_for_token, lab_summary, LAB_THRESHOLDS
-from composite_scores import compute_relevant_scores
+from composite_scores import compute_relevant_scores, compute_all_scores, score_keywords_for
 
 _KEY_TERM_RE = re.compile(r'\b[a-zA-ZäöüÄÖÜß]{4,}\b')
 _NEGATION_RE = re.compile(
@@ -293,12 +293,13 @@ def _conflict_penalty(evidence_text: str) -> float:
 
 
 class HypothesisScore(TypedDict):
-    id:                     str
-    text:                   str
-    claim_type:             str
-    rule_based_score:       float
-    supporting_claim_ids:   list[str]
-    conflicting_claim_ids:  list[str]
+    id:                          str
+    text:                        str
+    claim_type:                  str
+    rule_based_score:            float
+    supporting_claim_ids:        list[str]
+    conflicting_claim_ids:       list[str]
+    composite_score_contribution: float   # bounded boost from relevant high-risk scores
 
 
 class ClaimContributionData(TypedDict):
@@ -326,6 +327,45 @@ class HypothesisExplanationData(TypedDict):
     total_conflict:   float
     contributions:    list[ClaimContributionData]
     guideline:        dict
+
+
+# ── Composite score boost ─────────────────────────────────────────────────────
+# Composite clinical scores (qSOFA, Wells, GRACE …) are *external* validators:
+# they confirm or refute a hypothesis path that the evidence graph already
+# supports.  They must therefore SUPPORT, not dominate — so the boost is:
+#   • per relevant score: high-risk → +0.04,  intermediate → +0.02
+#   • capped at _COMPOSITE_BOOST_CAP (8 pp) regardless of score count
+# This keeps the rule_based_score as the primary driver while giving verified
+# high-risk scores a meaningful but bounded influence.
+
+_COMPOSITE_BOOST_CAP = 0.08   # max total contribution from composite scores
+
+
+def _composite_boost_for_hypothesis(
+    hyp_text: str,
+    composite_scores: list[dict],
+) -> tuple[float, list[str]]:
+    """
+    Return (boost_value, triggered_score_names) for this specific hypothesis.
+
+    Only scores whose keyword list matches the hypothesis text are counted.
+    Low-risk scores contribute 0 (they are not evidence against).
+    """
+    hyp_lower = hyp_text.lower()
+    boost: float       = 0.0
+    triggered: list[str] = []
+    for sc in composite_scores:
+        name = sc.get("name", "")
+        if not any(kw in hyp_lower for kw in score_keywords_for(name)):
+            continue
+        interp = sc.get("interpretation", "low")
+        if interp == "high":
+            boost += 0.04
+            triggered.append(f"{name}=HIGH")
+        elif interp == "intermediate":
+            boost += 0.02
+            triggered.append(f"{name}=INTERMEDIATE")
+    return min(boost, _COMPOSITE_BOOST_CAP), triggered
 
 
 def score_hypothesis(hypothesis: dict, all_claims: list[dict]) -> HypothesisScore:
@@ -429,21 +469,37 @@ def score_hypothesis(hypothesis: dict, all_claims: list[dict]) -> HypothesisScor
         rule_based_score=round(score, 3),
         supporting_claim_ids=supporting_ids,
         conflicting_claim_ids=conflicting_ids,
+        composite_score_contribution=0.0,   # set by rank_hypotheses() after scoring
     )
 
 
 def rank_hypotheses(all_claims: list[dict]) -> list[HypothesisScore]:
     """
     Score and rank all hypothesis/diagnosis claims in the claim set.
-    Returns list sorted by rule_based_score descending.
-    Hypotheses with status="refuted" are hard-excluded from the ranking.
+
+    Each hypothesis receives:
+      1. A rule_based_score from evidence-weighted supporting/conflicting claims.
+      2. A bounded composite_score_contribution from relevant high-risk clinical
+         scores (e.g. Wells-PE=HIGH adds +0.04, capped at 0.08 total).
+
+    The final rule_based_score = base_score + composite_boost (clamped to 1.0).
+    Hypotheses with status="refuted" are hard-excluded.
     """
     hypotheses = [
         c for c in all_claims
         if c.get("claim_type") in _LEAD_TYPES
-        and c.get("status") in _ACTIVE_STATUSES  # refuted/withdrawn → hard excluded
+        and c.get("status") in _ACTIVE_STATUSES
     ]
     scored = [score_hypothesis(h, all_claims) for h in hypotheses]
+
+    # Apply composite score boosts — computed once for all active scores
+    comp_scores = compute_all_scores(all_claims)
+    for h in scored:
+        boost, _ = _composite_boost_for_hypothesis(h["text"], comp_scores)
+        if boost > 0:
+            h["composite_score_contribution"] = round(boost, 3)
+            h["rule_based_score"] = round(min(1.0, h["rule_based_score"] + boost), 3)
+
     return sorted(scored, key=lambda x: x["rule_based_score"], reverse=True)
 
 
@@ -972,9 +1028,11 @@ def build_reasoning_context(all_claims: list[dict]) -> str:
             g = guidelines.get(h["text"], {})
             g_score  = guideline_score(h["text"], all_claims)
             g_status = "✓ eligible" if g.get("eligible") else ("– no rule" if not g.get("rule_found") else "✗ not eligible")
+            comp_contrib = h.get("composite_score_contribution", 0.0)
+            comp_note = f"  [+{comp_contrib:.2f} from composite scores]" if comp_contrib > 0 else ""
             lines.append(
                 f"  [{h['claim_type'].upper()}] {h['text'][:80]}"
-                f" → rule_score={h['rule_based_score']:.2f}"
+                f" → rule_score={h['rule_based_score']:.2f}{comp_note}"
                 f"  guideline_score={g_score:.1f} ({g_status})"
                 f"  (supporting: {len(h['supporting_claim_ids'])}"
                 f", conflicting: {len(h['conflicting_claim_ids'])})"
@@ -984,18 +1042,22 @@ def build_reasoning_context(all_claims: list[dict]) -> str:
                 lines.append(f"    missing: {', '.join(top_missing)}")
         lines.append("")
 
-    # Composite clinical scores
+    # Composite clinical scores — shown as supporting context, not primary drivers.
+    # Their bounded contribution is already baked into rule_score above.
     composite = compute_relevant_scores(all_claims)
     if composite:
-        lines.append("=== COMPOSITE CLINICAL SCORES ===")
+        lines.append("=== COMPOSITE CLINICAL SCORES (supporting context) ===")
+        lines.append("  Note: these scores contribute a bounded boost (max 8pp) to the "
+                     "rule_score above — they support but do not override evidence scoring.")
         for cs in composite:
             met_str = "; ".join(cs.criteria_met) if cs.criteria_met else "none"
+            relevance = "[RELEVANT]" if cs["relevant"] else "[not relevant to active hypotheses]"
             lines.append(
-                f"  {cs.name}: {cs.score}  → {cs.interpretation.upper()} RISK"
-                f"  (criteria: {met_str})"
+                f"  {cs['name']}: {cs['score']}  → {cs['interpretation'].upper()} RISK"
+                f"  {relevance}  (criteria met: {met_str})"
             )
-            if cs.criteria_missing:
-                lines.append(f"    undetermined: {', '.join(cs.criteria_missing)}")
+            if cs["criteria_missing"]:
+                lines.append(f"    undetermined: {', '.join(cs['criteria_missing'])}")
         lines.append("")
 
     # Parsed lab values summary
@@ -1019,3 +1081,139 @@ def build_reasoning_context(all_claims: list[dict]) -> str:
         )
 
     return "\n".join(lines)
+
+
+# ── Central Priority Explanation ──────────────────────────────────────────────
+
+def build_priority_explanation(session_id: str, all_claims: list[dict]) -> dict:
+    """
+    Build a structured explanation of WHY the current leading hypothesis is ranked first.
+
+    This is the single authoritative source that merges:
+      1. Evidence score        — rule_based_score from supporting/conflicting claims
+      2. Composite score boost — bounded contribution from high-risk clinical scores
+      3. Guideline compliance  — how many required criteria are fulfilled
+      4. Conflict load         — number and weight of conflicting claims
+      5. Evidence gap          — required criteria still missing (from guideline eval)
+
+    Returns a dict matching the PriorityExplanation model.
+    """
+    ranked     = rank_hypotheses(all_claims)
+    confidence = get_confident_leading(ranked)
+
+    if not ranked:
+        return {
+            "session_id":        session_id,
+            "hypothesis_text":   None,
+            "final_score":       0.0,
+            "factors":           [],
+            "confidence_status": "insufficient",
+            "verdict":           "Keine aktiven Hypothesen vorhanden.",
+            "generated_at":      datetime.now(timezone.utc).isoformat(),
+        }
+
+    top      = ranked[0]
+    comp_contrib  = top.get("composite_score_contribution", 0.0)
+    base_score    = round(top["rule_based_score"] - comp_contrib, 3)
+    n_support     = len(top["supporting_claim_ids"])
+    n_conflict    = len(top["conflicting_claim_ids"])
+    guidelines    = evaluate_all_guidelines(all_claims)
+    g             = guidelines.get(top["text"], {})
+    g_score       = guideline_score(top["text"], all_claims)
+    req_missing   = g.get("required_missing", [])
+    req_present   = g.get("required_present", [])
+
+    factors: list[dict] = []
+
+    # 1 ── Base evidence
+    factors.append({
+        "name":         "evidence",
+        "label":        "Evidenzstärke",
+        "contribution": base_score,
+        "direction":    "supporting" if base_score > 0 else "neutral",
+        "explanation":  (
+            f"{n_support} unterstützende Befunde ergeben ein Evidenzgewicht von {base_score:.0%}."
+            if n_support > 0 else
+            "Keine direkt unterstützenden Befunde."
+        ),
+    })
+
+    # 2 ── Composite score boost
+    if comp_contrib > 0:
+        comp_scores = compute_all_scores(all_claims)
+        _, triggered = _composite_boost_for_hypothesis(top["text"], comp_scores)
+        factors.append({
+            "name":         "composite_scores",
+            "label":        "Klinische Scores",
+            "contribution": comp_contrib,
+            "direction":    "supporting",
+            "explanation":  (
+                f"Klinische Scores ({', '.join(triggered)}) erhöhen den Gesamtscore "
+                f"um {comp_contrib:.0%} (max. {_COMPOSITE_BOOST_CAP:.0%})."
+            ),
+        })
+
+    # 3 ── Guideline compliance
+    if g.get("rule_found"):
+        g_contrib = round(g_score * 0.10, 3)   # guideline is informational, not primary
+        factors.append({
+            "name":         "guideline",
+            "label":        "Leitlinienkonformität",
+            "contribution": g_contrib,
+            "direction":    "supporting" if g_score >= 0.5 else "neutral",
+            "explanation":  (
+                f"Leitlinie erfüllt: {len(req_present)} Kriterium/Kriterien vorhanden"
+                + (f", {len(req_missing)} fehlend ({', '.join(req_missing[:2])})" if req_missing else ".")
+            ),
+        })
+
+    # 4 ── Conflict load
+    if n_conflict > 0:
+        conflict_penalty = round(min(n_conflict * 0.04, 0.20), 3)
+        factors.append({
+            "name":         "conflicts",
+            "label":        "Konfliktlast",
+            "contribution": -conflict_penalty,
+            "direction":    "detractor",
+            "explanation":  (
+                f"{n_conflict} widersprüchliche Befunde reduzieren die Konfidenz "
+                f"(Abzug ca. {conflict_penalty:.0%})."
+            ),
+        })
+
+    # 5 ── Evidence gap (missing required criteria)
+    if req_missing:
+        gap_penalty = round(min(len(req_missing) * 0.03, 0.12), 3)
+        factors.append({
+            "name":         "evidence_gap",
+            "label":        "Evidenzlücken",
+            "contribution": -gap_penalty,
+            "direction":    "detractor",
+            "explanation":  (
+                f"Fehlende Pflichtkriterien: {', '.join(req_missing[:3])}."
+                " Diese Befunde würden die Diagnose erheblich stärken."
+            ),
+        })
+
+    # ── Verdict ───────────────────────────────────────────────────────────────
+    supporting = [f["explanation"] for f in factors if f["direction"] == "supporting"]
+    detracting = [f["explanation"] for f in factors if f["direction"] == "detractor"]
+
+    verdict_parts = [
+        f"'{top['text']}' führt mit Score {top['rule_based_score']:.0%}"
+        f" ({confidence['status']})."
+    ]
+    if supporting:
+        verdict_parts.append("Gestützt durch: " + " | ".join(supporting))
+    if detracting:
+        verdict_parts.append("Eingeschränkt durch: " + " | ".join(detracting))
+
+    return {
+        "session_id":        session_id,
+        "hypothesis_text":   top["text"],
+        "final_score":       top["rule_based_score"],
+        "factors":           factors,
+        "confidence_status": confidence["status"],
+        "verdict":           " ".join(verdict_parts),
+        "generated_at":      datetime.now(timezone.utc).isoformat(),
+    }

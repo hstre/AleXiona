@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from models import GraphData, NodeUpdate, CounterfactualResult, HypothesisCounterfactualResult, Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend, _clamp_ess, _normalize_time_offset, _parse_offset_hours, AuditActor, MEDResult, ReasoningExplanation, HypothesisExplanation, ClaimContribution, GuidelineEvaluation, RiskScoreResponse, RiskScoreItem, ClinicalRoleView, RoleAlert, RoleViewSection, ClinicalReport, ReportSection, GenerateReportRequest, ReportTypeDef, ReportSectionDef
+from models import GraphData, NodeUpdate, CounterfactualResult, HypothesisCounterfactualResult, Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend, _clamp_ess, _normalize_time_offset, _parse_offset_hours, AuditActor, MEDResult, ReasoningExplanation, HypothesisExplanation, ClaimContribution, GuidelineEvaluation, RiskScoreResponse, RiskScoreItem, ClinicalRoleView, RoleAlert, RoleViewSection, ClinicalReport, ReportSection, GenerateReportRequest, ReportTypeDef, ReportSectionDef, PriorityExplanation, PriorityFactor
 from pydantic import BaseModel, field_validator
 from typing import Optional
 from neo4j_client import get_db
@@ -8,7 +8,7 @@ from conflict_engine import detect_conflicts
 from api_errors import internal_error, validation_error, not_found
 from audit_log import log_created_batch, log_updated, log_deleted
 from med_engine import compute_med
-from reasoning_engine import explain_hypothesis_scores
+from reasoning_engine import explain_hypothesis_scores, build_priority_explanation
 from composite_scores import compute_all_scores
 from role_views import build_role_view, ROLE_ALIASES, SPECIALTY_KEYWORDS
 from report_engine import build_report_prompt, REPORT_TYPES
@@ -75,6 +75,7 @@ async def add_manual_claim(session_id: str, payload: ManualClaimPayload):
             time_offset=payload.time_offset,
             trend=payload.trend,
             derived_from=payload.derived_from,
+            spl_emission_rule="MANUAL",   # Clinician direct entry — exempt from SPL emission
         )
         new_ids = db.store_claims([claim], session_id)
         if payload.derived_from and new_ids:
@@ -318,6 +319,43 @@ async def get_reasoning_explanation(session_id: str):
             session_id=session_id,
             hypotheses=hypotheses,
             generated_at=datetime.now(timezone.utc).isoformat(),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise internal_error(e)
+
+
+@router.get("/{session_id}/priority", response_model=PriorityExplanation)
+async def get_priority_explanation(session_id: str):
+    """
+    Return the central priority explanation for the current leading hypothesis.
+
+    This is the single authoritative breakdown of WHY a hypothesis is ranked first,
+    merging five factors into a transparent score chain:
+
+      1. Evidenzstärke        — rule_based_score from supporting/conflicting claims
+      2. Klinische Scores     — bounded composite score boost (max 8 pp)
+      3. Leitlinienkonformität — % required guideline criteria fulfilled
+      4. Konfliktlast         — penalty from number of conflicting claims
+      5. Evidenzlücken        — penalty from missing required guideline criteria
+
+    A German verdict sentence summarizes the result.
+    Use GET /api/graph/{session_id}/reasoning/explain for the full per-claim
+    contribution breakdown.
+    """
+    db = get_db()
+    try:
+        claims = db.get_all_claims_for_session(session_id)
+        result = build_priority_explanation(session_id, claims)
+        return PriorityExplanation(
+            session_id=result["session_id"],
+            hypothesis_text=result["hypothesis_text"],
+            final_score=result["final_score"],
+            factors=[PriorityFactor(**f) for f in result["factors"]],
+            confidence_status=result["confidence_status"],
+            verdict=result["verdict"],
+            generated_at=result["generated_at"],
         )
     except HTTPException:
         raise

@@ -235,12 +235,13 @@ def _normalize_candidate(raw: dict) -> dict:
 
 
 def extract_claims(text: str) -> ClaimExtractionResult:
-    """Extract structured claims from free text via the 4-stage pipeline.
+    """Extract structured claims from free text via the 5-stage pipeline.
 
     Stage 1: LLM extracts raw observations with temporal/negation/uncertainty hints.
     Stage 2: _normalize_candidate enriches with lab parsing, assertion_time stamp.
     Stage 3: Pydantic Claim validation (type checking, field constraints).
-    Stage 4: Persisted to Neo4j by the calling router (outside this function).
+    Stage 4: SPL emission — E0 violations dropped, E3 ambiguous claims flagged.
+    Stage 5: Persisted to Neo4j by the calling router (outside this function).
     """
     data = _llm_json(
         messages=[
@@ -285,7 +286,51 @@ def extract_claims(text: str) -> ClaimExtractionResult:
         except (ValidationError, KeyError, TypeError) as e:
             log.warning("Skipping malformed claim from LLM: %s — %s", c, e)
 
+    claims = _apply_spl_to_claims(claims)   # Stage 4 — mandatory SPL emission
     return ClaimExtractionResult(claims=claims)
+
+
+def _apply_spl_to_claims(claims: list[Claim]) -> list[Claim]:
+    """
+    Apply the SPL emission stage to a list of already-extracted claims.
+
+    This is the mandatory epistemic filter for all LLM-extracted claims:
+      - E0 (structural violation): claim is dropped entirely
+      - E3 (ambiguous, ESS < 0.62): uncertainty_flag=True, status→tentative
+      - E1/E2: spl_* provenance fields set; claim passes
+
+    Manual (clinician) claims are exempt — they carry spl_emission_rule="MANUAL"
+    and bypass this function entirely (handled in the graph router).
+    """
+    result: list[Claim] = []
+    for c in claims:
+        try:
+            spl = run_spl_pipeline(c)
+        except Exception as exc:
+            # Pipeline error → treat as E3 rather than silently accepting or dropping
+            log.warning("SPL pipeline error for '%s…': %s — E3 fallback", c.text[:60], exc)
+            result.append(c.model_copy(update={
+                "spl_emission_rule": "E3",
+                "uncertainty_flag":  True,
+            }))
+            continue
+
+        if spl.blocked:
+            log.debug("SPL E0 blocked claim: %s", c.text[:60])
+            continue   # structural violation — discard
+
+        updates: dict = {
+            "spl_emission_rule": spl.emission_rule,
+            "spl_h_norm":        spl.h_norm,
+            "spl_unit_id":       spl.unit_id,
+            "spl_projection_id": spl.projection_id,
+        }
+        if spl.force_uncertain:
+            updates["uncertainty_flag"] = True
+            if c.status in ("active", "inferred"):
+                updates["status"] = "tentative"
+        result.append(c.model_copy(update=updates))
+    return result
 
 
 def analyze_reasoning(claims: list[dict]) -> ReasoningResult | None:
