@@ -5,14 +5,17 @@ import time
 from typing import AsyncIterator
 from openai import OpenAI, AsyncOpenAI
 from pydantic import ValidationError
+from datetime import datetime, timezone
 from models import (
     Claim, ClaimExtractionResult, ChatMessage,
     ReasoningResult, Alternative, MissingEvidence,
     CounterfactualResult, CounterfactualShift,
     HypothesisCounterfactualResult,
     Relation, ClaimType, SourceType, ClaimStatus, ClaimTrend,
+    ExtractedObservation, ClaimCandidate,
 )
 from reasoning_engine import build_reasoning_context, evaluate_all_guidelines
+from lab_parser import parse_lab_value
 
 log = logging.getLogger(__name__)
 
@@ -29,13 +32,20 @@ For each claim extract:
 - text: the claim as a clear, concise statement
 - entities: key medical concepts, objects, people, findings
 - relations: directed relationships between entities
-- evidence_support_score: 0.0–1.0 (how strongly the input text supports this claim — this is NOT a diagnostic probability)
+- evidence_support_score: 0.0–1.0 (how strongly the input text supports this claim — NOT a diagnostic probability)
 - claim_type: one of symptom | finding | lab | imaging | hypothesis | diagnosis | therapy | risk_factor | guideline
 - source_type: one of clinician | llm | guideline | imaging_model | lab_system | imported_document
 - source_ref: document or test name if mentioned, else ""
-- status: one of active | resolved | superseded
-- time_offset: string like "t+0h", "t+6h", "t+24h" if time is mentioned, else null
+- status: one of observed | inferred | active | resolved | superseded
+  Use "observed" for directly measured/witnessed findings (vitals, lab results, exam findings).
+  Use "inferred" for conclusions drawn from other findings (suspected diagnosis, likely cause).
+  Use "active" when the distinction is unclear.
+- time_offset: string like "t+0h", "t+6h", "t+24h" if relative time mentioned, else null
+- event_time: ISO 8601 datetime string if an absolute time is mentioned ("at 14:20", "yesterday at noon"), else null.
+  Use today's date as reference if needed.
 - trend: one of improving | worsening | stable | unknown
+- uncertainty_flag: true if the text expresses uncertainty ("possibly", "suspected", "cannot exclude", "rule out"), else false
+- assumptions: list of stated assumptions (e.g. ["patient fasted", "no recent anticoagulation"]) — empty list if none
 
 Relation types: causes, is, belongs_to, enables, reduces, produces, contains,
 requires, supports, indicates, contradicts, rules_out
@@ -51,9 +61,12 @@ Respond ONLY with valid JSON:
       "claim_type": "finding",
       "source_type": "clinician",
       "source_ref": "",
-      "status": "active",
+      "status": "observed",
       "time_offset": null,
-      "trend": "unknown"
+      "event_time": null,
+      "trend": "unknown",
+      "uncertainty_flag": false,
+      "assumptions": []
     }
   ]
 }
@@ -178,7 +191,41 @@ def _validate_extraction_schema(data: dict) -> None:
     ClaimExtractionResult.model_validate(data)
 
 
+def _normalize_candidate(raw: dict) -> dict:
+    """Stage 2 of the extraction pipeline: enrich a raw LLM claim dict.
+
+    - Parses lab values quantitatively via lab_parser
+    - Sets normalized_token from lab_parser canonical token
+    - Stamps assertion_time = now (UTC) if not provided
+    - Passes through uncertainty_flag and assumptions from LLM output
+
+    Returns the enriched dict ready to be validated into a Claim.
+    """
+    enriched = dict(raw)
+
+    # Stamp assertion_time at ingestion time (when the claim enters the graph)
+    if not enriched.get("assertion_time"):
+        enriched["assertion_time"] = datetime.now(timezone.utc).isoformat()
+
+    # Quantitative lab enrichment (Stage 2 normalization)
+    lab = parse_lab_value(enriched.get("text", ""))
+    if lab:
+        enriched["normalized_token"] = lab.token
+        # Only set uncertainty_flag from lab if not already set by LLM
+        if not enriched.get("uncertainty_flag"):
+            enriched["uncertainty_flag"] = False
+
+    return enriched
+
+
 def extract_claims(text: str) -> ClaimExtractionResult:
+    """Extract structured claims from free text via the 4-stage pipeline.
+
+    Stage 1: LLM extracts raw observations with temporal/negation/uncertainty hints.
+    Stage 2: _normalize_candidate enriches with lab parsing, assertion_time stamp.
+    Stage 3: Pydantic Claim validation (type checking, field constraints).
+    Stage 4: Persisted to Neo4j by the calling router (outside this function).
+    """
     data = _llm_json(
         messages=[
             {"role": "system", "content": EXTRACTION_PROMPT},
@@ -193,21 +240,27 @@ def extract_claims(text: str) -> ClaimExtractionResult:
     claims = []
     for c in data.get("claims", []):
         try:
+            enriched = _normalize_candidate(c)   # Stage 2
             relations = [
                 Relation(from_entity=r["from_entity"], to_entity=r["to_entity"], type=r["type"])
-                for r in c.get("relations", [])
+                for r in enriched.get("relations", [])
             ]
-            claims.append(Claim(
-                text=c["text"],
-                entities=c.get("entities", []),
+            claims.append(Claim(               # Stage 3 — Pydantic validation
+                text=enriched["text"],
+                entities=enriched.get("entities", []),
                 relations=relations,
-                evidence_support_score=float(c.get("evidence_support_score", 0.8)),
-                claim_type=c.get("claim_type", "finding"),
-                source_type=c.get("source_type", "llm"),
-                source_ref=c.get("source_ref", ""),
-                status=c.get("status", "active"),
-                time_offset=c.get("time_offset"),
-                trend=c.get("trend", "unknown"),
+                evidence_support_score=float(enriched.get("evidence_support_score", 0.8)),
+                claim_type=enriched.get("claim_type", "finding"),
+                source_type=enriched.get("source_type", "llm"),
+                source_ref=enriched.get("source_ref", ""),
+                status=enriched.get("status", "active"),
+                time_offset=enriched.get("time_offset"),
+                event_time=enriched.get("event_time"),
+                assertion_time=enriched.get("assertion_time"),
+                trend=enriched.get("trend", "unknown"),
+                uncertainty_flag=bool(enriched.get("uncertainty_flag", False)),
+                assumptions=enriched.get("assumptions", []),
+                normalized_token=enriched.get("normalized_token"),
             ))
         except (ValidationError, KeyError, TypeError) as e:
             log.warning("Skipping malformed claim from LLM: %s — %s", c, e)

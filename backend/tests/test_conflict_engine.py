@@ -587,3 +587,125 @@ class TestParseOffsetHours:
 
     def test_unrecognized_format_returns_none(self):
         assert _parse_offset_hours("day2") is None
+
+
+# ── Rule 9: Stale lab evidence ────────────────────────────────────────────────
+
+class TestStaleLabEvidence:
+    def _old_lab(self, id: str, text: str, hyp_text: str = "") -> tuple:
+        from datetime import datetime, timezone, timedelta
+        old_time = (datetime.now(timezone.utc) - timedelta(hours=72)).isoformat()
+        lab = {
+            "id": id, "text": text, "claim_type": "lab",
+            "status": "active", "evidence_support_score": 0.9,
+            "derived_from": [], "time_offset": None,
+            "event_time": old_time,
+        }
+        hyp = {
+            "id": "h1", "text": hyp_text or text + " hypothesis",
+            "claim_type": "hypothesis", "status": "active",
+            "evidence_support_score": 0.7, "derived_from": [], "time_offset": None,
+        }
+        return lab, hyp
+
+    def test_stale_lab_triggers_conflict(self):
+        lab, hyp = self._old_lab("l1", "CRP elevated sepsis infection")
+        conflicts = detect_conflicts([lab, hyp])
+        assert any(c.type == ConflictType.stale_lab_evidence for c in conflicts)
+
+    def test_recent_lab_no_stale_conflict(self):
+        from datetime import datetime, timezone, timedelta
+        recent = (datetime.now(timezone.utc) - timedelta(hours=6)).isoformat()
+        lab = {
+            "id": "l1", "text": "CRP elevated sepsis",
+            "claim_type": "lab", "status": "active",
+            "evidence_support_score": 0.9, "derived_from": [], "time_offset": None,
+            "event_time": recent,
+        }
+        hyp = {
+            "id": "h1", "text": "Sepsis hypothesis", "claim_type": "hypothesis",
+            "status": "active", "evidence_support_score": 0.7,
+            "derived_from": [], "time_offset": None,
+        }
+        conflicts = detect_conflicts([lab, hyp])
+        assert not any(c.type == ConflictType.stale_lab_evidence for c in conflicts)
+
+    def test_lab_without_event_time_not_flagged(self):
+        lab = {
+            "id": "l1", "text": "CRP elevated sepsis",
+            "claim_type": "lab", "status": "active",
+            "evidence_support_score": 0.9, "derived_from": [], "time_offset": None,
+            # no event_time
+        }
+        hyp = {
+            "id": "h1", "text": "Sepsis hypothesis", "claim_type": "hypothesis",
+            "status": "active", "evidence_support_score": 0.7,
+            "derived_from": [], "time_offset": None,
+        }
+        conflicts = detect_conflicts([lab, hyp])
+        assert not any(c.type == ConflictType.stale_lab_evidence for c in conflicts)
+
+    def test_stale_conflict_is_warning(self):
+        lab, hyp = self._old_lab("l1", "Troponin elevated cardiac sepsis")
+        conflicts = detect_conflicts([lab, hyp])
+        stale = [c for c in conflicts if c.type == ConflictType.stale_lab_evidence]
+        if stale:
+            assert stale[0].severity == ConflictSeverity.warning
+
+
+# ── Rule 10: Time paradox ─────────────────────────────────────────────────────
+
+class TestTimeparadox:
+    def test_assertion_before_event_triggers_paradox(self):
+        from datetime import datetime, timezone, timedelta
+        event     = datetime.now(timezone.utc)
+        assertion = (event - timedelta(hours=2)).isoformat()  # asserted BEFORE event
+        claim = {
+            "id": "c1", "text": "Fever measured",
+            "claim_type": "finding", "status": "active",
+            "evidence_support_score": 0.8, "derived_from": [], "time_offset": None,
+            "event_time": event.isoformat(),
+            "assertion_time": assertion,
+        }
+        conflicts = detect_conflicts([claim])
+        assert any(c.type == ConflictType.time_paradox for c in conflicts)
+
+    def test_normal_order_no_paradox(self):
+        from datetime import datetime, timezone, timedelta
+        event     = (datetime.now(timezone.utc) - timedelta(hours=4)).isoformat()
+        assertion = datetime.now(timezone.utc).isoformat()  # asserted AFTER event
+        claim = {
+            "id": "c1", "text": "Fever measured",
+            "claim_type": "finding", "status": "active",
+            "evidence_support_score": 0.8, "derived_from": [], "time_offset": None,
+            "event_time": event,
+            "assertion_time": assertion,
+        }
+        conflicts = detect_conflicts([claim])
+        assert not any(c.type == ConflictType.time_paradox for c in conflicts)
+
+    def test_missing_assertion_time_no_paradox(self):
+        from datetime import datetime, timezone
+        claim = {
+            "id": "c1", "text": "Finding noted",
+            "claim_type": "finding", "status": "active",
+            "evidence_support_score": 0.8, "derived_from": [], "time_offset": None,
+            "event_time": datetime.now(timezone.utc).isoformat(),
+            # no assertion_time
+        }
+        conflicts = detect_conflicts([claim])
+        assert not any(c.type == ConflictType.time_paradox for c in conflicts)
+
+    def test_paradox_is_error_severity(self):
+        from datetime import datetime, timezone, timedelta
+        event     = datetime.now(timezone.utc)
+        assertion = (event - timedelta(hours=1)).isoformat()
+        claim = {
+            "id": "c1", "text": "Some finding",
+            "claim_type": "finding", "status": "active",
+            "evidence_support_score": 0.8, "derived_from": [], "time_offset": None,
+            "event_time": event.isoformat(),
+            "assertion_time": assertion,
+        }
+        paradoxes = [c for c in detect_conflicts([claim]) if c.type == ConflictType.time_paradox]
+        assert paradoxes[0].severity == ConflictSeverity.error

@@ -24,7 +24,9 @@ class TestEnums:
 
     def test_claim_status_values(self):
         assert {e.value for e in ClaimStatus} == {
-            "active", "confirmed", "refuted", "resolved", "superseded"
+            "active", "observed", "inferred", "contested",
+            "confirmed", "refuted", "withdrawn",
+            "resolved", "superseded",
         }
 
     def test_claim_trend_values(self):
@@ -35,6 +37,7 @@ class TestEnums:
             "competing_hypothesis", "negation", "evidence_mismatch", "timeline_gap",
             "therapy_without_indication", "stale_hypothesis", "contradictory_values",
             "temporal_inconsistency",
+            "stale_lab_evidence", "time_paradox",
         }
         assert {e.value for e in ConflictType} == expected
 

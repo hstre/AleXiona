@@ -1,5 +1,6 @@
 from __future__ import annotations
 import re
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 from pydantic import BaseModel, field_validator
@@ -56,11 +57,19 @@ class SourceType(str, Enum):
 
 
 class ClaimStatus(str, Enum):
-    active     = "active"
-    confirmed  = "confirmed"    # clinician explicitly confirmed — boosts source_weight
-    refuted    = "refuted"      # clinician explicitly excluded — hard removes from ranking
-    resolved   = "resolved"
-    superseded = "superseded"
+    # ── Epistemic lifecycle (fine-grained) ───────────────────────────────────
+    observed   = "observed"    # directly observed/measured — highest epistemic warrant
+    inferred   = "inferred"    # derived or interpreted from other observations
+    contested  = "contested"   # conflicting evidence exists; flagged for review
+    # ── Clinician decisions ──────────────────────────────────────────────────
+    confirmed  = "confirmed"   # clinician explicitly confirmed → score boost (×1.5)
+    refuted    = "refuted"     # clinician explicitly contradicted → hard excluded from ranking
+    withdrawn  = "withdrawn"   # clinician retracted (documentation error, etc.)
+    # ── Temporal lifecycle ───────────────────────────────────────────────────
+    resolved   = "resolved"    # clinical condition no longer active
+    superseded = "superseded"  # replaced by a newer, more current claim
+    # ── Backward compat ──────────────────────────────────────────────────────
+    active     = "active"      # generic active — treated as "observed" in scoring
 
 
 class ClaimTrend(str, Enum):
@@ -77,25 +86,88 @@ class Relation(BaseModel):
 
 
 class Claim(BaseModel):
-    text:                  str
-    entities:              list[str]            = []
-    relations:             list[Relation]       = []
-    evidence_support_score: float              = 0.8
-    claim_type:            ClaimType           = ClaimType.finding
-    source_type:           SourceType          = SourceType.llm
-    source_ref:            str                 = ""
-    derived_from:          list[str]           = []   # claim IDs — explicit causal/epistemic derivation (set by LLM or user only)
-    related_to:            list[str]           = []   # claim IDs — heuristic semantic proximity (set by system only)
-    status:                ClaimStatus         = ClaimStatus.active
-    time_offset:           Optional[str]       = None  # e.g. "t+6h"
-    trend:                 ClaimTrend          = ClaimTrend.unknown
+    """A structured, time-anchored, revisable clinical claim.
+
+    Two orthogonal time axes (Alexandria principle):
+        event_time     — WHEN the medical event/finding actually occurred
+        assertion_time — WHEN the claim was entered into the knowledge graph
+
+    These can diverge substantially:
+        - "Fever since 3 days" → event_time ≈ now-72h, assertion_time ≈ now
+        - Retrospective chart note → event_time = days ago, assertion_time = today
+
+    valid_from / valid_until bound the claim's temporal scope of applicability.
+    supersedes_claim_id makes the replacement chain explicit.
+    """
+    text:                   str
+    entities:               list[str]            = []
+    relations:              list[Relation]       = []
+    evidence_support_score: float                = 0.8
+    claim_type:             ClaimType            = ClaimType.finding
+    source_type:            SourceType           = SourceType.llm
+    source_ref:             str                  = ""
+    derived_from:           list[str]            = []   # explicit epistemic derivation
+    related_to:             list[str]            = []   # heuristic semantic proximity
+    status:                 ClaimStatus          = ClaimStatus.active
+
+    # ── Legacy relative time (retained for backward compat) ──────────────────
+    time_offset:            Optional[str]        = None   # e.g. "t+6h"
+    trend:                  ClaimTrend           = ClaimTrend.unknown
+
+    # ── Absolute temporal anchoring (Alexandria principle) ───────────────────
+    event_time:             Optional[datetime]   = None   # when the medical event occurred
+    assertion_time:         Optional[datetime]   = None   # when this claim was entered
+    valid_from:             Optional[datetime]   = None   # claim active from this moment
+    valid_until:            Optional[datetime]   = None   # claim expires / no longer applicable
+
+    # ── Epistemic provenance ─────────────────────────────────────────────────
+    supersedes_claim_id:    Optional[str]        = None   # claim ID this replaces
+    uncertainty_flag:       bool                 = False  # LLM/clinician flagged uncertainty
+    assumptions:            list[str]            = []     # stated assumptions behind this claim
+    normalized_token:       Optional[str]        = None   # canonical lab token (e.g. "crp")
 
 
 class ClaimExtractionResult(BaseModel):
     claims: list[Claim]
 
 
-# ── Analysis / Reasoning ────────────────────────────────────────────────────
+# ── 4-Stage Extraction Pipeline ───────────────────────────────────────────────
+# raw note → ExtractedObservation → ClaimCandidate → Claim (validated)
+
+class ExtractedObservation(BaseModel):
+    """Stage 1 — raw LLM output before normalization.
+
+    Captures what the LLM found in free text, with uncertainty/negation signals
+    and time references still in raw form (not yet resolved to structured types).
+    """
+    raw_text:         str
+    observation:      str                # extracted observation statement
+    observation_type: str                # broad type: symptom | lab | finding | imaging | ...
+    temporal_hint:    Optional[str] = None  # raw time reference: "3 days ago", "at 14:20"
+    negation_hint:    bool          = False  # "no fever", "ruled out", "absent"
+    uncertainty_hint: bool          = False  # "possibly", "suspected", "cannot exclude"
+    source_ref:       str           = ""
+
+
+class ClaimCandidate(BaseModel):
+    """Stage 2 — normalized but not yet validated claim.
+
+    Lab values are parsed quantitatively; temporal hints are resolved to datetime
+    where possible; tokens are normalized to canonical keys (via lab_parser).
+    The candidate is validated into a full Claim by the ingestion pipeline.
+    """
+    observation:       ExtractedObservation
+    candidate_text:    str
+    candidate_type:    str                # normalized claim_type
+    normalized_token:  Optional[str]   = None  # canonical lab token ("crp", "troponin", ...)
+    parsed_value:      Optional[float] = None  # numeric lab value
+    parsed_unit:       Optional[str]   = None  # unit string
+    qualitative:       Optional[str]   = None  # "high" | "low" | "normal"
+    event_time_iso:    Optional[str]   = None  # ISO 8601 datetime if resolved
+    confidence:        float           = 0.5
+
+
+# ── Analysis / Reasoning ─────────────────────────────────────────────────────
 
 class Alternative(BaseModel):
     label:                  str
@@ -105,9 +177,9 @@ class Alternative(BaseModel):
 
 class MissingEvidence(BaseModel):
     description:              str
-    needed_for:               str        # which hypothesis it would clarify
-    test_or_type:             str        # e.g. "D-Dimer", "CT-Angiographie"
-    differentiates_between:   list[str]  = []  # hypothesis labels this would help differentiate
+    needed_for:               str
+    test_or_type:             str
+    differentiates_between:   list[str] = []
 
 
 class CounterfactualShift(BaseModel):
@@ -121,16 +193,16 @@ class CounterfactualResult(BaseModel):
     changed_evidence:    list[str]
     shifts:              list[CounterfactualShift]
     reasoning_trace:     str
-    guideline_shift:     Optional[dict] = None  # {hypothesis_text: {before: {...}, after: {...}}}
+    guideline_shift:     Optional[dict] = None
 
 
 class HypothesisCounterfactualResult(BaseModel):
     """Result of asking: 'What would need to change for this hypothesis to be false?'"""
     hypothesis:           str
-    required_changes:     list[str]  # specific evidence/findings that would need to change
-    critical_evidence:    list[str]  # the most decisive currently-supporting claims
-    alternative_if_false: str        # which hypothesis would become leading instead
-    reasoning_trace:      str        # clinical explanation
+    required_changes:     list[str]
+    critical_evidence:    list[str]
+    alternative_if_false: str
+    reasoning_trace:      str
 
 
 class ReasoningResult(BaseModel):
@@ -143,7 +215,7 @@ class ReasoningResult(BaseModel):
     focus_points:             list[str]
 
 
-# ── Conflicts ────────────────────────────────────────────────────────────────
+# ── Conflicts ─────────────────────────────────────────────────────────────────
 
 class ConflictSeverity(str, Enum):
     error   = "error"
@@ -152,14 +224,18 @@ class ConflictSeverity(str, Enum):
 
 
 class ConflictType(str, Enum):
-    competing_hypothesis      = "competing_hypothesis"
-    negation                  = "negation"
-    evidence_mismatch         = "evidence_mismatch"
-    timeline_gap              = "timeline_gap"
+    # Original 8 rules
+    competing_hypothesis       = "competing_hypothesis"
+    negation                   = "negation"
+    evidence_mismatch          = "evidence_mismatch"
+    timeline_gap               = "timeline_gap"
     therapy_without_indication = "therapy_without_indication"
-    stale_hypothesis          = "stale_hypothesis"
-    contradictory_values      = "contradictory_values"
-    temporal_inconsistency    = "temporal_inconsistency"
+    stale_hypothesis           = "stale_hypothesis"
+    contradictory_values       = "contradictory_values"
+    temporal_inconsistency     = "temporal_inconsistency"
+    # Epistemic-time rules (Rules 9–10)
+    stale_lab_evidence         = "stale_lab_evidence"  # old lab result still driving hypothesis
+    time_paradox               = "time_paradox"        # assertion_time before event_time
 
 
 class Conflict(BaseModel):
@@ -170,7 +246,7 @@ class Conflict(BaseModel):
     affected_claim_ids:  list[str]
 
 
-# ── API ─────────────────────────────────────────────────────────────────────
+# ── API ───────────────────────────────────────────────────────────────────────
 
 class ChatMessage(BaseModel):
     role:    str
@@ -200,6 +276,10 @@ class NodeUpdate(BaseModel):
     time_offset:            Optional[str]         = None
     source_ref:             Optional[str]         = None
     notes:                  Optional[str]         = None
+    # Epistemic fields patchable by clinician
+    uncertainty_flag:       Optional[bool]        = None
+    supersedes_claim_id:    Optional[str]         = None
+    valid_until:            Optional[datetime]    = None
 
     @field_validator('evidence_support_score', mode='before')
     @classmethod

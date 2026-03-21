@@ -33,7 +33,10 @@ _LOW_RE = re.compile(
 
 _EVIDENCE_TYPES  = {"finding", "lab", "imaging", "symptom"}
 _LEAD_TYPES      = {"diagnosis", "hypothesis"}
-_ACTIVE_STATUSES = {"active", "confirmed"}   # both count as "present" in scoring
+# Statuses that count as "epistemically active" in scoring.
+# refuted / withdrawn / resolved / superseded are excluded.
+# contested is included — it means under review, not invalidated.
+_ACTIVE_STATUSES = {"active", "observed", "inferred", "confirmed", "contested"}
 
 # Source-weight boost applied to evidence claims with status="confirmed"
 _CONFIRMED_BOOST = 1.5
@@ -179,19 +182,47 @@ def _parse_offset_hours(time_offset) -> float | None:
     return float(m.group(1)) if m else None
 
 
+def _hours_since_event(claim: dict) -> float | None:
+    """Compute how many hours old the claim's event is.
+
+    Priority:
+      1. event_time (absolute datetime — most precise)
+      2. time_offset (relative hours — legacy)
+    Returns None if no temporal information is available.
+    """
+    # 1. Absolute event_time (Alexandria principle — preferred)
+    event_time = claim.get("event_time")
+    if event_time is not None:
+        now = datetime.now(timezone.utc)
+        if isinstance(event_time, str):
+            try:
+                from datetime import datetime as _dt
+                event_time = _dt.fromisoformat(event_time.replace("Z", "+00:00"))
+            except ValueError:
+                event_time = None
+        if event_time is not None:
+            if event_time.tzinfo is None:
+                event_time = event_time.replace(tzinfo=timezone.utc)
+            delta_h = (now - event_time).total_seconds() / 3600
+            return max(0.0, delta_h)
+
+    # 2. Fallback: relative time_offset
+    return _parse_offset_hours(claim.get("time_offset"))
+
+
 def _temporal_weight(claim: dict) -> float:
     """Return a [0.25, 1.0] decay multiplier based on claim age and type.
 
-    Uses exponential half-life decay:  w = 0.5 ** (hours / half_life)
-    Clamped to a floor of 0.25 so old evidence is down-weighted but never
-    completely ignored.
+    Uses event_time (absolute) when available, falls back to time_offset.
+    Exponential half-life decay:  w = 0.5 ** (hours / half_life)
+    Clamped to [0.25, 1.0] — old evidence down-weighted but never ignored.
     """
-    hours = _parse_offset_hours(claim.get("time_offset"))
+    hours      = _hours_since_event(claim)
     if hours is None:
-        return 1.0  # no time info → no decay
+        return 1.0  # no temporal info → no decay applied
     claim_type = claim.get("claim_type", "finding")
     half_life  = _TEMPORAL_HALF_LIFE_H.get(claim_type, 48.0)
-    weight = 0.5 ** (hours / half_life)
+    weight     = 0.5 ** (hours / half_life)
     return max(0.25, weight)
 
 
@@ -315,7 +346,7 @@ def rank_hypotheses(all_claims: list[dict]) -> list[HypothesisScore]:
     hypotheses = [
         c for c in all_claims
         if c.get("claim_type") in _LEAD_TYPES
-        and c.get("status") in _ACTIVE_STATUSES  # refuted → hard excluded
+        and c.get("status") in _ACTIVE_STATUSES  # refuted/withdrawn → hard excluded
     ]
     scored = [score_hypothesis(h, all_claims) for h in hypotheses]
     return sorted(scored, key=lambda x: x["rule_based_score"], reverse=True)

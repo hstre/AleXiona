@@ -3,6 +3,7 @@ Rule-based conflict detection for AleXiona V0.
 Operates on claim dicts returned from Neo4j.
 """
 import re
+from datetime import datetime, timezone, timedelta
 from models import Conflict, ConflictType, ConflictSeverity, _parse_offset_hours
 
 _NEGATION_RE = re.compile(
@@ -27,8 +28,29 @@ def _key_terms(text: str) -> set[str]:
     return set(_KEY_TERM_RE.findall(text.lower()))
 
 
+_ACTIVE_STATUSES = {"active", "observed", "inferred", "confirmed", "contested"}
+_LAB_TYPES       = {"lab"}
+_STALE_LAB_HOURS = 48.0  # lab results older than this trigger stale_lab_evidence
+
+
+def _parse_event_time(claim: dict) -> datetime | None:
+    """Extract event_time as a timezone-aware datetime, or None."""
+    et = claim.get("event_time")
+    if et is None:
+        return None
+    if isinstance(et, datetime):
+        return et.replace(tzinfo=timezone.utc) if et.tzinfo is None else et
+    if isinstance(et, str):
+        try:
+            dt = datetime.fromisoformat(et.replace("Z", "+00:00"))
+            return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+        except ValueError:
+            return None
+    return None
+
+
 def detect_conflicts(claims: list[dict]) -> list[Conflict]:
-    active = [c for c in claims if c.get("status", "active") == "active"]
+    active = [c for c in claims if c.get("status", "active") in _ACTIVE_STATUSES]
     conflicts: list[Conflict] = []
 
     # ── Rule 1: Competing diagnoses / hypotheses ─────────────────────────────
@@ -218,5 +240,71 @@ def detect_conflicts(claims: list[dict]) -> list[Conflict]:
                     ),
                     affected_claim_ids=[c["id"], src_id],
                 ))
+
+    # ── Rule 9: Stale lab evidence still driving active hypothesis ────────────
+    # A lab claim with event_time older than STALE_LAB_HOURS that is the only
+    # matching evidence for an active hypothesis — the clinician should re-test.
+    # Applies only when event_time (absolute) is available.
+    now = datetime.now(timezone.utc)
+    lab_claims = [
+        c for c in active
+        if c.get("claim_type") in _LAB_TYPES
+    ]
+    for hyp in leads:
+        hyp_terms = _key_terms(hyp["text"])
+        supporting_labs = [
+            lab for lab in lab_claims
+            if len(hyp_terms & _key_terms(lab["text"])) >= 1
+        ]
+        for lab in supporting_labs:
+            et = _parse_event_time(lab)
+            if et is None:
+                continue
+            age_h = (now - et).total_seconds() / 3600
+            if age_h > _STALE_LAB_HOURS:
+                conflicts.append(Conflict(
+                    id=f"conflict-stale-lab-{hyp['id']}-{lab['id']}",
+                    type=ConflictType.stale_lab_evidence,
+                    severity=ConflictSeverity.warning,
+                    message=(
+                        f'Lab result "{lab["text"][:55]}" is {age_h:.0f}h old '
+                        f'(>{_STALE_LAB_HOURS:.0f}h threshold) but still supports '
+                        f'hypothesis "{hyp["text"][:50]}". Consider repeating the test.'
+                    ),
+                    affected_claim_ids=[hyp["id"], lab["id"]],
+                ))
+
+    # ── Rule 10: Time paradox — assertion_time before event_time ─────────────
+    # A claim that was documented (assertion_time) before the event it describes
+    # (event_time) is a physical impossibility — data-integrity error.
+    for c in claims:
+        et = _parse_event_time(c)
+        if et is None:
+            continue
+        at_raw = c.get("assertion_time")
+        if at_raw is None:
+            continue
+        if isinstance(at_raw, str):
+            try:
+                at = datetime.fromisoformat(at_raw.replace("Z", "+00:00"))
+                at = at.replace(tzinfo=timezone.utc) if at.tzinfo is None else at
+            except ValueError:
+                continue
+        elif isinstance(at_raw, datetime):
+            at = at_raw.replace(tzinfo=timezone.utc) if at_raw.tzinfo is None else at_raw
+        else:
+            continue
+        if at < et:
+            delta_h = (et - at).total_seconds() / 3600
+            conflicts.append(Conflict(
+                id=f"conflict-time-paradox-{c['id']}",
+                type=ConflictType.time_paradox,
+                severity=ConflictSeverity.error,
+                message=(
+                    f'Claim "{c["text"][:55]}" has assertion_time {delta_h:.1f}h '
+                    f'BEFORE its event_time — impossible; likely a documentation error.'
+                ),
+                affected_claim_ids=[c["id"]],
+            ))
 
     return conflicts
