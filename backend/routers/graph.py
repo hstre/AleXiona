@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from models import GraphData, NodeUpdate, CounterfactualResult, HypothesisCounterfactualResult, Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend, _clamp_ess, _normalize_time_offset, _parse_offset_hours, AuditActor, MEDResult, ReasoningExplanation, HypothesisExplanation, ClaimContribution, GuidelineEvaluation, RiskScoreResponse, RiskScoreItem
+from models import GraphData, NodeUpdate, CounterfactualResult, HypothesisCounterfactualResult, Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend, _clamp_ess, _normalize_time_offset, _parse_offset_hours, AuditActor, MEDResult, ReasoningExplanation, HypothesisExplanation, ClaimContribution, GuidelineEvaluation, RiskScoreResponse, RiskScoreItem, ClinicalRoleView, RoleAlert, RoleViewSection
 from pydantic import BaseModel, field_validator
 from typing import Optional
 from neo4j_client import get_db
@@ -10,6 +10,7 @@ from audit_log import log_created_batch, log_updated, log_deleted
 from med_engine import compute_med
 from reasoning_engine import explain_hypothesis_scores
 from composite_scores import compute_all_scores
+from role_views import build_role_view, ROLE_ALIASES, SPECIALTY_KEYWORDS
 
 
 class ManualClaimPayload(BaseModel):
@@ -316,6 +317,51 @@ async def get_reasoning_explanation(session_id: str):
             hypotheses=hypotheses,
             generated_at=datetime.now(timezone.utc).isoformat(),
         )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise internal_error(e)
+
+
+@router.get("/{session_id}/view/{role}", response_model=ClinicalRoleView)
+async def get_role_view(
+    session_id: str,
+    role: str,
+    specialty: Optional[str] = None,
+):
+    """
+    Role-filtered clinical view — each role sees exactly what they need.
+
+    Roles (German or English):
+      pfleger / nurse          — vitals, trend alerts, monitoring tasks
+      assistenzarzt / resident — full differential, risk scores, missing evidence
+      facharzt / specialist    — specialty-filtered hypotheses + claim breakdown
+      labor / lab              — lab results, abnormal flags, pending tests
+      chefarzt / chief         — executive summary, risk flags, decisions pending
+
+    Optional ?specialty= for the specialist role:
+      cardiology | pulmonology | infectiology | neurology | nephrology | gastroenterology
+    """
+    from datetime import datetime, timezone
+    db = get_db()
+    try:
+        claims  = db.get_all_claims_for_session(session_id)
+        raw     = build_role_view(role, claims, specialty)
+        level_order = {"critical": 0, "warning": 1, "info": 2}
+        alerts = sorted(
+            [RoleAlert(**a) for a in raw["alerts"]],
+            key=lambda a: level_order.get(a.level, 3),
+        )
+        return ClinicalRoleView(
+            session_id=session_id,
+            role=raw["role"],
+            specialty=specialty,
+            alerts=alerts,
+            sections=[RoleViewSection(**s) for s in raw["sections"]],
+            generated_at=datetime.now(timezone.utc).isoformat(),
+        )
+    except ValueError as e:
+        raise validation_error(str(e))
     except HTTPException:
         raise
     except Exception as e:

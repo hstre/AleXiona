@@ -508,6 +508,28 @@ class AuditTrailResponse(BaseModel):
     events:    list[AuditEvent]
 
 
+# ── Role-Based Clinical Views ──────────────────────────────────────────────────
+
+class RoleAlert(BaseModel):
+    level:   str   # "critical" | "warning" | "info"
+    message: str
+    context: str = ""
+
+
+class RoleViewSection(BaseModel):
+    section: str
+    items:   list[dict]
+
+
+class ClinicalRoleView(BaseModel):
+    session_id:   str
+    role:         str                    # nurse | resident | specialist | lab | chief
+    specialty:    Optional[str] = None
+    alerts:       list[RoleAlert]        # critical first
+    sections:     list[RoleViewSection]
+    generated_at: str
+
+
 # ── Risk Score Response ────────────────────────────────────────────────────────
 
 class RiskScoreItem(BaseModel):
