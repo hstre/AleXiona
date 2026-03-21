@@ -6,7 +6,7 @@ from typing import AsyncIterator
 from openai import OpenAI, AsyncOpenAI
 from pydantic import ValidationError
 from datetime import datetime, timezone
-from clinical_spl import run_spl_pipeline
+from clinical_spl import run_spl_pipeline, run_dual_spl_pipeline
 from models import (
     Claim, ClaimExtractionResult, ChatMessage,
     ReasoningResult, Alternative, MissingEvidence,
@@ -498,6 +498,50 @@ _PATIENT_SOURCE_TYPES = {"patient_report", "wearable", "home_device", "caregiver
 
 # ── Intake: patient conversation extraction ───────────────────────────────────
 
+# Beta builder: clinically conservative interpretation used for E4 JSD check.
+# Deliberately maps the same surface form to a different claim_type than the
+# alpha prompt to surface genuine semantic ambiguity.
+_BETA_INTERPRETATION_PROMPT = """\
+You are a conservative clinical evidence reviewer.
+Given a short patient statement, return the most cautious clinical interpretation.
+
+Rules:
+- Prefer "finding" over "symptom" for statements with physical signs
+- Prefer "history" over "finding" for past events
+- Prefer "risk_factor" over "finding" for chronic conditions
+- Use lower evidence_support_score (0.35–0.65) for subjective reports
+- Use higher evidence_support_score (0.70–0.90) for directly observed values
+
+Respond ONLY with JSON: {"claim_type": "...", "evidence_support_score": 0.0}
+No other fields. No explanation.\
+"""
+
+
+def _extract_beta_interpretation(claim_text: str) -> tuple[str, float]:
+    """
+    Second-builder (beta) extraction for E4 JSD evaluation.
+    Returns (claim_type, ess) using a clinically conservative prompt.
+    Falls back to ("finding", 0.50) on any error.
+    """
+    try:
+        data = _llm_json(
+            messages=[
+                {"role": "system", "content": _BETA_INTERPRETATION_PROMPT},
+                {"role": "user",   "content": claim_text},
+            ],
+            temperature=0.2,
+            validate_fn=None,
+        )
+        if data and "claim_type" in data and "evidence_support_score" in data:
+            return (
+                str(data["claim_type"]),
+                float(max(0.0, min(1.0, data["evidence_support_score"]))),
+            )
+    except Exception:
+        pass
+    return ("finding", 0.50)
+
+
 CONVERSATION_EXTRACTION_PROMPT = """\
 You are a clinical knowledge extraction engine processing a patient or caregiver conversation.
 All claims extracted here are PATIENT-REPORTED or CAREGIVER-REPORTED — NOT clinically confirmed.
@@ -569,8 +613,8 @@ def extract_claims_conversation(
             claim_type  = enriched.get("claim_type", "symptom")
             entities    = enriched.get("entities", [])
 
-            # ── SPL gate: probabilistic projection → emission rule ─────────────
-            spl = run_spl_pipeline(
+            # ── SPL gate: alpha projection ─────────────────────────────────────
+            alpha_spl = run_spl_pipeline(
                 claim_text=enriched["text"],
                 claim_type=claim_type,
                 ess=ess,
@@ -579,20 +623,90 @@ def extract_claims_conversation(
                 object_=entities[1] if len(entities) > 1 else "",
             )
 
-            # E0 (structural violation) → discard; all others propagate
-            if spl.blocked:
+            # E0 (structural violation) → discard silently
+            if alpha_spl.blocked:
                 log.info("SPL E0 blocked conversation claim: %r", enriched["text"][:60])
                 continue
 
-            # E3 (ambiguous) → force uncertainty regardless of LLM output
-            uncertainty_flag = bool(enriched.get("uncertainty_flag", False)) or spl.force_uncertain
-            status_override  = "tentative" if spl.force_uncertain else enriched.get("status", "observed")
+            # ── E4 dual-builder: triggered when alpha is uncertain ─────────────
+            # Run a second conservative LLM interpretation and compare P_r via JSD.
+            # E4 fires when both builders are moderately confident but assign
+            # different clinical relation types (JSD > tau_4=0.40).
+            run_dual = alpha_spl.force_uncertain or bool(enriched.get("uncertainty_flag", False))
+
+            if run_dual:
+                beta_claim_type, beta_ess = _extract_beta_interpretation(enriched["text"])
+                dual = run_dual_spl_pipeline(
+                    claim_text=enriched["text"],
+                    alpha_claim_type=claim_type, alpha_ess=ess,
+                    beta_claim_type=beta_claim_type, beta_ess=beta_ess,
+                    source_ref=enriched.get("source_ref", ""),
+                    subject=entities[0] if entities else "",
+                    object_=entities[1] if len(entities) > 1 else "",
+                )
+                if dual.branched:
+                    # Both interpretations equally valid — write two tentative claims
+                    log.info(
+                        "SPL E4 branch: JSD=%.3f  alpha=%s/%.2f  beta=%s/%.2f  text=%r",
+                        dual.jsd, claim_type, ess, beta_claim_type, beta_ess,
+                        enriched["text"][:60],
+                    )
+                    _base = dict(
+                        text=enriched["text"],
+                        entities=entities,
+                        relations=relations,
+                        source_type=enriched["source_type"],
+                        source_ref=enriched.get("source_ref", ""),
+                        evidence_tier=enriched["evidence_tier"],
+                        status="tentative",
+                        time_offset=enriched.get("time_offset"),
+                        event_time=enriched.get("event_time"),
+                        assertion_time=enriched.get("assertion_time"),
+                        trend=enriched.get("trend", "unknown"),
+                        uncertainty_flag=True,
+                        normalized_token=enriched.get("normalized_token"),
+                        projection_method="llm_extraction",
+                        spl_unit_id=dual.alpha.unit_id,   # shared — marks them as pair
+                        spl_emission_rule="E4",
+                    )
+                    claims.append(Claim(
+                        **_base,
+                        claim_type=claim_type,
+                        evidence_support_score=ess,
+                        projection_confidence=ess,
+                        assumptions=list(enriched.get("assumptions", [])) + [
+                            f"SPL E4 alpha: type={claim_type} ess={ess:.2f} "
+                            f"jsd={dual.jsd:.3f} h_norm={dual.alpha.h_norm:.3f}"
+                        ],
+                        spl_projection_id=dual.alpha.projection_id,
+                        spl_h_norm=round(dual.alpha.h_norm, 4),
+                    ))
+                    claims.append(Claim(
+                        **_base,
+                        claim_type=beta_claim_type if beta_claim_type != "diagnosis" else "finding",
+                        evidence_support_score=beta_ess,
+                        projection_confidence=beta_ess,
+                        assumptions=list(enriched.get("assumptions", [])) + [
+                            f"SPL E4 beta: type={beta_claim_type} ess={beta_ess:.2f} "
+                            f"jsd={dual.jsd:.3f} h_norm={dual.beta.h_norm:.3f}"
+                        ],
+                        spl_projection_id=dual.beta.projection_id,
+                        spl_h_norm=round(dual.beta.h_norm, 4),
+                    ))
+                    continue  # skip the single-claim path below
+
+                # Not branched → use the dual result's alpha (now re-evaluated)
+                alpha_spl = dual.alpha
+
+            # ── Single-claim path (E1, E2, or unresolved E3) ───────────────────
+            uncertainty_flag = bool(enriched.get("uncertainty_flag", False)) or alpha_spl.force_uncertain
+            status_override  = "tentative" if alpha_spl.force_uncertain else enriched.get("status", "observed")
 
             assumptions = list(enriched.get("assumptions", []))
             assumptions.append(
-                f"SPL: emission_rule={spl.emission_rule} "
-                f"h_norm={spl.h_norm:.3f} "
-                f"relation_score={spl.relation_score:.3f}"
+                f"SPL: emission_rule={alpha_spl.emission_rule} "
+                f"h_norm={alpha_spl.h_norm:.3f} "
+                f"relation_score={alpha_spl.relation_score:.3f}"
             )
 
             claims.append(Claim(
@@ -614,10 +728,10 @@ def extract_claims_conversation(
                 normalized_token=enriched.get("normalized_token"),
                 projection_confidence=ess,
                 projection_method="llm_extraction",
-                spl_unit_id=spl.unit_id,
-                spl_projection_id=spl.projection_id,
-                spl_emission_rule=spl.emission_rule,
-                spl_h_norm=round(spl.h_norm, 4),
+                spl_unit_id=alpha_spl.unit_id,
+                spl_projection_id=alpha_spl.projection_id,
+                spl_emission_rule=alpha_spl.emission_rule,
+                spl_h_norm=round(alpha_spl.h_norm, 4),
             ))
         except (ValidationError, KeyError, TypeError) as e:
             log.warning("Skipping malformed conversation claim: %s — %s", c, e)
@@ -705,13 +819,38 @@ def extract_claims_clinical(
                 Relation(from_entity=r["from_entity"], to_entity=r["to_entity"], type=r["type"])
                 for r in enriched.get("relations", [])
             ]
-            ess = float(enriched.get("evidence_support_score", 0.8))
+            ess        = float(enriched.get("evidence_support_score", 0.8))
+            claim_type = enriched.get("claim_type", "finding")
+            entities   = enriched.get("entities", [])
+
+            # ── SPL gate (single-builder; no E4 for structured clinical data) ──
+            spl = run_spl_pipeline(
+                claim_text=enriched["text"],
+                claim_type=claim_type,
+                ess=ess,
+                source_ref=enriched.get("source_ref", ""),
+                subject=entities[0] if entities else "",
+                object_=entities[1] if len(entities) > 1 else "",
+            )
+
+            if spl.blocked:
+                log.info("SPL E0 blocked clinical claim: %r", enriched["text"][:60])
+                continue
+
+            uncertainty_flag = bool(enriched.get("uncertainty_flag", False)) or spl.force_uncertain
+            assumptions = list(enriched.get("assumptions", []))
+            assumptions.append(
+                f"SPL: emission_rule={spl.emission_rule} "
+                f"h_norm={spl.h_norm:.3f} "
+                f"relation_score={spl.relation_score:.3f}"
+            )
+
             claims.append(Claim(
                 text=enriched["text"],
-                entities=enriched.get("entities", []),
+                entities=entities,
                 relations=relations,
                 evidence_support_score=ess,
-                claim_type=enriched.get("claim_type", "finding"),
+                claim_type=claim_type,
                 source_type=enriched["source_type"],
                 source_ref=enriched.get("source_ref", ""),
                 evidence_tier=enriched["evidence_tier"],
@@ -720,11 +859,15 @@ def extract_claims_clinical(
                 event_time=enriched.get("event_time"),
                 assertion_time=enriched.get("assertion_time"),
                 trend=enriched.get("trend", "unknown"),
-                uncertainty_flag=bool(enriched.get("uncertainty_flag", False)),
-                assumptions=enriched.get("assumptions", []),
+                uncertainty_flag=uncertainty_flag,
+                assumptions=assumptions,
                 normalized_token=enriched.get("normalized_token"),
                 projection_confidence=ess,
                 projection_method="llm_extraction",
+                spl_unit_id=spl.unit_id,
+                spl_projection_id=spl.projection_id,
+                spl_emission_rule=spl.emission_rule,
+                spl_h_norm=round(spl.h_norm, 4),
             ))
         except (ValidationError, KeyError, TypeError) as e:
             log.warning("Skipping malformed clinical claim: %s — %s", c, e)

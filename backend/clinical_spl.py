@@ -267,3 +267,118 @@ def run_spl_pipeline(
             emission_rule=EmissionRule.E3,
         )
         return SPLEmissionResult(unit, fallback_projection, None)
+
+
+# ── E4 Dual-Builder ───────────────────────────────────────────────────────────
+
+class DualSPLResult:
+    """
+    Result of an E4 dual-builder evaluation.
+
+    When branched=True, both alpha and beta carry valid alternative
+    interpretations of the same SemanticUnit and should be written as
+    separate tentative Claims sharing the same spl_unit_id.
+
+    When branched=False, the alpha result is authoritative (lower JSD
+    means the builders agreed; use alpha's emission rule and score).
+    """
+    __slots__ = ("branched", "jsd", "alpha", "beta")
+
+    def __init__(
+        self,
+        branched: bool,
+        jsd: float,
+        alpha: SPLEmissionResult,
+        beta:  SPLEmissionResult,
+    ):
+        self.branched = branched
+        self.jsd      = jsd
+        self.alpha    = alpha
+        self.beta     = beta
+
+
+def run_dual_spl_pipeline(
+    claim_text:      str,
+    alpha_claim_type: str, alpha_ess: float,
+    beta_claim_type:  str, beta_ess:  float,
+    source_ref: str = "",
+    subject:    str = "",
+    object_:    str = "",
+) -> DualSPLResult:
+    """
+    Run the full E4 dual-builder pipeline.
+
+    Both builders receive the same SemanticUnit but produce independent
+    SemanticProjections from their respective (claim_type, ess) inputs.
+    `apply_e4()` then measures Jensen-Shannon Divergence between the
+    two P_r distributions.
+
+    E4 fires when:
+    - Both builders are moderately confident (ESS ≥ 0.65, i.e. E2 range)
+    - But their dominant relation differs (different claim_type)
+    → JSD typically > 0.40
+
+    E4 does NOT fire (JSD < tau_4) when:
+    - Both are near maximum entropy (ESS < 0.60) — they agree on uncertainty
+    - Both converge to the same primary relation
+
+    Raises nothing.
+    """
+    try:
+        unit         = make_semantic_unit(claim_text, source_ref)
+
+        # Build projections for both builders from the same unit
+        proj_alpha = make_projection(unit, alpha_claim_type, alpha_ess, subject, object_)
+        proj_beta  = SemanticProjection(
+            projection_id=str(uuid.uuid4()),
+            unit_id=unit.unit_id,            # same unit — required by apply_e4
+            builder_origin="beta",
+            matrix_version=_MATRIX_VERSION,
+            P_r=_build_P_r(beta_claim_type, max(0.0, min(1.0, beta_ess))),
+            subject_candidates=[subject] if subject else [],
+            object_candidates=[object_]  if object_  else [],
+            P_modality={},
+        )
+
+        # E4 check: mutates status of both projections if JSD > tau_4
+        jsd      = _ENGINE.apply_e4(proj_alpha, proj_beta)
+        branched = jsd > CLINICAL_THRESHOLDS.tau_4
+
+        if branched:
+            # Both are BRANCH_CANDIDATE — emit neither through the normal rules
+            cand_alpha = None
+            cand_beta  = None
+        else:
+            # Not branched — run normal E0-E3 on alpha; use alpha as authoritative
+            cands_alpha = _ENGINE.emit(proj_alpha, k=3)
+            cand_alpha  = cands_alpha[0] if cands_alpha else None
+            cands_beta  = _ENGINE.emit(proj_beta, k=3)
+            cand_beta   = cands_beta[0]  if cands_beta  else None
+
+        # For BRANCH_CANDIDATE, manually set emission metrics on projections
+        if branched:
+            import math as _math
+            proj_alpha.h_norm = _math.log(1) if not proj_alpha.h_norm else proj_alpha.h_norm
+            proj_beta.h_norm  = _math.log(1) if not proj_beta.h_norm  else proj_beta.h_norm
+            # Compute h_norm for provenance
+            from spl import compute_h_norm as _h
+            proj_alpha.h_norm = _h(proj_alpha.P_r)
+            proj_beta.h_norm  = _h(proj_beta.P_r)
+
+        res_alpha = SPLEmissionResult(unit, proj_alpha, cand_alpha)
+        res_beta  = SPLEmissionResult(unit, proj_beta,  cand_beta)
+        # Override emission_rule for branch case
+        if branched:
+            res_alpha.emission_rule = "E4"
+            res_beta.emission_rule  = "E4"
+
+        return DualSPLResult(branched=branched, jsd=jsd, alpha=res_alpha, beta=res_beta)
+
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning(
+            "Dual SPL pipeline error for %r — falling back to single alpha",
+            claim_text[:60], exc_info=True,
+        )
+        alpha = run_spl_pipeline(claim_text, alpha_claim_type, alpha_ess, source_ref, subject, object_)
+        return DualSPLResult(branched=False, jsd=0.0, alpha=alpha, beta=alpha)
