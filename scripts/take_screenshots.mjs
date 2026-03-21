@@ -128,8 +128,20 @@ const MOCK_HYPOTHESIS_CF = {
 // ── API route mocks ───────────────────────────────────────────────────────────
 
 async function setupMocks(page) {
-  await page.route(`**/${SESSION_ID}/orchestrate`, r => r.fulfill({ json: MOCK_ORCHESTRATOR }));
-  await page.route(`**/${SESSION_ID}/report`,      r => r.fulfill({ json: MOCK_REPORT }));
+  // NOTE: Playwright applies the LAST registered matching route first.
+  // Register catch-alls first so specific routes (registered later) take priority.
+
+  // ── Catch-all: any session-ID URL → graph data ────────────────────────────
+  await page.route(`**/${SESSION_ID}**`,           r => r.fulfill({ json: MOCK_GRAPH }));
+
+  // ── Generic patterns (registered after catch-all → override it) ──────────
+  await page.route('**/chat/**', async r => {
+    const body = `data: ${JSON.stringify({ type:'done', reply:'Demo', reasoning:MOCK_REASONING, conflicts:MOCK_CONFLICTS })}\n\ndata: [DONE]\n\n`;
+    await r.fulfill({ status:200, headers:{'content-type':'text/event-stream','cache-control':'no-cache'}, body });
+  });
+  await page.route('**/reasoning/**',              r => r.fulfill({ json: MOCK_REASONING }));
+  await page.route('**/conflicts/**',              r => r.fulfill({ json: MOCK_CONFLICTS }));
+  await page.route('**/counterfactual/hypothesis', r => r.fulfill({ json: MOCK_HYPOTHESIS_CF }));
   await page.route('**/report-types',              r => r.fulfill({ json: [
     { key:'arztbrief', title:'Arztbrief', description:'Vollständiger Arztbrief', sections:[
       {key:'anamnese',title:'Anamnese',required:true},{key:'befund',title:'Klinischer Befund',required:true},
@@ -137,14 +149,10 @@ async function setupMocks(page) {
       {key:'therapie',title:'Therapie',required:true},{key:'procedere',title:'Procedere',required:true},
     ]},
   ]}));
-  await page.route('**/counterfactual/hypothesis', r => r.fulfill({ json: MOCK_HYPOTHESIS_CF }));
-  await page.route('**/conflicts/**',              r => r.fulfill({ json: MOCK_CONFLICTS }));
-  await page.route('**/reasoning/**',              r => r.fulfill({ json: MOCK_REASONING }));
-  await page.route(`**/${SESSION_ID}**`,           r => r.fulfill({ json: MOCK_GRAPH }));
-  await page.route('**/chat/**', async r => {
-    const body = `data: ${JSON.stringify({ type:'done', reply:'Demo', reasoning:MOCK_REASONING, conflicts:MOCK_CONFLICTS })}\n\ndata: [DONE]\n\n`;
-    await r.fulfill({ status:200, headers:{'content-type':'text/event-stream','cache-control':'no-cache'}, body });
-  });
+
+  // ── Most specific: session endpoints (highest priority, registered last) ──
+  await page.route(`**/${SESSION_ID}/report`,      r => r.fulfill({ json: MOCK_REPORT }));
+  await page.route(`**/${SESSION_ID}/orchestrate`, r => r.fulfill({ json: MOCK_ORCHESTRATOR }));
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -177,13 +185,18 @@ async function shot(page, filename) {
     colorScheme: 'light',
   });
   const page = await ctx.newPage();
+
+  // Inject session into localStorage BEFORE the page loads so the app never
+  // creates a random UUID and immediately fetches the mocked session's graph.
+  await page.addInitScript((sid) => {
+    localStorage.setItem('alexiona_session', sid);
+  }, SESSION_ID);
+
   await setupMocks(page);
 
   await page.goto(BASE_URL, { waitUntil:'domcontentloaded', timeout:60000 });
-  await page.waitForTimeout(2500);
-  await injectSession(page);
-  await page.reload({ waitUntil:'domcontentloaded' });
-  await page.waitForTimeout(2500);
+  // Wait for React hydration + initial graph fetch to complete
+  await page.waitForTimeout(4000);
 
   // Send one message so reasoning state populates
   const ta = page.locator('textarea').first();
