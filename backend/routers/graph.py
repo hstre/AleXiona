@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from models import GraphData, NodeUpdate, CounterfactualResult, HypothesisCounterfactualResult, Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend, _clamp_ess, _normalize_time_offset, _parse_offset_hours, AuditActor, MEDResult, ReasoningExplanation, HypothesisExplanation, ClaimContribution, GuidelineEvaluation, RiskScoreResponse, RiskScoreItem, ClinicalRoleView, RoleAlert, RoleViewSection
+from models import GraphData, NodeUpdate, CounterfactualResult, HypothesisCounterfactualResult, Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend, _clamp_ess, _normalize_time_offset, _parse_offset_hours, AuditActor, MEDResult, ReasoningExplanation, HypothesisExplanation, ClaimContribution, GuidelineEvaluation, RiskScoreResponse, RiskScoreItem, ClinicalRoleView, RoleAlert, RoleViewSection, ClinicalReport, ReportSection, GenerateReportRequest, ReportTypeDef, ReportSectionDef
 from pydantic import BaseModel, field_validator
 from typing import Optional
 from neo4j_client import get_db
@@ -11,6 +11,8 @@ from med_engine import compute_med
 from reasoning_engine import explain_hypothesis_scores
 from composite_scores import compute_all_scores
 from role_views import build_role_view, ROLE_ALIASES, SPECIALTY_KEYWORDS
+from report_engine import build_report_prompt, REPORT_TYPES
+from llm_client import generate_report as _generate_report
 
 
 class ManualClaimPayload(BaseModel):
@@ -317,6 +319,72 @@ async def get_reasoning_explanation(session_id: str):
             hypotheses=hypotheses,
             generated_at=datetime.now(timezone.utc).isoformat(),
         )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise internal_error(e)
+
+
+@router.get("/report-types", response_model=list[ReportTypeDef])
+async def list_report_types():
+    """Return all supported clinical report types with their section definitions."""
+    return [
+        ReportTypeDef(
+            key=k,
+            title=v["title"],
+            description=v["description"],
+            sections=[ReportSectionDef(**s) for s in v["sections"]],
+        )
+        for k, v in REPORT_TYPES.items()
+    ]
+
+
+@router.post("/{session_id}/report", response_model=ClinicalReport)
+async def create_report(session_id: str, body: GenerateReportRequest):
+    """
+    Generate a clinical report from the current claim graph.
+
+    Supported report types:
+      arztbrief    — Vollständiger Arztbrief (Anamnese, Befund, Diagnostik,
+                     Diagnosen, Verlauf, Therapie, Procedere)
+      entlassbrief — Kurzarztbrief / Entlassbrief
+      konsilbrief  — Konsiliarbrief (Fragestellung, Befund, Diagnosen,
+                     Beurteilung, Empfehlung)
+      befundbericht — Befundbericht (Material, Befund, Beurteilung)
+
+    The LLM generates structured prose for each section anchored to
+    the rule-based hypothesis scores, parsed lab values, and all active claims.
+    Optional patient_context (name, DOB, ward, etc.) is woven into the letter.
+    """
+    from datetime import datetime, timezone
+    rt = REPORT_TYPES.get(body.report_type)
+    if not rt:
+        raise validation_error(
+            f"Unknown report type '{body.report_type}'. "
+            f"Valid: {', '.join(REPORT_TYPES)}"
+        )
+    db = get_db()
+    try:
+        claims  = db.get_all_claims_for_session(session_id)
+        prompt  = build_report_prompt(body.report_type, claims, body.patient_context)
+        raw     = await _generate_report(prompt)
+
+        sections = []
+        for s in rt["sections"]:
+            text = raw.get(s["key"], "")
+            if not text and s["required"]:
+                text = "[nicht dokumentiert]"
+            sections.append(ReportSection(key=s["key"], title=s["title"], text=text))
+
+        return ClinicalReport(
+            session_id=session_id,
+            report_type=body.report_type,
+            title=rt["title"],
+            sections=sections,
+            generated_at=datetime.now(timezone.utc).isoformat(),
+        )
+    except ValueError as e:
+        raise validation_error(str(e))
     except HTTPException:
         raise
     except Exception as e:

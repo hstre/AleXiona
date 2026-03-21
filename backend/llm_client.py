@@ -927,3 +927,34 @@ async def stream_answer_with_context(
         delta = chunk.choices[0].delta.content or ""
         if delta:
             yield delta
+
+
+# ── Clinical Report Generation ─────────────────────────────────────────────────
+
+async def generate_report(prompt: str) -> dict[str, str]:
+    """
+    Call the LLM with a report-generation prompt and return parsed sections.
+
+    Args:
+        prompt: Full prompt from report_engine.build_report_prompt().
+
+    Returns:
+        Dict mapping section keys to generated prose strings.
+
+    Raises:
+        ValueError: LLM returned non-JSON or empty sections.
+    """
+    resp = await async_client.chat.completions.create(
+        model=MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.4,        # slightly higher than reasoning — narrative prose
+        response_format={"type": "json_object"},
+    )
+    raw = resp.choices[0].message.content or "{}"
+    try:
+        sections: dict = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Report LLM returned invalid JSON: {e}")
+    if not isinstance(sections, dict) or not sections:
+        raise ValueError("Report LLM returned empty response")
+    return {k: str(v) for k, v in sections.items()}

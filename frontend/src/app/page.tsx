@@ -15,6 +15,7 @@ import StatsPanel        from '@/components/StatsPanel'
 import EvidenceMatrix    from '@/components/EvidenceMatrix'
 import CounterfactualPanel from '@/components/CounterfactualPanel'
 import HandoverPanel     from '@/components/HandoverPanel'
+import ReportPanel      from '@/components/ReportPanel'
 import { getGraph, seedDemo, exportSession, explainConflict } from '@/lib/api'
 import type { GraphData, Claim, ClaimType, ReasoningResult, Conflict, GraphNode, DemoScenario } from '@/lib/api'
 import { SESSION_KEY, shortId, confPct, essLabel, CONFLICT_SEVERITY_META, CLAIM_TYPE_META } from '@/lib/utils'
@@ -41,7 +42,7 @@ export default function Home() {
   const [seeding,            setSeeding]            = useState(false)
   const [typeFilter,         setTypeFilter]         = useState<Set<ClaimType>>(new Set())
   const [focusClaimIds,      setFocusClaimIds]      = useState<string[]>([])
-  const [centerView,         setCenterView]         = useState<'graph' | 'timeline' | 'matrix' | 'counterfactual' | 'handover'>('graph')
+  const [centerView,         setCenterView]         = useState<'graph' | 'timeline' | 'matrix' | 'counterfactual' | 'handover' | 'report'>('graph')
   const [graphLayout,        setGraphLayout]        = useState<GraphLayout>('cose')
   const [fitTrigger,         setFitTrigger]         = useState(0)
   const [showShortcuts,      setShowShortcuts]      = useState(false)
@@ -780,6 +781,7 @@ export default function Home() {
                   ['matrix',          '⊞ Matrix'],
                   ['counterfactual',  '💡 What-If?'],
                   ['handover',        '📋 Übergabe'],
+                  ['report',          '📝 Bericht'],
                 ] as [typeof centerView, string][]).map(([v, label]) => (
                   <button key={v} onClick={() => setCenterView(v)}
                     className="px-2.5 py-1 rounded-md transition-all"
@@ -946,6 +948,13 @@ export default function Home() {
                 conflicts={conflicts}
                 sessionId={sessionId}
               />
+            </div>
+          )}
+
+          {/* Clinical Reports — Arztbrief, Entlassbrief, Konsilbrief, Befundbericht */}
+          {centerView === 'report' && sessionId && (
+            <div className="flex-1 overflow-hidden">
+              <ReportPanel sessionId={sessionId} />
             </div>
           )}
         </div>

@@ -508,6 +508,40 @@ class AuditTrailResponse(BaseModel):
     events:    list[AuditEvent]
 
 
+# ── Clinical Reports (Arztbrief, Entlassbrief, Konsilbrief, Befundbericht) ────
+
+class ReportSectionDef(BaseModel):
+    key:      str
+    title:    str
+    required: bool
+
+
+class ReportTypeDef(BaseModel):
+    key:         str
+    title:       str
+    description: str
+    sections:    list[ReportSectionDef]
+
+
+class ReportSection(BaseModel):
+    key:   str
+    title: str
+    text:  str   # LLM-generated narrative prose
+
+
+class GenerateReportRequest(BaseModel):
+    report_type:     str                    # "arztbrief" | "entlassbrief" | "konsilbrief" | "befundbericht"
+    patient_context: Optional[dict] = None  # e.g. {"name": "Max M.", "geburtsdatum": "1958-04-12"}
+
+
+class ClinicalReport(BaseModel):
+    session_id:   str
+    report_type:  str
+    title:        str
+    sections:     list[ReportSection]
+    generated_at: str
+
+
 # ── Role-Based Clinical Views ──────────────────────────────────────────────────
 
 class RoleAlert(BaseModel):
