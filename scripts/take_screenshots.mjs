@@ -1,6 +1,6 @@
 /**
  * Playwright screenshot script with API mocking
- * Captures all 7 AleXiona views with rich demo data
+ * Captures all AleXiona views with rich demo data — no backend required.
  */
 import { chromium } from '/opt/node22/lib/node_modules/playwright/index.mjs';
 import path from 'path';
@@ -11,15 +11,14 @@ const OUT_DIR   = path.join(__dirname, '..', 'docs', 'screenshots');
 const BASE_URL  = 'http://localhost:3000';
 const W = 1440, H = 860;
 
-// ── Rich mock data ────────────────────────────────────────────────────────────
-
 const SESSION_ID = 'demo-session-screenshot-001';
+
+// ── Mock data ─────────────────────────────────────────────────────────────────
 
 const MOCK_GRAPH = {
   nodes: [
-    // Claim nodes
-    { id:'c1', label:'Fever 38.9°C', type:'Claim', fullText:'Patient presents with fever of 38.9°C since 3 days', claimId:'c1', claim_type:'symptom', evidence_support_score:0.9, status:'active', source_type:'clinician', time_offset:'t=0', trend:'worsening' },
-    { id:'c2', label:'Dyspnea on exertion', type:'Claim', fullText:'Significant dyspnea on exertion, SpO2 91%', claimId:'c2', claim_type:'symptom', evidence_support_score:0.85, status:'active', source_type:'clinician', time_offset:'t=0', trend:'worsening' },
+    { id:'c1', label:'Fever 38.9°C', type:'Claim', fullText:'Patient presents with fever of 38.9°C since 3 days', claimId:'c1', claim_type:'symptom', evidence_support_score:0.9, status:'active', source_type:'clinician', time_offset:'t+0h', trend:'worsening' },
+    { id:'c2', label:'Dyspnea on exertion', type:'Claim', fullText:'Significant dyspnea on exertion, SpO2 91%', claimId:'c2', claim_type:'symptom', evidence_support_score:0.85, status:'active', source_type:'clinician', time_offset:'t+0h', trend:'worsening' },
     { id:'c3', label:'Leukocytes 16,400/µL', type:'Claim', fullText:'Elevated WBC count 16,400/µL (ref: 4–11k)', claimId:'c3', claim_type:'lab', evidence_support_score:0.95, status:'active', source_type:'lab_system', time_offset:'t+6h', trend:'stable' },
     { id:'c4', label:'CRP 142 mg/L', type:'Claim', fullText:'C-reactive protein elevated at 142 mg/L', claimId:'c4', claim_type:'lab', evidence_support_score:0.92, status:'active', source_type:'lab_system', time_offset:'t+6h', trend:'worsening' },
     { id:'c5', label:'CT: Right lower lobe infiltrate', type:'Claim', fullText:'CT chest: Consolidation right lower lobe consistent with pneumonia', claimId:'c5', claim_type:'imaging', evidence_support_score:0.99, status:'active', source_type:'imaging_model', time_offset:'t+8h', trend:'stable' },
@@ -27,7 +26,6 @@ const MOCK_GRAPH = {
     { id:'c7', label:'Pleural effusion small right', type:'Claim', fullText:'Small right-sided pleural effusion noted on CT', claimId:'c7', claim_type:'finding', evidence_support_score:0.78, status:'active', source_type:'imaging_model', time_offset:'t+8h', trend:'stable' },
     { id:'c8', label:'Amoxicillin/Clavulanate 875mg', type:'Claim', fullText:'Started Amoxicillin/Clavulanate 875mg BID', claimId:'c8', claim_type:'therapy', evidence_support_score:0.88, status:'active', source_type:'clinician', time_offset:'t+10h', trend:'stable' },
     { id:'c9', label:'D-Dimer elevated 2.1 µg/mL', type:'Claim', fullText:'D-Dimer 2.1 µg/mL — elevated, PE cannot be excluded', claimId:'c9', claim_type:'lab', evidence_support_score:0.72, status:'active', source_type:'lab_system', time_offset:'t+6h', trend:'stable' },
-    // Entity nodes
     { id:'e1', label:'Lung', type:'Entity' },
     { id:'e2', label:'Leukocytosis', type:'Entity' },
     { id:'e3', label:'Inflammation', type:'Entity' },
@@ -61,13 +59,12 @@ const MOCK_REASONING = {
     'Unilateral effusion may suggest parapneumonic or alternative diagnosis',
   ],
   missing_evidence: [
-    { test_or_type:'Troponin', description:'Elevated troponin would suggest cardiac involvement or PE-related strain', needed_for:'Differentiating CAP from PE or cardiac origin', differentiates_between:['Community-acquired Pneumonia', 'Pulmonary Embolism'] },
-    { test_or_type:'Blood cultures', description:'Not yet resulted — needed before antibiotic de-escalation', needed_for:'Pathogen identification and antibiogram', differentiates_between:['Community-acquired Pneumonia', 'Heart Failure decompensation'] },
+    { test_or_type:'Troponin', description:'Elevated troponin would suggest cardiac involvement or PE-related strain', needed_for:'Differentiating CAP from PE or cardiac origin', differentiates_between:['Community-acquired Pneumonia','Pulmonary Embolism'] },
+    { test_or_type:'Blood cultures', description:'Not yet resulted — needed before antibiotic de-escalation', needed_for:'Pathogen identification and antibiogram', differentiates_between:['Community-acquired Pneumonia','Heart Failure decompensation'] },
   ],
   focus_points: [
     'Differential diagnosis: CAP vs. Pulmonary Embolism',
     'Consider CT-PA if D-Dimer remains elevated',
-    'Monitor SpO2 — escalate if <90% on room air',
   ],
   alternatives: [
     { label:'Pulmonary Embolism', evidence_support_score:0.18, supporting_claim_ids:['c9','c2'] },
@@ -77,12 +74,40 @@ const MOCK_REASONING = {
 };
 
 const MOCK_CONFLICTS = [
-  {
-    id:'cf1', type:'competing_hypothesis', severity:'warning',
-    message:'Elevated D-Dimer conflicts with CAP as sole diagnosis — PE must be excluded',
-    affected_claim_ids:['c9','c6'],
-  },
+  { id:'cf1', type:'competing_hypothesis', severity:'warning', message:'Elevated D-Dimer (2.1 µg/mL) — PE must be excluded before CAP diagnosis is confirmed', affected_claim_ids:['c9','c6'] },
 ];
+
+const MOCK_ORCHESTRATOR = {
+  session_id: SESSION_ID,
+  leading_hypothesis: 'Community-acquired Pneumonia (CAP)',
+  orchestrated_score: 0.73,
+  status: 'confident',
+  why: "'Community-acquired Pneumonia (CAP)' führt mit einem Gesamtscore von 73% (Status: confident). 4 unterstützende Befunde liefern eine Evidenzstärke von 84%. Klinische Scores bestätigen die Richtung: CURB-65=HIGH. Leitlinienkriterien zu 80% erfüllt. 1 widersprüchlicher Befund reduziert die Konfidenz.",
+  key_conflicts: ['Elevated D-Dimer (2.1 µg/mL) — PE must be excluded before CAP diagnosis is confirmed'],
+  missing_critical: ['blood_cultures', 'troponin', 'procalcitonin'],
+  next_action: 'Diagnostik vervollständigen: Blood cultures (Blutkultur) — vor Antibiotikaeskalation erforderlich.',
+  score_breakdown: { evidence:0.336, guideline:0.200, composite:0.112, temporal:0.100, conflict:-0.040 },
+  alternatives: [
+    { text:'Pulmonary Embolism', score:0.18, composite_score_contribution:0.0 },
+    { text:'Heart Failure decompensation', score:0.09, composite_score_contribution:0.0 },
+  ],
+  generated_at: new Date().toISOString(),
+};
+
+const MOCK_REPORT = {
+  session_id: SESSION_ID,
+  report_type: 'arztbrief',
+  title: 'Ärztlicher Brief',
+  sections: [
+    { key:'anamnese',   title:'Anamnese',          text:'Der Patient stellte sich mit seit 3 Tagen bestehendem Fieber bis 38,9 °C sowie progredienter Belastungsdyspnoe vor. Begleitend bestand eine Sauerstoffsättigung von 91 % unter Raumluft. Eine vorbestehende kardiovaskuläre Erkrankung ist nicht bekannt.' },
+    { key:'befund',     title:'Klinischer Befund',  text:'Temperatur 38,9 °C, Herzfrequenz 98/min, Atemfrequenz 22/min, SpO₂ 91 % (Raumluft). Auskultatorisch abgeschwächtes Atemgeräusch rechts basal, kein Giemen.' },
+    { key:'diagnostik', title:'Diagnostik',          text:'Labor: Leukozyten 16.400/µL, CRP 142 mg/L, D-Dimer 2,1 µg/mL (erhöht). CT Thorax: Konsolidierung rechter Unterlappen, vereinbar mit Pneumonie; kleiner rechtsseitiger Pleuraerguss.' },
+    { key:'diagnosen',  title:'Diagnosen',            text:'Ambulant erworbene Pneumonie (CAP), rechter Unterlappen (CURB-65: 2 Punkte — intermediäres Risiko). Erhöhtes D-Dimer — Lungenembolie differenzialdiagnostisch zu bedenken.' },
+    { key:'therapie',   title:'Therapie',             text:'Amoxicillin/Clavulansäure 875 mg 2×tgl. oral. Sauerstoffsubstitution bei SpO₂ < 92 %. Engmaschige Vitalzeichenkontrolle.' },
+    { key:'procedere',  title:'Procedere / Empfehlungen', text:'Verlaufskontrolle CRP und Leukozyten nach 48 h. Bei persistierend erhöhtem D-Dimer CT-Pulmonalisangiographie. Blutkulturresultate abwarten vor Antibiotikaanpassung. Wiedervorstellung in 5–7 Tagen.' },
+  ],
+  generated_at: new Date().toISOString(),
+};
 
 const MOCK_HYPOTHESIS_CF = {
   hypothesis: 'Community-acquired Pneumonia (CAP)',
@@ -95,73 +120,51 @@ const MOCK_HYPOTHESIS_CF = {
   critical_evidence: [
     'CT chest: Consolidation right lower lobe consistent with pneumonia',
     'C-reactive protein elevated at 142 mg/L — key inflammatory marker',
-    'Elevated WBC 16,400/µL with left shift',
   ],
-  alternative_if_false: 'If CAP is excluded, Pulmonary Embolism becomes the leading hypothesis given elevated D-Dimer (2.1 µg/mL) and dyspnea with SpO2 91%',
-  reasoning_trace: 'The CT consolidation is the single most decisive finding — without it, the combination of D-Dimer elevation, tachycardia, and dyspnea would shift the probability strongly toward PE. Inflammatory markers (CRP, WBC) are supportive but non-specific.',
+  alternative_if_false: 'If CAP is excluded, Pulmonary Embolism becomes the leading hypothesis given elevated D-Dimer (2.1 µg/mL) and dyspnea with SpO2 91%.',
+  reasoning_trace: 'The CT consolidation is the single most decisive finding — without it, the D-Dimer elevation and dyspnea would shift probability strongly toward PE.',
 };
 
-// ── API route mock handlers ───────────────────────────────────────────────────
+// ── API route mocks ───────────────────────────────────────────────────────────
 
 async function setupMocks(page) {
-  // Counterfactual hypothesis — must be registered BEFORE the catch-all /graph/ route
-  await page.route('**/counterfactual/hypothesis', async route => {
-    await route.fulfill({ json: MOCK_HYPOTHESIS_CF });
-  });
-  await page.route('**/graph/**', async route => {
-    await route.fulfill({ json: MOCK_GRAPH });
-  });
-  await page.route('**/reasoning/**', async route => {
-    await route.fulfill({ json: MOCK_REASONING });
-  });
-  await page.route('**/conflicts/**', async route => {
-    await route.fulfill({ json: MOCK_CONFLICTS });
-  });
-  await page.route('**/seed_demo/**', async route => {
-    await route.fulfill({ json: { status: 'ok' } });
-  });
-  // Block streaming endpoint — return SSE with done event
-  await page.route('**/chat/**', async route => {
-    const body = `data: ${JSON.stringify({ type:'done', reply:'Demo mode — backend offline.', reasoning: MOCK_REASONING, conflicts: MOCK_CONFLICTS })}\n\ndata: [DONE]\n\n`;
-    await route.fulfill({
-      status: 200,
-      headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' },
-      body,
-    });
+  await page.route(`**/${SESSION_ID}/orchestrate`, r => r.fulfill({ json: MOCK_ORCHESTRATOR }));
+  await page.route(`**/${SESSION_ID}/report`,      r => r.fulfill({ json: MOCK_REPORT }));
+  await page.route('**/report-types',              r => r.fulfill({ json: [
+    { key:'arztbrief', title:'Arztbrief', description:'Vollständiger Arztbrief', sections:[
+      {key:'anamnese',title:'Anamnese',required:true},{key:'befund',title:'Klinischer Befund',required:true},
+      {key:'diagnostik',title:'Diagnostik',required:true},{key:'diagnosen',title:'Diagnosen',required:true},
+      {key:'therapie',title:'Therapie',required:true},{key:'procedere',title:'Procedere',required:true},
+    ]},
+  ]}));
+  await page.route('**/counterfactual/hypothesis', r => r.fulfill({ json: MOCK_HYPOTHESIS_CF }));
+  await page.route('**/conflicts/**',              r => r.fulfill({ json: MOCK_CONFLICTS }));
+  await page.route('**/reasoning/**',              r => r.fulfill({ json: MOCK_REASONING }));
+  await page.route(`**/${SESSION_ID}**`,           r => r.fulfill({ json: MOCK_GRAPH }));
+  await page.route('**/chat/**', async r => {
+    const body = `data: ${JSON.stringify({ type:'done', reply:'Demo', reasoning:MOCK_REASONING, conflicts:MOCK_CONFLICTS })}\n\ndata: [DONE]\n\n`;
+    await r.fulfill({ status:200, headers:{'content-type':'text/event-stream','cache-control':'no-cache'}, body });
   });
 }
 
-// ── Helper: inject state via window globals ───────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-async function injectAppState(page) {
-  // Set localStorage session
-  await page.evaluate((sid) => {
-    localStorage.setItem('alexiona_session', sid);
-  }, SESSION_ID);
-
-  // Patch fetch so /graph/ returns mock data even if not caught by route
-  await page.evaluate((graph) => {
-    const orig = window.fetch;
-    window.__mockGraph = graph;
-    window.fetch = async function(url, ...args) {
-      if (typeof url === 'string' && url.includes('/graph/')) {
-        return new Response(JSON.stringify(graph), { status:200, headers:{'content-type':'application/json'} });
-      }
-      return orig(url, ...args);
-    };
-  }, MOCK_GRAPH);
+async function injectSession(page) {
+  await page.evaluate(sid => localStorage.setItem('alexiona_session', sid), SESSION_ID);
 }
 
-// ── Screenshot helper ─────────────────────────────────────────────────────────
+async function clickTab(page, label) {
+  const btn = page.locator('button').filter({ hasText: label });
+  if (await btn.first().isVisible({ timeout: 3000 }).catch(() => false)) {
+    await btn.first().click();
+    await page.waitForTimeout(1200);
+  }
+}
 
 async function shot(page, filename) {
-  await page.waitForTimeout(900);
-  await page.screenshot({
-    path: path.join(OUT_DIR, filename),
-    type: 'png',
-    animations: 'disabled',
-  });
-  console.log(`✓  ${filename}`);
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: path.join(OUT_DIR, filename), type:'png', animations:'disabled' });
+  console.log(`  ✓ ${filename}`);
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
@@ -169,75 +172,75 @@ async function shot(page, filename) {
 (async () => {
   const browser = await chromium.launch({ headless: true });
   const ctx     = await browser.newContext({
-    viewport: { width: W, height: H },
+    viewport: { width:W, height:H },
     deviceScaleFactor: 2,
     colorScheme: 'light',
   });
   const page = await ctx.newPage();
-
-  // Register API mocks before navigation
   await setupMocks(page);
 
-  // Navigate
-  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await page.waitForTimeout(2000);
+  await page.goto(BASE_URL, { waitUntil:'domcontentloaded', timeout:60000 });
+  await page.waitForTimeout(2500);
+  await injectSession(page);
+  await page.reload({ waitUntil:'domcontentloaded' });
+  await page.waitForTimeout(2500);
 
-  // Inject mocked state into window / React state via re-fetching
-  await injectAppState(page);
-  await page.waitForTimeout(1500);
-
-  // Click "Refresh" to load the mocked graph
-  const refreshBtn = page.locator('button[title="Refresh"]');
-  if (await refreshBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-    await refreshBtn.click();
-    await page.waitForTimeout(2000);
+  // Send one message so reasoning state populates
+  const ta = page.locator('textarea').first();
+  if (await ta.isVisible({ timeout:2000 }).catch(() => false)) {
+    await ta.fill('Patient with fever, dyspnea, elevated WBC, CRP 142, CT right lobe infiltrate.');
+    await ta.press('Enter');
+    await page.waitForTimeout(2800);
   }
 
-  // ── Send a chat message so the mocked streaming endpoint returns reasoning ──
-  // This populates the reasoning state needed by the Matrix and ReviewPanel
-  const textarea = page.locator('textarea').first();
-  if (await textarea.isVisible({ timeout: 2000 }).catch(() => false)) {
-    await textarea.fill('Patient has fever, dyspnea, elevated WBC and right lobe infiltrate on CT.');
-    await page.waitForTimeout(300);
-    // Press Enter to send
-    await textarea.press('Enter');
-    // Wait for the streaming mock to respond and reasoning state to be set
-    await page.waitForTimeout(2500);
-  }
+  // ── 09: Clinical Orchestrator (new default view) ───────────────────────────
+  await clickTab(page, '◎ Zustand');
+  await shot(page, '09_orchestrator.png');
 
-  // ── 01: Graph view ──────────────────────────────────────────────────────
-  const graphTab = page.locator('button', { hasText: '◈ Graph' });
-  if (await graphTab.isVisible({ timeout: 2000 }).catch(() => false)) await graphTab.click();
+  // ── 01: Evidence Graph ─────────────────────────────────────────────────────
+  await clickTab(page, '◈ Graph');
   await shot(page, '01_graph_view.png');
 
-  // ── 02: Conflict banner (same view, banner should be visible) ──────────
+  // ── 02: Conflict banner (same view) ───────────────────────────────────────
   await shot(page, '02_conflict_banner.png');
 
-  // ── 03: Evidence matrix ─────────────────────────────────────────────────
-  const matBtn = page.locator('button', { hasText: '⊞ Matrix' });
-  if (await matBtn.isVisible({ timeout: 2000 }).catch(() => false)) await matBtn.click();
-  await shot(page, '03_evidence_matrix.png');
-
-  // ── 04: Counterfactual ──────────────────────────────────────────────────
-  const cfBtn = page.locator('button', { hasText: '💡 What-If?' });
-  if (await cfBtn.isVisible({ timeout: 2000 }).catch(() => false)) await cfBtn.click();
-  await shot(page, '04_counterfactual.png');
-
-  // ── 05: Handover ────────────────────────────────────────────────────────
-  const hBtn = page.locator('button', { hasText: '📋 Übergabe' });
-  if (await hBtn.isVisible({ timeout: 2000 }).catch(() => false)) await hBtn.click();
-  await shot(page, '05_handover.png');
-
-  // ── 06: Timeline ────────────────────────────────────────────────────────
-  const tlBtn = page.locator('button', { hasText: '⏱ Timeline' });
-  if (await tlBtn.isVisible({ timeout: 2000 }).catch(() => false)) await tlBtn.click();
-  await shot(page, '06_timeline.png');
-
-  // ── 07: Reasoning panel (back to graph) ─────────────────────────────────
-  const gTab = page.locator('button', { hasText: '◈ Graph' });
-  if (await gTab.isVisible({ timeout: 2000 }).catch(() => false)) await gTab.click();
+  // ── 07: Reasoning panel (graph + right panel visible) ────────────────────
   await shot(page, '07_reasoning_panel.png');
 
+  // ── 03: Evidence matrix ───────────────────────────────────────────────────
+  await clickTab(page, '⊞ Matrix');
+  await shot(page, '03_evidence_matrix.png');
+
+  // ── 04: Counterfactual ────────────────────────────────────────────────────
+  await clickTab(page, '💡 What-If?');
+  await shot(page, '04_counterfactual.png');
+
+  // ── 08: Hypothesis counterfactual (expand from review panel if visible) ───
+  await shot(page, '08_hypothesis_counterfactual.png');
+
+  // ── 05: Handover ──────────────────────────────────────────────────────────
+  await clickTab(page, '📋 Übergabe');
+  await shot(page, '05_handover.png');
+
+  // ── 06: Timeline ──────────────────────────────────────────────────────────
+  await clickTab(page, '⏱ Timeline');
+  await shot(page, '06_timeline.png');
+
+  // ── 10: Arztbrief / Report panel ──────────────────────────────────────────
+  await clickTab(page, '📝 Bericht');
+  await page.waitForTimeout(600);
+  // Click "Bericht erstellen" button to load the mock report
+  const genBtn = page.locator('button').filter({ hasText: 'Bericht erstellen' });
+  if (await genBtn.isVisible({ timeout:2000 }).catch(() => false)) {
+    await genBtn.click();
+    await page.waitForTimeout(1500);
+  }
+  await shot(page, '10_report.png');
+
+  // ── 11: Back to Orchestrator with score breakdown visible ─────────────────
+  await clickTab(page, '◎ Zustand');
+  await shot(page, '11_priority.png');
+
   await browser.close();
-  console.log('\n✅  All screenshots saved to docs/screenshots/');
+  console.log('\n✅  Screenshots saved to docs/screenshots/');
 })();
