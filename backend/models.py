@@ -57,6 +57,8 @@ class SourceType(str, Enum):
 
 class ClaimStatus(str, Enum):
     active     = "active"
+    confirmed  = "confirmed"    # clinician explicitly confirmed — boosts source_weight
+    refuted    = "refuted"      # clinician explicitly excluded — hard removes from ranking
     resolved   = "resolved"
     superseded = "superseded"
 

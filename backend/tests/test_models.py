@@ -23,7 +23,9 @@ class TestEnums:
         assert {e.value for e in SourceType} == expected
 
     def test_claim_status_values(self):
-        assert {e.value for e in ClaimStatus} == {"active", "resolved", "superseded"}
+        assert {e.value for e in ClaimStatus} == {
+            "active", "confirmed", "refuted", "resolved", "superseded"
+        }
 
     def test_claim_trend_values(self):
         assert {e.value for e in ClaimTrend} == {"improving", "worsening", "stable", "unknown"}

@@ -14,6 +14,8 @@ Only `derived_from` carries epistemic weight for conflict rules.
 import re
 from datetime import datetime, timezone
 from typing import TypedDict
+from lab_parser import parse_lab_value, qualitative_for_token, lab_summary, LAB_THRESHOLDS
+from composite_scores import compute_relevant_scores
 
 _KEY_TERM_RE = re.compile(r'\b[a-zA-ZäöüÄÖÜß]{4,}\b')
 _NEGATION_RE = re.compile(
@@ -29,8 +31,12 @@ _LOW_RE = re.compile(
     re.IGNORECASE,
 )
 
-_EVIDENCE_TYPES = {"finding", "lab", "imaging", "symptom"}
-_LEAD_TYPES     = {"diagnosis", "hypothesis"}
+_EVIDENCE_TYPES  = {"finding", "lab", "imaging", "symptom"}
+_LEAD_TYPES      = {"diagnosis", "hypothesis"}
+_ACTIVE_STATUSES = {"active", "confirmed"}   # both count as "present" in scoring
+
+# Source-weight boost applied to evidence claims with status="confirmed"
+_CONFIRMED_BOOST = 1.5
 
 # ── Hypothesis alias map ──────────────────────────────────────────────────────
 # Maps canonical guideline keys to common synonyms/abbreviations.
@@ -79,6 +85,16 @@ _DEFAULT_PENALTY      = 1.0
 # ── Hard-stop thresholds ──────────────────────────────────────────────────────
 _MIN_SUPPORT_SCORE = 0.2   # below this → insufficient evidence
 _MAX_CONFLICT_IDS  = 3     # at or above this count → insufficient evidence
+
+# ── Temporal decay ─────────────────────────────────────────────────────────────
+# Evidence loses relevance over time.  Each claim type has a "half-life" in hours:
+# after that many hours the weight is 0.5; it is clamped to a floor of 0.25.
+_TEMPORAL_HALF_LIFE_H: dict[str, float] = {
+    "lab":     12.0,   # lab values: short half-life (results change quickly)
+    "finding": 48.0,   # clinical findings: moderate
+    "symptom": 72.0,   # symptoms: slower to change
+    "imaging": 96.0,   # imaging: stable longer
+}
 
 # ── Guideline layer ───────────────────────────────────────────────────────────
 # Maps normalised diagnosis/hypothesis labels to required and supporting
@@ -155,6 +171,30 @@ def _overlap_weight(overlap_count: int) -> float:
     return min(0.8, 0.2 * overlap_count)
 
 
+def _parse_offset_hours(time_offset) -> float | None:
+    """Extract numeric hours from a time_offset string like 't+6h' or '24h'."""
+    if not time_offset:
+        return None
+    m = re.match(r'^(?:t\+)?(\d+(?:\.\d+)?)h?$', str(time_offset).strip(), re.IGNORECASE)
+    return float(m.group(1)) if m else None
+
+
+def _temporal_weight(claim: dict) -> float:
+    """Return a [0.25, 1.0] decay multiplier based on claim age and type.
+
+    Uses exponential half-life decay:  w = 0.5 ** (hours / half_life)
+    Clamped to a floor of 0.25 so old evidence is down-weighted but never
+    completely ignored.
+    """
+    hours = _parse_offset_hours(claim.get("time_offset"))
+    if hours is None:
+        return 1.0  # no time info → no decay
+    claim_type = claim.get("claim_type", "finding")
+    half_life  = _TEMPORAL_HALF_LIFE_H.get(claim_type, 48.0)
+    weight = 0.5 ** (hours / half_life)
+    return max(0.25, weight)
+
+
 def _source_weight(source_type: str) -> float:
     """Return the epistemic multiplier for a given source_type."""
     return _SOURCE_WEIGHTS.get(source_type, 1.0)
@@ -218,7 +258,8 @@ def score_hypothesis(hypothesis: dict, all_claims: list[dict]) -> HypothesisScor
     for c in all_claims:
         if c["id"] == hypothesis.get("id"):
             continue
-        if c.get("status") != "active":
+        c_status = c.get("status", "active")
+        if c_status not in _ACTIVE_STATUSES:
             continue
         if c.get("claim_type") not in _EVIDENCE_TYPES:
             continue
@@ -246,8 +287,10 @@ def score_hypothesis(hypothesis: dict, all_claims: list[dict]) -> HypothesisScor
             conflict_total += _conflict_penalty(c["text"])
             conflicting_ids.append(c["id"])
         else:
-            src_w = _source_weight(c.get("source_type", "llm"))
-            support_score += ess * weight * src_w
+            src_w      = _source_weight(c.get("source_type", "llm"))
+            t_w        = _temporal_weight(c)
+            confirm_w  = _CONFIRMED_BOOST if c_status == "confirmed" else 1.0
+            support_score += ess * weight * src_w * t_w * confirm_w
             supporting_ids.append(c["id"])
 
     raw   = support_score - conflict_total
@@ -267,10 +310,12 @@ def rank_hypotheses(all_claims: list[dict]) -> list[HypothesisScore]:
     """
     Score and rank all hypothesis/diagnosis claims in the claim set.
     Returns list sorted by rule_based_score descending.
+    Hypotheses with status="refuted" are hard-excluded from the ranking.
     """
     hypotheses = [
         c for c in all_claims
-        if c.get("claim_type") in _LEAD_TYPES and c.get("status") == "active"
+        if c.get("claim_type") in _LEAD_TYPES
+        and c.get("status") in _ACTIVE_STATUSES  # refuted → hard excluded
     ]
     scored = [score_hypothesis(h, all_claims) for h in hypotheses]
     return sorted(scored, key=lambda x: x["rule_based_score"], reverse=True)
@@ -368,20 +413,56 @@ def required_evidence_for(hypothesis: str) -> list[str]:
 
 
 def _term_present_in_claims(term: str, claims: list[dict]) -> bool:
-    """True if *term* appears non-negated in any active evidence claim text."""
+    """True if *term* appears non-negated in any active evidence claim text.
+
+    For terms that correspond to a known lab token (e.g. "crp", "troponin"),
+    the function also considers whether a parsed numeric value confirms the
+    expected qualitative direction (high/low).  A claim saying "CRP 145 mg/L"
+    matches the guideline term "crp" even without the word "elevated".
+    """
     t_lower = term.lower()
+
+    # Check if the term maps to a known lab token with a quantitative threshold.
+    # This lets "CRP 145 mg/L" match the guideline term "crp" or "crp elevated".
+    lab_token: Optional[str] = None
+    for token, spec in LAB_THRESHOLDS.items():
+        if t_lower in spec["aliases"] or token == t_lower:
+            lab_token = token
+            break
+
     for c in claims:
-        if c.get("status") != "active" or c.get("claim_type") not in _EVIDENCE_TYPES:
+        if c.get("status") not in _ACTIVE_STATUSES or c.get("claim_type") not in _EVIDENCE_TYPES:
             continue
         text = c["text"].lower()
-        idx  = text.find(t_lower)
+
+        # Quantitative lab match: "CRP 145 mg/L" confirms "crp"/"crp elevated"
+        if lab_token:
+            parsed = parse_lab_value(c["text"])
+            if parsed and parsed.token == lab_token:
+                # Only count as "present" if the value is in the expected direction.
+                # "elevated" or bare token name → requires high; "low" → requires low.
+                needs_high = any(w in t_lower for w in ("elevated", "high", "erhöht", "angestiegen"))
+                needs_low  = any(w in t_lower for w in ("low", "normal", "niedrig", "erniedrigt"))
+                if needs_high and parsed.qualitative == "high":
+                    return True
+                if needs_low and parsed.qualitative in ("low", "normal"):
+                    return True
+                if not needs_high and not needs_low:
+                    # bare token — any non-negated numeric match qualifies
+                    return True
+
+        # Text substring match with negation guard
+        idx = text.find(t_lower)
         if idx == -1:
             continue
-        # Check the 25-char window before the term for negation words
         context_before = text[max(0, idx - 25):idx]
         if not _NEGATION_RE.search(context_before):
             return True
     return False
+
+
+# Type alias for Optional used in _term_present_in_claims above
+from typing import Optional  # noqa: E402 (already imported implicitly via TypedDict)
 
 
 def evaluate_guideline(hypothesis_text: str, all_claims: list[dict]) -> dict:
@@ -458,10 +539,11 @@ def guideline_score(hypothesis_text: str, all_claims: list[dict]) -> float:
 
 
 def evaluate_all_guidelines(all_claims: list[dict]) -> dict[str, dict]:
-    """Evaluate guideline criteria for every active hypothesis/diagnosis claim."""
+    """Evaluate guideline criteria for every active/confirmed hypothesis/diagnosis claim."""
     hypotheses = [
         c for c in all_claims
-        if c.get("claim_type") in _LEAD_TYPES and c.get("status") == "active"
+        if c.get("claim_type") in _LEAD_TYPES
+        and c.get("status") in _ACTIVE_STATUSES
     ]
     return {h["text"]: evaluate_guideline(h["text"], all_claims) for h in hypotheses}
 
@@ -560,7 +642,8 @@ def build_case_snapshot(all_claims: list[dict]) -> dict:
 def build_reasoning_context(all_claims: list[dict]) -> str:
     """
     Build a structured context string for the LLM reasoning prompt that includes
-    rule-based hypothesis scores and guideline evaluations as anchor points.
+    rule-based hypothesis scores, guideline evaluations, composite clinical scores,
+    and a parsed lab summary as anchor points.
     """
     ranked     = rank_hypotheses(all_claims)
     confidence = get_confident_leading(ranked)
@@ -585,6 +668,31 @@ def build_reasoning_context(all_claims: list[dict]) -> str:
             if g.get("missing_priority"):
                 top_missing = prioritize_missing(g)[:3]
                 lines.append(f"    missing: {', '.join(top_missing)}")
+        lines.append("")
+
+    # Composite clinical scores
+    composite = compute_relevant_scores(all_claims)
+    if composite:
+        lines.append("=== COMPOSITE CLINICAL SCORES ===")
+        for cs in composite:
+            met_str = "; ".join(cs.criteria_met) if cs.criteria_met else "none"
+            lines.append(
+                f"  {cs.name}: {cs.score}  → {cs.interpretation.upper()} RISK"
+                f"  (criteria: {met_str})"
+            )
+            if cs.criteria_missing:
+                lines.append(f"    undetermined: {', '.join(cs.criteria_missing)}")
+        lines.append("")
+
+    # Parsed lab values summary
+    labs = lab_summary(all_claims)
+    if labs:
+        lines.append("=== PARSED LAB VALUES ===")
+        for token, r in sorted(labs.items()):
+            lines.append(
+                f"  {token}: {r.value} {r.unit}  [{r.qualitative.upper()}]"
+                + (f"  — {r.clinical_note}" if r.clinical_note else "")
+            )
         lines.append("")
 
     lines.append("=== ALL CLAIMS ===")
