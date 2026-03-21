@@ -34,12 +34,26 @@ For each claim extract:
 - relations: directed relationships between entities
 - evidence_support_score: 0.0–1.0 (how strongly the input text supports this claim — NOT a diagnostic probability)
 - claim_type: one of symptom | finding | lab | imaging | hypothesis | diagnosis | therapy | risk_factor | guideline
-- source_type: one of clinician | llm | guideline | imaging_model | lab_system | imported_document
-- source_ref: document or test name if mentioned, else ""
+- source_type: one of the following (choose the most specific):
+    Clinical sources: clinician | llm | guideline | imaging_model | lab_system | imported_document
+    Patient-generated sources (lower epistemic weight — these feed a separate normalization layer):
+      patient_report   — patient verbal/written self-report or anamnesis
+      wearable         — smartwatch, fitness tracker, CGM reading
+      home_device      — home BP cuff, pulse oximeter, thermometer
+      caregiver_report — information from family member or informal carer
+- source_ref: document, device name, or test name if mentioned, else ""
+- evidence_tier: one of patient_generated | clinician_observed | instrument_measured | lab_confirmed | guideline_structured
+    Derive from source_type if not explicit:
+      patient_report / wearable / home_device / caregiver_report → patient_generated
+      clinician / llm / imported_document → clinician_observed
+      imaging_model → instrument_measured
+      lab_system → lab_confirmed
+      guideline → guideline_structured
 - status: one of observed | inferred | active | resolved | superseded
   Use "observed" for directly measured/witnessed findings (vitals, lab results, exam findings).
   Use "inferred" for conclusions drawn from other findings (suspected diagnosis, likely cause).
   Use "active" when the distinction is unclear.
+  NOTE: patient-generated claims must NOT use status "confirmed" — use "observed" or "inferred".
 - time_offset: string like "t+0h", "t+6h", "t+24h" if relative time mentioned, else null
 - event_time: ISO 8601 datetime string if an absolute time is mentioned ("at 14:20", "yesterday at noon"), else null.
   Use today's date as reference if needed.
@@ -61,6 +75,7 @@ Respond ONLY with valid JSON:
       "claim_type": "finding",
       "source_type": "clinician",
       "source_ref": "",
+      "evidence_tier": "clinician_observed",
       "status": "observed",
       "time_offset": null,
       "event_time": null,
@@ -261,6 +276,7 @@ def extract_claims(text: str) -> ClaimExtractionResult:
                 uncertainty_flag=bool(enriched.get("uncertainty_flag", False)),
                 assumptions=enriched.get("assumptions", []),
                 normalized_token=enriched.get("normalized_token"),
+                evidence_tier=enriched.get("evidence_tier"),
             ))
         except (ValidationError, KeyError, TypeError) as e:
             log.warning("Skipping malformed claim from LLM: %s — %s", c, e)

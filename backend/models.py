@@ -48,12 +48,48 @@ class ClaimType(str, Enum):
 
 
 class SourceType(str, Enum):
+    # ── Clinical / institutional sources ─────────────────────────────────────
     clinician          = "clinician"
     llm                = "llm"
     guideline          = "guideline"
     imaging_model      = "imaging_model"
     lab_system         = "lab_system"
     imported_document  = "imported_document"
+    # ── Patient-generated sources (own epistemic layer) ───────────────────────
+    patient_report     = "patient_report"    # verbal/written self-report, anamnesis
+    wearable           = "wearable"          # smartwatch, fitness tracker, CGM
+    home_device        = "home_device"       # home BP cuff, pulse oximeter, thermometer
+    caregiver_report   = "caregiver_report"  # family member or informal carer
+
+
+class EvidenceTier(str, Enum):
+    """Epistemic quality tier — derived from source_type but can be set explicitly.
+
+    Drives differential weighting in scoring and prevents patient-generated data
+    from being silently treated as clinical-grade evidence.
+    """
+    patient_generated   = "patient_generated"    # self-report, wearable, home device
+    clinician_observed  = "clinician_observed"   # bedside examination, clinical note
+    instrument_measured = "instrument_measured"  # validated medical device (in-hospital)
+    lab_confirmed       = "lab_confirmed"        # laboratory / lab_system result
+    guideline_structured = "guideline_structured"  # evidence-based guideline
+
+
+def source_to_evidence_tier(source_type: str) -> EvidenceTier:
+    """Derive the EvidenceTier from a SourceType value."""
+    mapping = {
+        "patient_report":   EvidenceTier.patient_generated,
+        "wearable":         EvidenceTier.patient_generated,
+        "home_device":      EvidenceTier.patient_generated,
+        "caregiver_report": EvidenceTier.patient_generated,
+        "clinician":        EvidenceTier.clinician_observed,
+        "imported_document": EvidenceTier.clinician_observed,
+        "llm":              EvidenceTier.clinician_observed,
+        "imaging_model":    EvidenceTier.instrument_measured,
+        "lab_system":       EvidenceTier.lab_confirmed,
+        "guideline":        EvidenceTier.guideline_structured,
+    }
+    return mapping.get(source_type, EvidenceTier.clinician_observed)
 
 
 class ClaimStatus(str, Enum):
@@ -126,6 +162,10 @@ class Claim(BaseModel):
     assumptions:            list[str]            = []     # stated assumptions behind this claim
     normalized_token:       Optional[str]        = None   # canonical lab token (e.g. "crp")
 
+    # ── Patient data layer ───────────────────────────────────────────────────
+    evidence_tier:          Optional[str]        = None   # EvidenceTier value; None = derive from source_type
+    patient_data_ref:       Optional[str]        = None   # ID of originating PatientObservation or PGM
+
 
 class ClaimExtractionResult(BaseModel):
     claims: list[Claim]
@@ -165,6 +205,75 @@ class ClaimCandidate(BaseModel):
     qualitative:       Optional[str]   = None  # "high" | "low" | "normal"
     event_time_iso:    Optional[str]   = None  # ISO 8601 datetime if resolved
     confidence:        float           = 0.5
+
+
+# ── Patient Data Layer ────────────────────────────────────────────────────────
+# Separate epistemic layer for patient-generated inputs.
+# These objects NEVER directly become ClinicalClaims — they flow through
+# normalization (patient_data.py) to produce ClaimCandidates first.
+
+class PatientObservation(BaseModel):
+    """Subjective observation from the patient or caregiver (Layer 1).
+
+    Examples: "chest pain when climbing stairs", "dizzy since yesterday morning"
+    """
+    id:              str
+    raw_text:        str
+    source_type:     str                  = "patient_report"  # patient_report | caregiver_report
+    event_time:      Optional[datetime]   = None
+    assertion_time:  Optional[datetime]   = None
+    body_location:   Optional[str]        = None   # "chest", "left arm", ...
+    onset_hint:      Optional[str]        = None   # "since 3 days", "yesterday morning"
+    severity_hint:   Optional[str]        = None   # "mild", "severe", "10/10"
+    negation_hint:   bool                 = False   # "no pain", "no fever"
+    uncertainty_hint: bool                = False   # "I think", "maybe"
+    # Derived after normalization
+    candidate_ids:   list[str]            = []      # ClaimCandidate IDs produced from this
+
+
+class PatientGeneratedMeasurement(BaseModel):
+    """A single device measurement from a home device or wearable (Layer 2).
+
+    Examples: SpO2 91% from pulse oximeter, HR 130 from Apple Watch, BP 145/90
+    """
+    id:              str
+    device_type:     str               # "wearable" | "home_device"
+    device_name:     Optional[str]  = None   # "Apple Watch Series 9", "Omron BP cuff"
+    token:           str               # canonical lab token: "spo2", "heart_rate", "systolic_bp"
+    value:           float
+    unit:            str
+    qualitative:     Optional[str]  = None   # "high" | "low" | "normal" (derived from thresholds)
+    event_time:      Optional[datetime]  = None
+    assertion_time:  Optional[datetime]  = None
+    # Quality metadata
+    measurement_quality: Optional[str]  = None   # "good" | "medium" | "poor" | "unknown"
+    session_duration_s:  Optional[int]  = None   # for wearables: how long was this measured
+    # Derived
+    candidate_id:    Optional[str]   = None   # ClaimCandidate ID produced from this
+
+
+class TrendPoint(BaseModel):
+    """A single data point in a time series for trend detection."""
+    timestamp:  datetime
+    value:      float
+
+
+class TrendSignal(BaseModel):
+    """An extracted trend from a series of PatientGeneratedMeasurements (Layer 2→3).
+
+    Examples: "heart rate +18% over 72h", "SpO2 declining for 3 days"
+    """
+    id:            str
+    token:         str               # canonical lab token
+    direction:     str               # "rising" | "falling" | "stable" | "volatile"
+    magnitude_pct: float             # percent change over the window
+    window_hours:  float             # time window of the trend
+    start_value:   float
+    end_value:     float
+    n_points:      int               # number of measurements in window
+    clinical_flag: Optional[str]  = None  # "tachycardia_trend", "hypoxia_trend", ...
+    # Derived
+    candidate_id:  Optional[str]  = None
 
 
 # ── Analysis / Reasoning ─────────────────────────────────────────────────────
@@ -280,6 +389,7 @@ class NodeUpdate(BaseModel):
     uncertainty_flag:       Optional[bool]        = None
     supersedes_claim_id:    Optional[str]         = None
     valid_until:            Optional[datetime]    = None
+    evidence_tier:          Optional[str]         = None
 
     @field_validator('evidence_support_score', mode='before')
     @classmethod

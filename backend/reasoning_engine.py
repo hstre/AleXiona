@@ -66,16 +66,27 @@ HYPOTHESIS_ALIASES: dict[str, list[str]] = {
 }
 
 # ── Source-type weights ───────────────────────────────────────────────────────
-# Guideline- and lab-system-sourced claims carry more epistemic authority;
-# LLM-generated claims are down-weighted until confirmed by a clinician.
+# Epistemic authority hierarchy.  Patient-generated sources are weighted lower
+# than clinical instruments — not because they are less valuable as signals, but
+# because their error profiles differ and they must not be treated as
+# clinical-grade evidence without normalization.
 _SOURCE_WEIGHTS: dict[str, float] = {
+    # Clinical / institutional
     "guideline":         2.0,
     "lab_system":        1.5,
     "clinician":         1.2,
     "imaging_model":     1.0,
     "imported_document": 1.0,
     "llm":               0.5,
+    # Patient-generated (own epistemic tier)
+    "wearable":          0.7,
+    "home_device":       0.6,
+    "caregiver_report":  0.5,
+    "patient_report":    0.4,
 }
+
+# Patient-generated source types — subject to extra safeguards in scoring
+_PATIENT_SOURCES = {"patient_report", "wearable", "home_device", "caregiver_report"}
 
 # ── Conflict-penalty weights ──────────────────────────────────────────────────
 # Contradiction severity drives the penalty deducted from the hypothesis score.
@@ -318,10 +329,18 @@ def score_hypothesis(hypothesis: dict, all_claims: list[dict]) -> HypothesisScor
             conflict_total += _conflict_penalty(c["text"])
             conflicting_ids.append(c["id"])
         else:
-            src_w      = _source_weight(c.get("source_type", "llm"))
-            t_w        = _temporal_weight(c)
-            confirm_w  = _CONFIRMED_BOOST if c_status == "confirmed" else 1.0
-            support_score += ess * weight * src_w * t_w * confirm_w
+            src_type = c.get("source_type", "llm")
+            src_w    = _source_weight(src_type)
+            t_w      = _temporal_weight(c)
+            # Safeguard: patient-generated evidence never receives the confirmed boost
+            # (1.0 instead of 1.5); and is halved when supporting a diagnosis-type
+            # hypothesis — patient data can contribute at symptom/finding level, but
+            # should not directly confirm a clinical diagnosis.
+            is_patient    = src_type in _PATIENT_SOURCES
+            is_diagnosis  = hypothesis.get("claim_type") == "diagnosis"
+            confirm_w     = 1.0 if is_patient else (_CONFIRMED_BOOST if c_status == "confirmed" else 1.0)
+            patient_diag_w = 0.5 if (is_patient and is_diagnosis) else 1.0
+            support_score += ess * weight * src_w * t_w * confirm_w * patient_diag_w
             supporting_ids.append(c["id"])
 
     raw   = support_score - conflict_total

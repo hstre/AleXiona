@@ -18,8 +18,12 @@ class TestEnums:
         assert {e.value for e in ClaimType} == expected
 
     def test_source_type_values(self):
-        expected = {"clinician", "llm", "guideline", "imaging_model",
-                    "lab_system", "imported_document"}
+        expected = {
+            "clinician", "llm", "guideline", "imaging_model",
+            "lab_system", "imported_document",
+            # Patient-generated sources (Phase 7)
+            "patient_report", "wearable", "home_device", "caregiver_report",
+        }
         assert {e.value for e in SourceType} == expected
 
     def test_claim_status_values(self):
