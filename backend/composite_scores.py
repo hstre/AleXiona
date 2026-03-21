@@ -16,7 +16,7 @@ Each scorer returns a CompositeScore containing:
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from lab_parser import qualitative_for_token, parse_lab_value
+from lab_parser import qualitative_for_token
 
 
 @dataclass
@@ -401,7 +401,7 @@ def compute_heart(all_claims: list[dict]) -> CompositeScore:
                                                "coronary artery disease", "percutaneous",
                                                "bypass", "stent"])
     if risk_count >= 3 or known_cad:
-        criteria_met.append(f"R: ≥3 risk factors or known atherosclerosis (+2)")
+        criteria_met.append("R: ≥3 risk factors or known atherosclerosis (+2)")
         points += 2
     elif risk_count >= 1:
         criteria_met.append(f"R: {risk_count} risk factor(s) (+1)")

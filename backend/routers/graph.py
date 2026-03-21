@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
-from models import GraphData, NodeUpdate, CounterfactualResult, HypothesisCounterfactualResult, Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend, _clamp_ess, _normalize_time_offset, _parse_offset_hours, AuditActor, MEDResult, ReasoningExplanation, HypothesisExplanation, ClaimContribution, GuidelineEvaluation, RiskScoreResponse, RiskScoreItem, ClinicalRoleView, RoleAlert, RoleViewSection, ClinicalReport, ReportSection, GenerateReportRequest, ReportTypeDef, ReportSectionDef, PriorityExplanation, PriorityFactor, OrchestratorState, OrchestratorScoreBreakdown, OrchestratorAlternative
-from clinical_orchestrator import orchestrate, WEIGHT_EVIDENCE, WEIGHT_GUIDELINE, WEIGHT_COMPOSITE, WEIGHT_TEMPORAL, WEIGHT_CONFLICT
+from models import GraphData, NodeUpdate, CounterfactualResult, HypothesisCounterfactualResult, Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend, _normalize_time_offset, _parse_offset_hours, AuditActor, MEDResult, ReasoningExplanation, HypothesisExplanation, ClaimContribution, GuidelineEvaluation, RiskScoreResponse, RiskScoreItem, ClinicalRoleView, RoleAlert, RoleViewSection, ClinicalReport, ReportSection, GenerateReportRequest, ReportTypeDef, ReportSectionDef, PriorityExplanation, PriorityFactor, OrchestratorState, OrchestratorScoreBreakdown, OrchestratorAlternative
+from clinical_orchestrator import orchestrate
 from pydantic import BaseModel, field_validator
 from typing import Optional
 from neo4j_client import get_db
@@ -11,7 +11,7 @@ from audit_log import log_created_batch, log_updated, log_deleted
 from med_engine import compute_med
 from reasoning_engine import explain_hypothesis_scores, build_priority_explanation
 from composite_scores import compute_all_scores
-from role_views import build_role_view, ROLE_ALIASES, SPECIALTY_KEYWORDS
+from role_views import build_role_view
 from report_engine import build_report_prompt, REPORT_TYPES
 from llm_client import generate_report as _generate_report
 

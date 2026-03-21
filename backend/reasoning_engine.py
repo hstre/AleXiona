@@ -14,7 +14,7 @@ Only `derived_from` carries epistemic weight for conflict rules.
 import re
 from datetime import datetime, timezone
 from typing import TypedDict
-from lab_parser import parse_lab_value, qualitative_for_token, lab_summary, LAB_THRESHOLDS
+from lab_parser import parse_lab_value, lab_summary, LAB_THRESHOLDS
 from composite_scores import compute_relevant_scores, compute_all_scores, score_keywords_for
 
 _KEY_TERM_RE = re.compile(r'\b[a-zA-ZäöüÄÖÜß]{4,}\b')

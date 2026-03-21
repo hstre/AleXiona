@@ -33,6 +33,7 @@ function makeClaim(overrides: Partial<Claim> = {}): Claim {
     source_type:            'lab_system',
     source_ref:             'LAB-001',
     derived_from:           [],
+    related_to:             [],
     status:                 'active',
     time_offset:            't+2h',
     trend:                  'worsening',

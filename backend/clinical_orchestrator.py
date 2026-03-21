@@ -25,12 +25,10 @@ Weighting rationale
 from __future__ import annotations
 from datetime import datetime, timezone
 from reasoning_engine import (
-    score_hypothesis,
     rank_hypotheses,
     evaluate_all_guidelines,
     guideline_score,
     _temporal_weight,                       # internal — same package
-    _ACTIVE_STATUSES,
     _composite_boost_for_hypothesis,
     _COMPOSITE_BOOST_CAP,
 )
