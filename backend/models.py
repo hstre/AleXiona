@@ -11,7 +11,10 @@ _TIME_RE = re.compile(r'^(?:t\+)?(\d+(?:\.\d+)?)h?$', re.IGNORECASE)
 def _clamp_ess(v: float | None) -> float | None:
     if v is None:
         return v
-    return max(0.0, min(1.0, v))
+    try:
+        return max(0.0, min(1.0, float(v)))
+    except (TypeError, ValueError):
+        return 0.8  # safe default rather than a 500
 
 
 def _normalize_time_offset(v: str | None) -> str | None:
