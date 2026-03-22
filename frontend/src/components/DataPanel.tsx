@@ -44,6 +44,7 @@ export default function DataPanel({
   const [bulkType,      setBulkType]      = useState<ClaimType>('finding')
   const [bulkAction,    setBulkAction]    = useState<'status' | 'type'>('status')
   const [bulkWorking,   setBulkWorking]   = useState(false)
+  const [apiError,      setApiError]      = useState<string | null>(null)
 
   // Reset selection when filter changes
   useEffect(() => { setSelected(new Set()) }, [filter])
@@ -103,8 +104,12 @@ export default function DataPanel({
 
   const handleStatusToggle = async (claim: Claim, newStatus: ClaimStatus) => {
     if (!claim.claimId) return
-    await patchClaim(claim.claimId, { status: newStatus })
-    onNewClaims()
+    try {
+      await patchClaim(claim.claimId, { status: newStatus })
+      onNewClaims()
+    } catch (err) {
+      setApiError(err instanceof Error ? err.message : 'Status update failed')
+    }
   }
 
   const toggleSelect = (id: string) => {
@@ -159,6 +164,8 @@ export default function DataPanel({
       }
       setSelected(new Set())
       onNewClaims()
+    } catch (err) {
+      setApiError(err instanceof Error ? err.message : 'Bulk update failed')
     } finally {
       setBulkWorking(false)
     }
@@ -171,6 +178,8 @@ export default function DataPanel({
       await batchDelete(Array.from(selected))
       setSelected(new Set())
       onNewClaims()
+    } catch (err) {
+      setApiError(err instanceof Error ? err.message : 'Delete failed')
     } finally {
       setBulkWorking(false)
     }
@@ -180,6 +189,14 @@ export default function DataPanel({
 
   return (
     <div className="flex flex-col h-full">
+      {/* API error banner */}
+      {apiError && (
+        <div className="mx-3 mt-2 px-3 py-2 rounded-md text-xs flex items-start gap-2 shrink-0"
+          style={{ background: '#fef2f2', color: '#dc2626', border: '1px solid #fca5a5' }}>
+          <span className="flex-1">{apiError}</span>
+          <button onClick={() => setApiError(null)} className="ml-1 font-bold leading-none" aria-label="dismiss">×</button>
+        </div>
+      )}
       {/* Header */}
       <div className="px-4 py-3 border-b shrink-0" style={{ borderColor: 'var(--border)' }}>
         <div className="flex items-center justify-between mb-2">

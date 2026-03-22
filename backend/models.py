@@ -3,7 +3,7 @@ import re
 from datetime import datetime
 from enum import Enum
 from typing import Optional
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 _TIME_RE = re.compile(r'^(?:t\+)?(\d+(?:\.\d+)?)h?$', re.IGNORECASE)
 
@@ -376,9 +376,9 @@ class ChatMessage(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    message:    str
+    message:    str            = Field(..., min_length=1, max_length=10_000)
     session_id: str
-    history:    list[ChatMessage] = []
+    history:    list[ChatMessage] = Field(default=[], max_length=100)
 
 
 class ChatResponse(BaseModel):
@@ -424,7 +424,7 @@ class GraphData(BaseModel):
 
 class IntakeConversationRequest(BaseModel):
     """Patient or caregiver free-text conversation → Claims (patient_generated tier)."""
-    text:        str
+    text:        str = Field(..., min_length=1, max_length=50_000)
     session_id:  str
     source_type: str = "patient_report"   # patient_report | caregiver_report
     source_ref:  str = ""                  # e.g. "Erstgespräch 2024-03-21"

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from models import GraphData, NodeUpdate, CounterfactualResult, HypothesisCounterfactualResult, Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend, _normalize_time_offset, _parse_offset_hours, AuditActor, MEDResult, ReasoningExplanation, HypothesisExplanation, ClaimContribution, GuidelineEvaluation, RiskScoreResponse, RiskScoreItem, ClinicalRoleView, RoleAlert, RoleViewSection, ClinicalReport, ReportSection, GenerateReportRequest, ReportTypeDef, ReportSectionDef, PriorityExplanation, PriorityFactor, OrchestratorState, OrchestratorScoreBreakdown, OrchestratorAlternative
 from clinical_orchestrator import orchestrate
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 from neo4j_client import get_db
 from llm_client import run_counterfactual, run_hypothesis_counterfactual, analyze_reasoning, explain_conflict as _explain_conflict
@@ -17,7 +17,7 @@ from llm_client import generate_report as _generate_report
 
 
 class ManualClaimPayload(BaseModel):
-    text:                   str
+    text:                   str = Field(..., min_length=1, max_length=5_000)
     claim_type:             ClaimType   = ClaimType.finding
     source_type:            SourceType  = SourceType.clinician
     source_ref:             str         = ""

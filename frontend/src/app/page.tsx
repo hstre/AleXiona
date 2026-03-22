@@ -29,6 +29,7 @@ export default function Home() {
   const [dismissedConflicts, setDismissedConflicts] = useState<Set<string>>(new Set())
   const [conflictIdx,        setConflictIdx]        = useState(0)
   const [graphLoading,       setGraphLoading]       = useState(false)
+  const [graphError,         setGraphError]         = useState<string | null>(null)
   const [activePanel,        setActivePanel]        = useState<'data' | 'graph' | 'review'>('graph')
   const [showConflictBanner, setShowConflictBanner] = useState(true)
   const [conflictExplanation,  setConflictExplanation]  = useState('')
@@ -67,8 +68,10 @@ export default function Home() {
     try {
       const data = await getGraph(sessionId)
       setGraphData(data)
+      setGraphError(null)
     } catch (err) {
       console.error(err)
+      setGraphError(err instanceof Error ? err.message : 'Failed to load graph data')
     } finally {
       setGraphLoading(false)
     }
@@ -395,6 +398,15 @@ export default function Home() {
 
   return (
     <div className="flex flex-col h-screen" style={{ background: 'var(--bg)' }}>
+
+      {/* ── Global error banner ───────────────────────────────────────────── */}
+      {graphError && (
+        <div className="px-4 py-2 text-xs flex items-center gap-2 shrink-0"
+          style={{ background: '#fef2f2', color: '#dc2626', borderBottom: '1px solid #fca5a5' }}>
+          <span className="flex-1">⚠ {graphError}</span>
+          <button onClick={() => setGraphError(null)} className="font-bold" aria-label="dismiss">×</button>
+        </div>
+      )}
 
       {/* ── Add Node Modal ────────────────────────────────────────────────── */}
       {showAddNode && (

@@ -138,7 +138,7 @@ class Neo4jClient:
     def store_claims(self, claims: list[Claim], session_id: str) -> list[str]:
         self._cache.invalidate(session_id)
         claim_ids = []
-        with self.driver.session() as s:
+        with self.driver.session() as s, s.begin_transaction() as tx:
             for claim in claims:
                 cid = str(uuid.uuid4())
                 claim_ids.append(cid)
@@ -154,7 +154,7 @@ class Neo4jClient:
                     else now
                 )
 
-                s.run(
+                tx.run(
                     """
                     CREATE (c:Claim {
                         id: $id, text: $text, session_id: $session_id,
@@ -206,7 +206,7 @@ class Neo4jClient:
                 )
 
                 for entity_name in claim.entities:
-                    s.run(
+                    tx.run(
                         """
                         MERGE (e:Entity {name: $name})
                         WITH e
@@ -217,7 +217,7 @@ class Neo4jClient:
                     )
 
                 for rel in claim.relations:
-                    s.run(
+                    tx.run(
                         """
                         MERGE (f:Entity {name: $from_name})
                         MERGE (t:Entity {name: $to_name})
