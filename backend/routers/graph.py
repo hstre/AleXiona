@@ -260,7 +260,7 @@ async def update_claim(claim_id: str, update: NodeUpdate):
         before = db.get_claim_by_id(claim_id)
         session_id = (before or {}).get("session_id", "")
         changes = update.model_dump(exclude_none=True)
-        db.update_claim(claim_id, changes)
+        db.update_claim(claim_id, changes, session_id=session_id)
         after = db.get_claim_by_id(claim_id)
         log_updated(
             claim_id, session_id,
@@ -567,7 +567,7 @@ async def delete_claim(claim_id: str):
     try:
         before = db.get_claim_by_id(claim_id)
         session_id = (before or {}).get("session_id", "")
-        db.delete_claim(claim_id)
+        db.delete_claim(claim_id, session_id=session_id)
         log_deleted(
             claim_id, session_id,
             actor=AuditActor.graph_manual,

@@ -1,10 +1,42 @@
 import os
 import json
+import threading
 import uuid
 import re
 from datetime import datetime, timezone
 from neo4j import GraphDatabase
 from models import Claim, GraphData
+
+
+# ── Per-session claim cache ────────────────────────────────────────────────────
+
+class _SessionCache:
+    """Thread-safe in-memory cache for per-session claim lists.
+
+    Caches the result of get_all_claims_for_session keyed by session_id.
+    Every write path that mutates claims must call invalidate() so readers
+    never see stale data.
+    """
+
+    def __init__(self) -> None:
+        self._lock   = threading.Lock()
+        self._store: dict[str, list[dict]] = {}
+
+    def get(self, session_id: str) -> list[dict] | None:
+        with self._lock:
+            return self._store.get(session_id)
+
+    def set(self, session_id: str, claims: list[dict]) -> None:
+        with self._lock:
+            self._store[session_id] = claims
+
+    def invalidate(self, session_id: str) -> None:
+        with self._lock:
+            self._store.pop(session_id, None)
+
+    def invalidate_all(self) -> None:
+        with self._lock:
+            self._store.clear()
 
 
 def _deserialize_audit_row(node: dict) -> dict:
@@ -54,7 +86,17 @@ class Neo4jClient:
             raise RuntimeError(
                 "NEO4J_PASSWORD environment variable is required but not set."
             )
-        self.driver = GraphDatabase.driver(uri, auth=(user, password))
+        self._cache = _SessionCache()
+        self.driver = GraphDatabase.driver(
+            uri,
+            auth=(user, password),
+            # How many connections the pool may open simultaneously.
+            max_connection_pool_size=int(os.getenv("NEO4J_POOL_SIZE", "20")),
+            # Seconds to wait for a free connection before raising.
+            connection_acquire_timeout=float(os.getenv("NEO4J_ACQUIRE_TIMEOUT", "30")),
+            # Retire a connection after this many seconds (avoids stale TCP).
+            max_connection_lifetime=int(os.getenv("NEO4J_MAX_CONN_LIFETIME", "1800")),
+        )
         self._init_schema()
 
     def _init_schema(self):
@@ -72,6 +114,7 @@ class Neo4jClient:
     # ── Write ────────────────────────────────────────────────────────────────
 
     def store_claims(self, claims: list[Claim], session_id: str) -> list[str]:
+        self._cache.invalidate(session_id)
         claim_ids = []
         with self.driver.session() as s:
             for claim in claims:
@@ -237,7 +280,7 @@ class Neo4jClient:
         "evidence_tier",
     })
 
-    def update_claim(self, claim_id: str, fields: dict) -> None:
+    def update_claim(self, claim_id: str, fields: dict, *, session_id: str | None = None) -> None:
         """Update allowed non-None fields on a Claim node."""
         clean = {
             k: (v.value if hasattr(v, "value") else v)
@@ -249,10 +292,14 @@ class Neo4jClient:
         set_clause = ", ".join(f"c.{k} = ${k}" for k in clean)
         with self.driver.session() as s:
             s.run(f"MATCH (c:Claim {{id: $id}}) SET {set_clause}", id=claim_id, **clean)
+        if session_id:
+            self._cache.invalidate(session_id)
 
-    def delete_claim(self, claim_id: str):
+    def delete_claim(self, claim_id: str, *, session_id: str | None = None) -> None:
         with self.driver.session() as s:
             s.run("MATCH (c:Claim {id: $id}) DETACH DELETE c", id=claim_id)
+        if session_id:
+            self._cache.invalidate(session_id)
 
     # ── Audit ─────────────────────────────────────────────────────────────────
 
@@ -327,6 +374,10 @@ class Neo4jClient:
     # ── Read ─────────────────────────────────────────────────────────────────
 
     def get_all_claims_for_session(self, session_id: str) -> list[dict]:
+        cached = self._cache.get(session_id)
+        if cached is not None:
+            return cached
+
         with self.driver.session() as s:
             result = s.run(
                 """
@@ -347,7 +398,7 @@ class Neo4jClient:
                 """,
                 session_id=session_id,
             )
-            return [
+            claims = [
                 {
                     "id":                     r["id"],
                     "text":                   r["text"],
@@ -365,6 +416,8 @@ class Neo4jClient:
                 }
                 for r in result
             ]
+        self._cache.set(session_id, claims)
+        return claims
 
     def get_graph(self, session_id: str) -> GraphData:
         nodes: dict = {}
@@ -548,6 +601,8 @@ class Neo4jClient:
                 # Delete alias
                 s.run("MATCH (e:Entity {name: $name}) DETACH DELETE e", name=alias)
                 merged += 1
+        # Entity merges affect claim representations across all sessions.
+        self._cache.invalidate_all()
         return merged
 
     # ── Session export / import ───────────────────────────────────────────────
@@ -600,6 +655,7 @@ class Neo4jClient:
             if mapped:
                 self.link_explicit_derived_from(id_map[c["id"]], mapped)
 
+        self._cache.invalidate(session_id)
         return {"imported": len(id_map), "skipped": len(claims_data) - len(id_map)}
 
     def list_sessions(self) -> list[dict]:
@@ -614,5 +670,6 @@ class Neo4jClient:
             return [{"session_id": r["session_id"], "claim_count": r["claim_count"]} for r in result]
 
     def delete_session(self, session_id: str):
+        self._cache.invalidate(session_id)
         with self.driver.session() as s:
             s.run("MATCH (c:Claim {session_id: $session_id}) DETACH DELETE c", session_id=session_id)
