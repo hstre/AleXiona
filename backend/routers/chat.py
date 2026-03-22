@@ -1,8 +1,11 @@
 import asyncio
 import json
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter, HTTPException
 from api_errors import internal_error
+
+log = logging.getLogger(__name__)
 from fastapi.responses import StreamingResponse
 from models import ChatRequest, ChatResponse
 from llm_client import (
@@ -15,7 +18,7 @@ from audit_log import log_created_batch
 from models import AuditActor
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
-_executor = ThreadPoolExecutor()
+_executor = ThreadPoolExecutor(max_workers=10)
 
 
 # ── Sync endpoint (kept for compatibility) ────────────────────────────────────
@@ -38,13 +41,23 @@ async def chat(request: ChatRequest):
         all_claims    = db.get_all_claims_for_session(request.session_id)
         graph_context = db.get_context_for_query(request.session_id)
 
-        reply, reasoning = await asyncio.gather(
+        reply_result, reasoning_result = await asyncio.gather(
             loop.run_in_executor(
                 _executor, answer_with_context,
                 request.message, request.history, graph_context,
             ),
             loop.run_in_executor(_executor, analyze_reasoning, all_claims),
+            return_exceptions=True,
         )
+
+        if isinstance(reply_result, Exception):
+            raise reply_result
+
+        reply = reply_result
+        if isinstance(reasoning_result, Exception):
+            log.warning("Reasoning analysis failed (non-fatal): %s", reasoning_result)
+            reasoning_result = None
+        reasoning = reasoning_result
 
         conflicts = detect_conflicts(all_claims)
 
@@ -55,6 +68,7 @@ async def chat(request: ChatRequest):
             reasoning=reasoning,
             conflicts=conflicts,
         )
+
     except HTTPException:
         raise
     except Exception as e:

@@ -25,7 +25,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter, HTTPException
 
-from api_errors import internal_error
+from api_errors import internal_error, validation_error
 from llm_client import extract_claims_conversation, extract_claims_clinical
 from models import (
     IntakeConversationRequest,
@@ -49,7 +49,7 @@ from patient_data import (
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/intake", tags=["intake"])
-_executor = ThreadPoolExecutor()
+_executor = ThreadPoolExecutor(max_workers=10)
 
 # source_type → evidence_tier for measurement ingestion
 _MEASUREMENT_TIER: dict[str, str] = {
@@ -68,6 +68,9 @@ async def intake_conversation(request: IntakeConversationRequest):
     at this boundary to patient_report / caregiver_report.
     Epistemic safeguards: no 'diagnosis' claim_type, no 'confirmed' status.
     """
+    if not request.text or not request.text.strip():
+        raise validation_error("Conversation text cannot be empty.")
+
     import asyncio
     loop = asyncio.get_event_loop()
     db = get_db()
@@ -213,6 +216,8 @@ async def intake_clinical(request: IntakeClinicalRequest):
         all_claims: list[Claim] = []
 
         for clinical_input in request.inputs:
+            if not clinical_input.text or not clinical_input.text.strip():
+                raise validation_error("Clinical input text cannot be empty.")
             event_hint = (
                 clinical_input.event_time.isoformat()
                 if clinical_input.event_time else None

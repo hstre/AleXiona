@@ -47,9 +47,13 @@ def _key_terms(text: str) -> set[str]:
 
 class Neo4jClient:
     def __init__(self):
-        uri      = os.getenv("NEO4J_URI",      "bolt://localhost:7687")
-        user     = os.getenv("NEO4J_USER",     "neo4j")
-        password = os.getenv("NEO4J_PASSWORD", "alexiona123")
+        uri      = os.getenv("NEO4J_URI",  "bolt://localhost:7687")
+        user     = os.getenv("NEO4J_USER", "neo4j")
+        password = os.getenv("NEO4J_PASSWORD")
+        if not password:
+            raise RuntimeError(
+                "NEO4J_PASSWORD environment variable is required but not set."
+            )
         self.driver = GraphDatabase.driver(uri, auth=(user, password))
         self._init_schema()
 
@@ -170,14 +174,19 @@ class Neo4jClient:
         """
         if not new_claim_ids:
             return
-        new_id_set = set(new_claim_ids)
         with self.driver.session() as s:
-            rows = s.run(
-                "MATCH (c:Claim {session_id: $sid}) RETURN c.id AS id, c.text AS text",
-                sid=session_id,
+            # Fetch new and old claims in two separate queries to avoid Python-side
+            # filtering (eliminates TOCTOU skew when claims are created concurrently).
+            new_claims = s.run(
+                "MATCH (c:Claim {session_id: $sid}) WHERE c.id IN $ids "
+                "RETURN c.id AS id, c.text AS text",
+                sid=session_id, ids=new_claim_ids,
             ).data()
-            new_claims = [r for r in rows if r["id"] in new_id_set]
-            old_claims = [r for r in rows if r["id"] not in new_id_set]
+            old_claims = s.run(
+                "MATCH (c:Claim {session_id: $sid}) WHERE NOT c.id IN $ids "
+                "RETURN c.id AS id, c.text AS text",
+                sid=session_id, ids=new_claim_ids,
+            ).data()
             if not old_claims:
                 return
             for nc in new_claims:
@@ -193,15 +202,16 @@ class Neo4jClient:
                     "MATCH (c:Claim {id: $id}) SET c.related_to = $rt",
                     id=nc["id"], rt=json.dumps(sources),
                 )
-                for src_id in sources:
-                    s.run(
-                        """
-                        MATCH (nc:Claim {id: $nc_id})
-                        MATCH (oc:Claim {id: $oc_id})
-                        MERGE (nc)-[:POSSIBLE_RELATED]->(oc)
-                        """,
-                        nc_id=nc["id"], oc_id=src_id,
-                    )
+                # Batch-create POSSIBLE_RELATED edges with UNWIND (avoids N+1 queries)
+                s.run(
+                    """
+                    MATCH (nc:Claim {id: $nc_id})
+                    UNWIND $src_ids AS src_id
+                    MATCH (oc:Claim {id: src_id})
+                    MERGE (nc)-[:POSSIBLE_RELATED]->(oc)
+                    """,
+                    nc_id=nc["id"], src_ids=sources,
+                )
 
     def link_explicit_derived_from(self, new_claim_id: str, source_ids: list[str]) -> None:
         """Create explicit DERIVES_FROM edges from a new claim to each listed source claim.
@@ -218,10 +228,22 @@ class Neo4jClient:
                     nc_id=new_claim_id, oc_id=src_id,
                 )
 
+    # Fields that callers are allowed to update via update_claim().
+    # This prevents arbitrary Cypher clause injection through field names.
+    _ALLOWED_UPDATE_FIELDS: frozenset = frozenset({
+        "text", "evidence_support_score", "claim_type", "source_type",
+        "status", "trend", "time_offset", "source_ref", "notes",
+        "uncertainty_flag", "supersedes_claim_id", "valid_until",
+        "evidence_tier",
+    })
+
     def update_claim(self, claim_id: str, fields: dict) -> None:
-        """Update any non-None fields on a Claim node."""
-        # Convert enum values to strings for Neo4j
-        clean = {k: (v.value if hasattr(v, 'value') else v) for k, v in fields.items() if v is not None}
+        """Update allowed non-None fields on a Claim node."""
+        clean = {
+            k: (v.value if hasattr(v, "value") else v)
+            for k, v in fields.items()
+            if v is not None and k in self._ALLOWED_UPDATE_FIELDS
+        }
         if not clean:
             return
         set_clause = ", ".join(f"c.{k} = ${k}" for k in clean)
