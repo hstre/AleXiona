@@ -138,13 +138,27 @@ def test_update_claim_noop_when_empty():
 
 # ── link_possible_related ─────────────────────────────────────────────────────────
 
-def _make_session_rows(rows):
-    """Return a mock Neo4j session whose .run().data() yields rows."""
-    mock_result = MagicMock()
-    mock_result.data.return_value = rows
+def _make_session_rows(new_rows, old_rows=None):
+    """Return a mock Neo4j session whose .run().data() yields rows.
+
+    If *old_rows* is given, the first .run() call returns *new_rows* and the
+    second call returns *old_rows*.  This mirrors the two-query pattern used by
+    link_possible_related() which fetches new and old claims separately.
+    """
+    def _make_result(rows):
+        r = MagicMock()
+        r.data.return_value = rows
+        return r
 
     mock_session = MagicMock()
-    mock_session.run.return_value = mock_result
+    if old_rows is None:
+        mock_session.run.return_value = _make_result(new_rows)
+    else:
+        # First call → new claims, second call → old claims,
+        # any further calls (SET / MERGE) get a plain MagicMock.
+        _calls = iter([_make_result(new_rows), _make_result(old_rows)])
+        _fallback = MagicMock()
+        mock_session.run.side_effect = lambda *a, **kw: next(_calls, _fallback)
 
     mock_driver = MagicMock()
     mock_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
@@ -157,8 +171,9 @@ def test_link_possible_related_skips_when_no_old_claims():
     with patch.object(nc.Neo4jClient, '__init__', return_value=None):
         client = nc.Neo4jClient.__new__(nc.Neo4jClient)
 
-    rows = [{"id": "new-1", "text": "troponin elevated levels seen"}]
-    driver, session = _make_session_rows(rows)
+    # First query returns the new claim; second query returns nothing (no old claims).
+    new_rows = [{"id": "new-1", "text": "troponin elevated levels seen"}]
+    driver, session = _make_session_rows(new_rows, old_rows=[])
     client.driver = driver
 
     # Only one claim (the new one) — no existing claims to link from
@@ -173,11 +188,10 @@ def test_link_possible_related_links_when_overlap():
     with patch.object(nc.Neo4jClient, '__init__', return_value=None):
         client = nc.Neo4jClient.__new__(nc.Neo4jClient)
 
-    rows = [
-        {"id": "old-1", "text": "elevated troponin levels indicate cardiac injury"},
-        {"id": "new-1", "text": "troponin levels rising after admission"},
-    ]
-    driver, session = _make_session_rows(rows)
+    # First query: the new claim; second query: existing claim that shares terms.
+    new_rows = [{"id": "new-1", "text": "troponin levels rising after admission"}]
+    old_rows = [{"id": "old-1", "text": "elevated troponin levels indicate cardiac injury"}]
+    driver, session = _make_session_rows(new_rows, old_rows=old_rows)
     client.driver = driver
 
     client.link_possible_related(["new-1"], "sess-1")
@@ -193,11 +207,10 @@ def test_link_possible_related_no_link_when_insufficient_overlap():
     with patch.object(nc.Neo4jClient, '__init__', return_value=None):
         client = nc.Neo4jClient.__new__(nc.Neo4jClient)
 
-    rows = [
-        {"id": "old-1", "text": "patient has fever and chills"},
-        {"id": "new-1", "text": "troponin levels rising quickly"},
-    ]
-    driver, session = _make_session_rows(rows)
+    # First query: new claim; second query: old claim with unrelated terms.
+    new_rows = [{"id": "new-1", "text": "troponin levels rising quickly"}]
+    old_rows = [{"id": "old-1", "text": "patient has fever and chills"}]
+    driver, session = _make_session_rows(new_rows, old_rows=old_rows)
     client.driver = driver
 
     client.link_possible_related(["new-1"], "sess-1")
@@ -251,6 +264,10 @@ def _make_session_with_claims(rows):
     import neo4j_client as nc
     with patch.object(nc.Neo4jClient, '__init__', return_value=None):
         client = nc.Neo4jClient.__new__(nc.Neo4jClient)
+
+    # Neo4jClient.__init__ normally sets _cache; mock it so the cache misses.
+    client._cache = MagicMock()
+    client._cache.get.return_value = None
 
     mock_result = MagicMock()
     mock_result.__iter__ = MagicMock(return_value=iter(rows))

@@ -1,4 +1,4 @@
-.PHONY: help test test-backend test-frontend lint typecheck install
+.PHONY: help test test-backend test-frontend lint typecheck install smoke
 
 help:
 	@echo "AleXiona – available targets:"
@@ -8,6 +8,7 @@ help:
 	@echo "  make test-frontend  Run Vitest suite only"
 	@echo "  make lint           Ruff lint check (backend)"
 	@echo "  make typecheck      TypeScript type check (frontend)"
+	@echo "  make smoke          Smoke-test against a running stack (BACKEND_URL / FRONTEND_URL)"
 
 install:
 	pip install -r backend/requirements-dev.txt
@@ -26,3 +27,6 @@ lint:
 
 typecheck:
 	cd frontend && npx tsc --noEmit
+
+smoke:
+	python scripts/smoke.py
