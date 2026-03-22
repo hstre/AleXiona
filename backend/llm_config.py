@@ -37,7 +37,7 @@ log = logging.getLogger(__name__)
 
 # ── Read configuration ─────────────────────────────────────────────────────────
 
-PROVIDER = os.getenv("LLM_PROVIDER", "openai").lower()
+PROVIDER = os.getenv("LLM_PROVIDER", "groq").lower()
 MODEL    = os.getenv("LLM_MODEL", "")
 API_KEY  = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY", "")
 BASE_URL = os.getenv("LLM_BASE_URL", "")
