@@ -10,17 +10,25 @@ Sub-engines consumed (all synchronous, no LLM calls):
   • reasoning_engine   — evidence scoring, guideline compliance, temporal decay
   • composite_scores   — validated bedside risk scores (Wells, qSOFA, GRACE …)
   • conflict_engine    — structural and epistemic conflicts
-  • med_engine         — NOT called here (async/LLM); missing tests from guideline only
+  • med_engine         — NOT called here (async/LLM); top test injected optionally
+                         via the med_top_test kwarg when the caller has it
 
 Output: OrchestratorState (see models.py)
 
 Weighting rationale
 ───────────────────
-  Evidence   40 % — the core: what the clinical record actually says
+  Evidence   45 % — the core: what the clinical record actually says
   Guideline  25 % — structure: does the diagnosis follow a validated pathway?
-  Composite  15 % — external validation: do risk tools confirm the direction?
+  Composite  10 % — external validation: do risk tools confirm the direction?
+                     (capped to prevent single-score dominance)
   Temporal   10 % — recency: how fresh is the supporting evidence?
   Conflict  -10 % — integrity: how contested is this hypothesis?
+
+State machine (strict disjoint priority):
+  insufficient  — no hypotheses, no meaningful support, or score below floor
+  contested     — evidence exists but ≥ N conflicts actively contradict it
+  undecided     — evidence present, conflicts low, score in ambiguous range
+  confident     — evidence solid, conflicts low, score above threshold
 """
 from __future__ import annotations
 from datetime import datetime, timezone
@@ -37,9 +45,9 @@ from composite_scores import compute_all_scores
 
 # ── Weights ────────────────────────────────────────────────────────────────────
 
-WEIGHT_EVIDENCE   = 0.40
+WEIGHT_EVIDENCE   = 0.45   # raised from 0.40 — primary epistemic signal
 WEIGHT_GUIDELINE  = 0.25
-WEIGHT_COMPOSITE  = 0.15
+WEIGHT_COMPOSITE  = 0.10   # reduced from 0.15 — prevents single-score dominance
 WEIGHT_TEMPORAL   = 0.10
 WEIGHT_CONFLICT   = 0.10   # applied as negative penalty
 
@@ -91,12 +99,27 @@ def _status(
     n_supporting:   int,
     n_hypotheses:   int,
 ) -> str:
+    """
+    Determine clinical state. Priority is strict and disjoint — exactly one
+    branch fires, evaluated top-to-bottom:
+
+      1. insufficient — no hypotheses → nothing to evaluate
+      2. insufficient — < MIN_SUPPORTING claims → evidence base too thin to conflict
+      3. contested    — evidence exists but actively contradicted by ≥ N conflicts
+      4. insufficient — conflicts low but score below floor → evidence weak, not contradicted
+      5. confident    — strong, consistent evidence
+      6. undecided    — everything else (score in ambiguous zone)
+    """
     if n_hypotheses == 0:
         return "insufficient"
-    if n_supporting < _MIN_SUPPORTING or score < _INSUFFICIENT_MAX:
+    if n_supporting < _MIN_SUPPORTING:
         return "insufficient"
+    # Check conflicts before the score floor: if evidence exists and is actively
+    # contradicted, the state is "contested" regardless of the raw score.
     if n_conflicts >= _CONTESTED_CONFLICTS:
         return "contested"
+    if score < _INSUFFICIENT_MAX:
+        return "insufficient"
     if score >= _CONFIDENT_MIN:
         return "confident"
     return "undecided"
@@ -107,28 +130,74 @@ def _next_action(
     key_conflicts:    list[str],
     missing_critical: list[str],
     hypothesis:       str | None,
+    med_top_test:     str | None = None,
 ) -> str:
+    """
+    Single most important next clinical step.
+    When status is insufficient or undecided and a MED top-test is available,
+    it becomes the primary action — it is the test with the highest information
+    gain for resolving the current uncertainty.
+    """
     if status == "insufficient":
-        return ("Weitere klinische Befunde dokumentieren — "
-                "Evidenzlage für eine zuverlässige Priorisierung unzureichend.")
-    if status == "contested" and key_conflicts:
-        return f"Konflikte klären, bevor die Therapie festgelegt wird: {key_conflicts[0]}"
-    if missing_critical:
-        return f"Diagnostik vervollständigen: {missing_critical[0]}"
+        if med_top_test:
+            return (
+                f"Entscheidungskritische Diagnostik: {med_top_test} — "
+                f"höchster Informationsgewinn laut MED-Analyse."
+            )
+        if missing_critical:
+            return f"Diagnostik vervollständigen: {missing_critical[0]}"
+        return (
+            "Weitere klinische Befunde dokumentieren — "
+            "Evidenzlage für eine zuverlässige Priorisierung unzureichend."
+        )
+    if status == "contested":
+        return (
+            f"Konflikte klären, bevor die Therapie festgelegt wird: {key_conflicts[0]}"
+            if key_conflicts
+            else "Widersprüchliche Befunde auflösen bevor die Therapie festgelegt wird."
+        )
+    if status == "undecided":
+        if med_top_test:
+            return (
+                f"Entscheidungskritische Diagnostik: {med_top_test} — "
+                f"würde Differentialdiagnose am stärksten klären."
+            )
+        if missing_critical:
+            return f"Diagnostik vervollständigen: {missing_critical[0]}"
+        return "Zusätzliche Befunde zur Stärkung der führenden Hypothese dokumentieren."
+    # confident
     if hypothesis:
-        return ("Führende Diagnose klinisch verifizieren und "
-                "leitliniengerechte Therapie einleiten.")
+        return (
+            "Führende Diagnose klinisch verifizieren und "
+            "leitliniengerechte Therapie einleiten."
+        )
     return "Klinischen Befund weiter dokumentieren."
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def orchestrate(session_id: str, all_claims: list[dict]) -> dict:
+def orchestrate(
+    session_id:   str,
+    all_claims:   list[dict],
+    *,
+    prev_status:  str | None = None,
+    med_top_test: str | None = None,
+) -> dict:
     """
     Produce ONE unified clinical state from all sub-engine signals.
 
     Returns a dict matching the OrchestratorState Pydantic model.
     All computation is synchronous and deterministic — no LLM calls.
+
+    Args:
+        session_id:   Current session identifier.
+        all_claims:   Full claim list for the session.
+        prev_status:  The status from the previous orchestration call (optional).
+                      When provided, a state_transition string is emitted whenever
+                      the status changes (e.g. "undecided → contested").
+        med_top_test: Name of the highest-impact test from the MED engine (optional).
+                      When status is insufficient or undecided, this becomes the
+                      primary next_action rather than a generic guideline gap message.
     """
     ranked     = rank_hypotheses(all_claims)
     conflicts  = detect_conflicts(all_claims)
@@ -136,18 +205,21 @@ def orchestrate(session_id: str, all_claims: list[dict]) -> dict:
 
     # ── No hypotheses ─────────────────────────────────────────────────────────
     if not ranked:
+        st = "insufficient"
+        transition = f"{prev_status} → {st}" if prev_status and prev_status != st else None
         return {
-            "session_id":        session_id,
+            "session_id":         session_id,
             "leading_hypothesis": None,
             "orchestrated_score": 0.0,
-            "status":            "insufficient",
-            "why":               "Keine aktiven Hypothesen im Evidenzgraphen vorhanden.",
-            "key_conflicts":     [],
-            "missing_critical":  [],
-            "next_action":       "Klinische Befunde dokumentieren um Hypothesen zu generieren.",
-            "score_breakdown":   _zero_breakdown(),
-            "alternatives":      [],
-            "generated_at":      datetime.now(timezone.utc).isoformat(),
+            "status":             st,
+            "why":                "Keine aktiven Hypothesen im Evidenzgraphen vorhanden.",
+            "key_conflicts":      [],
+            "missing_critical":   [],
+            "next_action":        _next_action(st, [], [], None, med_top_test),
+            "score_breakdown":    _zero_breakdown(),
+            "alternatives":       [],
+            "state_transition":   transition,
+            "generated_at":       datetime.now(timezone.utc).isoformat(),
         }
 
     top            = ranked[0]
@@ -170,6 +242,15 @@ def orchestrate(session_id: str, all_claims: list[dict]) -> dict:
 
     st = _status(o_score, n_conflict, n_support, len(ranked))
 
+    # ── State transition ───────────────────────────────────────────────────────
+    transition = f"{prev_status} → {st}" if prev_status and prev_status != st else None
+
+    # ── Leading hypothesis: suppressed when evidence is actively contested ─────
+    # A contested state means conflicts are strong enough that presenting a single
+    # "leading" hypothesis would be clinically misleading. The caller should show
+    # the full differential instead.
+    leading_out = None if st == "contested" else top["text"]
+
     # ── Key conflicts (top 3, error-first) ───────────────────────────────────
     sorted_conflicts = sorted(
         conflicts,
@@ -184,11 +265,17 @@ def orchestrate(session_id: str, all_claims: list[dict]) -> dict:
     _, triggered_scores = _composite_boost_for_hypothesis(top["text"], comp_all)
 
     # ── Why (German verdict) ─────────────────────────────────────────────────
-    why_parts = [
-        f"'{top['text']}' führt mit einem Gesamtscore von {o_score:.0%}"
-        f" (Status: {st})."
-    ]
-    if n_support > 0:
+    if st == "contested":
+        why_parts = [
+            f"Klinisches Bild unklar — Führende Hypothese aufgrund von {n_conflict} "
+            f"aktiven Konflikten supprimiert (Gesamtscore: {o_score:.0%})."
+        ]
+    else:
+        why_parts = [
+            f"'{top['text']}' führt mit einem Gesamtscore von {o_score:.0%}"
+            f" (Status: {st})."
+        ]
+    if n_support > 0 and st != "contested":
         why_parts.append(
             f"{n_support} unterstützende Befunde liefern eine Evidenzstärke von "
             f"{base_evidence:.0%}."
@@ -232,15 +319,16 @@ def orchestrate(session_id: str, all_claims: list[dict]) -> dict:
 
     return {
         "session_id":         session_id,
-        "leading_hypothesis": top["text"],
+        "leading_hypothesis": leading_out,
         "orchestrated_score": o_score,
         "status":             st,
         "why":                " ".join(why_parts),
         "key_conflicts":      key_conflicts,
         "missing_critical":   missing_critical,
-        "next_action":        _next_action(st, key_conflicts, missing_critical, top["text"]),
+        "next_action":        _next_action(st, key_conflicts, missing_critical, leading_out, med_top_test),
         "score_breakdown":    breakdown,
         "alternatives":       alternatives,
+        "state_transition":   transition,
         "generated_at":       datetime.now(timezone.utc).isoformat(),
     }
 

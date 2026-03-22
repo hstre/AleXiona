@@ -364,6 +364,7 @@ async def get_orchestrator_state(session_id: str):
             next_action=state["next_action"],
             score_breakdown=OrchestratorScoreBreakdown(**state["score_breakdown"]),
             alternatives=[OrchestratorAlternative(**a) for a in state["alternatives"]],
+            state_transition=state.get("state_transition"),
             generated_at=state["generated_at"],
         )
     except HTTPException:

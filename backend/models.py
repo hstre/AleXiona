@@ -541,6 +541,7 @@ class OrchestratorState(BaseModel):
     next_action:        str                      # single most important next step
     score_breakdown:    OrchestratorScoreBreakdown
     alternatives:       list[OrchestratorAlternative]
+    state_transition:   Optional[str] = None  # e.g. "undecided → contested"; None when unchanged
     generated_at:       str
 
 
