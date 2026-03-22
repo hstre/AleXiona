@@ -3,9 +3,9 @@ import json
 import logging
 import time
 from typing import AsyncIterator
-from openai import OpenAI, AsyncOpenAI
 from pydantic import ValidationError
 from datetime import datetime, timezone
+from llm_config import sync_client as client, async_client, MODEL
 from clinical_spl import run_spl_pipeline, run_dual_spl_pipeline
 from models import (
     Claim, ClaimExtractionResult, ChatMessage,
@@ -20,9 +20,7 @@ from lab_parser import parse_lab_value
 
 log = logging.getLogger(__name__)
 
-client       = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-async_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-MODEL = "gpt-4o"
+# Client and model resolved from llm_config (provider selected via LLM_PROVIDER env var).
 
 # ── Claim Extraction ─────────────────────────────────────────────────────────
 
