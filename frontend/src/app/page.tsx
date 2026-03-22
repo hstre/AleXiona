@@ -362,7 +362,7 @@ export default function Home() {
 
     section(`Evidence Nodes (${allClaims.length})`)
     allClaims.forEach(c =>
-      line(`[${c.claim_type.toUpperCase()} · ${essLabel(c.evidence_support_score)} support · ${c.status}]  ${c.text}`, 9))
+      line(`[${c.claim_type?.toUpperCase() ?? 'UNKNOWN'} · ${essLabel(c.evidence_support_score)} support · ${c.status}]  ${c.text}`, 9))
 
     doc.save(`alexiona-report-${shortId(sessionId ?? '')}.pdf`)
   }

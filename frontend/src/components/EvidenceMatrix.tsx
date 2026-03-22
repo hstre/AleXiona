@@ -40,9 +40,8 @@ export default function EvidenceMatrix({ reasoning, claims }: Props) {
     .filter(c => c.status === 'active')
     .slice(0, 12)  // cap rows for readability
 
-  const leading = reasoning.leading_hypothesis.length > 28
-    ? reasoning.leading_hypothesis.slice(0, 28) + '…'
-    : reasoning.leading_hypothesis
+  const lh = reasoning.leading_hypothesis ?? ''
+  const leading = lh.length > 28 ? lh.slice(0, 28) + '…' : lh
 
   const hypotheses = [
     { label: leading, ess: reasoning.evidence_support_score, isLeading: true },

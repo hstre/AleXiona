@@ -52,7 +52,7 @@ export default function TimelinePanel({ claimNodes, onFocusClaim }: Props) {
     }).filter(p => p.avg !== null) as { t: number; avg: number }[]
   }, [timedClaims, timePoints])
 
-  if (timedClaims.length === 0 || maxH === 0) return null
+  if (timedClaims.length === 0 || maxH === 0 || isNaN(maxH)) return null
 
   const xOf = (h: number) => PAD.left + (maxH === 0 ? 0 : (h / maxH) * IW)
   const yOf = (v: number) => PAD.top + (1 - v) * IH

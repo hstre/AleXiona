@@ -93,14 +93,19 @@ async def chat_stream(request: ChatRequest):
             return
 
         if extraction.claims:
-            claim_ids = await loop.run_in_executor(
-                _executor, db.store_claims, extraction.claims, request.session_id
-            )
-            log_created_batch(
-                claim_ids, extraction.claims, request.session_id,
-                actor=AuditActor.chat,
-                pipeline_stage="Stage 1–3: LLM extraction via /api/chat/stream",
-            )
+            try:
+                claim_ids = await loop.run_in_executor(
+                    _executor, db.store_claims, extraction.claims, request.session_id
+                )
+                log_created_batch(
+                    claim_ids, extraction.claims, request.session_id,
+                    actor=AuditActor.chat,
+                    pipeline_stage="Stage 1–3: LLM extraction via /api/chat/stream",
+                )
+            except Exception as e:
+                log.error("store_claims failed in stream: %s", e)
+                yield f"data: {json.dumps({'type': 'error', 'message': 'Failed to store claims'})}\n\n"
+                return
 
         # 2. Emit extracted claims immediately (so UI can refresh graph early)
         claims_payload = [c.model_dump(mode="json") for c in extraction.claims]
@@ -127,10 +132,17 @@ async def chat_stream(request: ChatRequest):
             return
 
         # 5. Reasoning + conflicts (sync, run in thread)
-        reasoning, conflicts = await asyncio.gather(
+        reasoning_result, conflicts_result = await asyncio.gather(
             loop.run_in_executor(_executor, analyze_reasoning, all_claims),
             loop.run_in_executor(_executor, detect_conflicts, all_claims),
+            return_exceptions=True,
         )
+        reasoning = None if isinstance(reasoning_result, Exception) else reasoning_result
+        conflicts = [] if isinstance(conflicts_result, Exception) else conflicts_result
+        if isinstance(reasoning_result, Exception):
+            log.warning("Reasoning failed in stream (non-fatal): %s", reasoning_result)
+        if isinstance(conflicts_result, Exception):
+            log.warning("Conflict detection failed in stream (non-fatal): %s", conflicts_result)
 
         # 6. Final done event with full payload
         done_payload = {

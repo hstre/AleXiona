@@ -39,6 +39,16 @@ class _SessionCache:
             self._store.clear()
 
 
+def _safe_json(raw: str | None, default):
+    """Parse JSON string, returning default on any error."""
+    if not raw:
+        return default
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return default
+
+
 def _deserialize_audit_row(node: dict) -> dict:
     """Convert a raw Neo4j AuditEvent node to a plain Python dict."""
     return {
@@ -49,9 +59,9 @@ def _deserialize_audit_row(node: dict) -> dict:
         "actor":          node["actor"],
         "pipeline_stage": node["pipeline_stage"],
         "timestamp":      node["timestamp"],
-        "before":         json.loads(node["before"]) if node.get("before") else None,
-        "after":          json.loads(node["after"])  if node.get("after")  else None,
-        "meta":           json.loads(node["meta"])   if node.get("meta")   else {},
+        "before":         _safe_json(node.get("before"), None),
+        "after":          _safe_json(node.get("after"),  None),
+        "meta":           _safe_json(node.get("meta"),   {}),
     }
 
 # ── Singleton ─────────────────────────────────────────────────────────────────
