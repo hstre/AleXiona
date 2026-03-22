@@ -1,5 +1,14 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
+/** Parse response body as JSON; throws a descriptive error if body is not valid JSON. */
+async function safeJson<T>(res: Response): Promise<T> {
+  try {
+    return await res.json() as T
+  } catch {
+    throw new Error(`Server returned non-JSON response (status ${res.status})`)
+  }
+}
+
 /** Extract a human-readable message from a structured or plain-text error response. */
 async function parseError(res: Response): Promise<Error> {
   try {
@@ -179,7 +188,7 @@ export async function sendMessage(
     body: JSON.stringify({ message, session_id: sessionId, history }),
   })
   if (!res.ok) throw await parseError(res)
-  return res.json()
+  return safeJson(res)
 }
 
 export async function* streamMessage(
@@ -218,7 +227,7 @@ export async function* streamMessage(
 export async function getGraph(sessionId: string): Promise<GraphData> {
   const res = await fetch(`${API_URL}/api/graph/${sessionId}`)
   if (!res.ok) throw await parseError(res)
-  return res.json()
+  return safeJson(res)
 }
 
 export interface ClaimPatch {
@@ -263,7 +272,7 @@ export async function runCounterfactual(
     method: 'POST',
   })
   if (!res.ok) throw await parseError(res)
-  return res.json()
+  return safeJson(res)
 }
 
 export async function hypothesisCounterfactual(
@@ -275,13 +284,13 @@ export async function hypothesisCounterfactual(
     body: JSON.stringify({ hypothesis }),
   })
   if (!res.ok) throw await parseError(res)
-  return res.json()
+  return safeJson(res)
 }
 
 export async function listSessions(): Promise<SessionInfo[]> {
   const res = await fetch(`${API_URL}/api/sessions`)
   if (!res.ok) throw await parseError(res)
-  return res.json()
+  return safeJson(res)
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
@@ -298,7 +307,7 @@ export async function seedDemo(
 ): Promise<{ seeded: boolean; claim_count?: number; reason?: string }> {
   const res = await fetch(`${API_URL}/api/demo/seed/${sessionId}?lang=${lang}&scenario=${scenario}`, { method: 'POST' })
   if (!res.ok) throw await parseError(res)
-  return res.json()
+  return safeJson(res)
 }
 
 // ── Entity deduplication ─────────────────────────────────────────────────────
@@ -312,7 +321,7 @@ export interface EntityGroup {
 export async function getEntityDuplicates(sessionId: string): Promise<EntityGroup[]> {
   const res = await fetch(`${API_URL}/api/graph/${sessionId}/entity-duplicates`)
   if (!res.ok) throw await parseError(res)
-  return res.json()
+  return safeJson(res)
 }
 
 export async function mergeEntities(
@@ -324,7 +333,7 @@ export async function mergeEntities(
     body: JSON.stringify({ canonical, aliases }),
   })
   if (!res.ok) throw await parseError(res)
-  return res.json()
+  return safeJson(res)
 }
 
 // ── Session export / import ──────────────────────────────────────────────────
@@ -332,7 +341,7 @@ export async function mergeEntities(
 export async function exportSession(sessionId: string): Promise<object> {
   const res = await fetch(`${API_URL}/api/graph/${sessionId}/export`)
   if (!res.ok) throw await parseError(res)
-  return res.json()
+  return safeJson(res)
 }
 
 export async function importSession(
@@ -344,7 +353,7 @@ export async function importSession(
     body: JSON.stringify({ claims }),
   })
   if (!res.ok) throw await parseError(res)
-  return res.json()
+  return safeJson(res)
 }
 
 export interface ManualClaim {
@@ -369,8 +378,9 @@ export async function explainConflict(
     body: JSON.stringify(conflict),
   })
   if (!res.ok) throw await parseError(res)
-  const data = await res.json()
-  return data.explanation as string
+  const data = await safeJson<{ explanation?: string }>(res)
+  if (typeof data.explanation !== 'string') throw new Error('Unexpected response format from explain endpoint')
+  return data.explanation
 }
 
 export async function addManualClaim(sessionId: string, claim: ManualClaim): Promise<void> {

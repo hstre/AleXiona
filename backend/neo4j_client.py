@@ -97,15 +97,27 @@ class Neo4jClient:
                 "NEO4J_PASSWORD environment variable is required but not set."
             )
         self._cache = _SessionCache()
+        def _env_int(key: str, default: int) -> int:
+            try:
+                return int(os.getenv(key, str(default)))
+            except (ValueError, TypeError):
+                return default
+
+        def _env_float(key: str, default: float) -> float:
+            try:
+                return float(os.getenv(key, str(default)))
+            except (ValueError, TypeError):
+                return default
+
         self.driver = GraphDatabase.driver(
             uri,
             auth=(user, password),
             # How many connections the pool may open simultaneously.
-            max_connection_pool_size=int(os.getenv("NEO4J_POOL_SIZE", "20")),
+            max_connection_pool_size=_env_int("NEO4J_POOL_SIZE", 20),
             # Seconds to wait for a free connection before raising.
-            connection_acquire_timeout=float(os.getenv("NEO4J_ACQUIRE_TIMEOUT", "30")),
+            connection_acquire_timeout=_env_float("NEO4J_ACQUIRE_TIMEOUT", 30.0),
             # Retire a connection after this many seconds (avoids stale TCP).
-            max_connection_lifetime=int(os.getenv("NEO4J_MAX_CONN_LIFETIME", "1800")),
+            max_connection_lifetime=_env_int("NEO4J_MAX_CONN_LIFETIME", 1800),
         )
         self._init_schema()
 
@@ -416,8 +428,8 @@ class Neo4jClient:
                     "claim_type":             r["claim_type"] or "finding",
                     "source_type":            r["source_type"] or "llm",
                     "source_ref":             r["source_ref"] or "",
-                    "derived_from":           json.loads(r["derived_from"] or "[]"),
-                    "related_to":             json.loads(r["related_to"] or "[]"),
+                    "derived_from":           _safe_json(r["derived_from"], []),
+                    "related_to":             _safe_json(r["related_to"], []),
                     "status":                 r["status"] or "active",
                     "time_offset":            r["time_offset"],
                     "trend":                  r["trend"] or "unknown",
@@ -460,8 +472,8 @@ class Neo4jClient:
                         "time_offset":            c.get("time_offset"),
                         "trend":                  c.get("trend", "unknown"),
                         "created_at":             c.get("created_at", ""),
-                        "derived_from":           json.loads(c.get("derived_from") or "[]"),
-                        "related_to":             json.loads(c.get("related_to") or "[]"),
+                        "derived_from":           _safe_json(c.get("derived_from"), []),
+                        "related_to":             _safe_json(c.get("related_to"), []),
                         "notes":                  c.get("notes", ""),
                     }
 
