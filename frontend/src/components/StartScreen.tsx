@@ -53,9 +53,17 @@ interface Props {
   onStart: (mode: StartMode) => void
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 export default function StartScreen({ existingSessionId, onStart }: Props) {
   const [scenario, setScenario] = useState<typeof SCENARIOS[number]['id']>('cap')
   const [lang,     setLang]     = useState<'en' | 'de'>('de')
+
+  // Only show "resume" if the stored value is a valid UUID — prevents showing
+  // the button when localStorage contains corrupted or spoofed data.
+  const resumableId = existingSessionId && UUID_RE.test(existingSessionId)
+    ? existingSessionId
+    : null
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center px-4 py-12 relative overflow-hidden"
@@ -102,10 +110,10 @@ export default function StartScreen({ existingSessionId, onStart }: Props) {
       }}>
 
         {/* ── Resume ── */}
-        {existingSessionId && (
+        {resumableId && (
           <>
             <button
-              onClick={() => onStart({ kind: 'resume', sessionId: existingSessionId })}
+              onClick={() => onStart({ kind: 'resume', sessionId: resumableId! })}
               style={{
                 width: '100%', padding: '0.9rem 1.25rem',
                 background: 'linear-gradient(135deg, #1a7ab3, #0e8a8a)',
@@ -117,7 +125,7 @@ export default function StartScreen({ existingSessionId, onStart }: Props) {
               <span>▶</span>
               <span>Sitzung fortsetzen</span>
               <span style={{ opacity: 0.65, fontWeight: 400, fontSize: '0.8rem' }}>
-                #{existingSessionId.slice(0, 8)}
+                #{resumableId!.slice(0, 8)}
               </span>
             </button>
             <div style={{ textAlign: 'center', margin: '1rem 0 0.75rem', color: '#9aaac4', fontSize: '0.8rem' }}>
@@ -127,7 +135,7 @@ export default function StartScreen({ existingSessionId, onStart }: Props) {
         )}
 
         {/* ── New session ── */}
-        {!existingSessionId && (
+        {!resumableId && (
           <button
             onClick={() => onStart({ kind: 'new' })}
             style={{
@@ -202,7 +210,7 @@ export default function StartScreen({ existingSessionId, onStart }: Props) {
         </div>
 
         {/* ── New session link (when resume is shown) ── */}
-        {existingSessionId && (
+        {resumableId && (
           <button
             onClick={() => onStart({ kind: 'new' })}
             style={{

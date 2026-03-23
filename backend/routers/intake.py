@@ -17,6 +17,7 @@ POST /api/intake/clinical
     source_type is mapped from input_type at the boundary.
 """
 
+import asyncio
 import structlog
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -64,6 +65,13 @@ _MEASUREMENT_TIER: dict[str, str] = {
 
 # ── POST /api/intake/conversation ─────────────────────────────────────────────
 
+def _check_body_session(request_session_id: str, http_request: Request) -> None:
+    """Raise 422 if the session_id in the request body doesn't match the token."""
+    token_sid = getattr(getattr(http_request.state, "user", None), "session_id", "")
+    if token_sid and request_session_id != token_sid:
+        raise validation_error("Session ID in body does not match session token")
+
+
 @router.post("/conversation", response_model=IntakeConversationResponse)
 @limiter.limit("10/minute")
 async def intake_conversation(request: IntakeConversationRequest, http_request: Request):
@@ -73,10 +81,10 @@ async def intake_conversation(request: IntakeConversationRequest, http_request: 
     at this boundary to patient_report / caregiver_report.
     Epistemic safeguards: no 'diagnosis' claim_type, no 'confirmed' status.
     """
+    _check_body_session(request.session_id, http_request)
     if not request.text or not request.text.strip():
         raise validation_error("Conversation text cannot be empty.")
 
-    import asyncio
     loop = asyncio.get_event_loop()
     db = get_db()
     try:
@@ -117,6 +125,7 @@ async def intake_measurements(request: IntakeMeasurementsRequest, http_request: 
     Purely rule-based — no LLM call.  Each measurement produces a point-in-time
     Claim; series with ≥ 3 points additionally produce a TrendSignal Claim.
     """
+    _check_body_session(request.session_id, http_request)
     db = get_db()
     try:
         claims: list[Claim] = []
@@ -214,7 +223,7 @@ async def intake_clinical(request: IntakeClinicalRequest, http_request: Request)
     medication/vitals → source_type=clinician, evidence_tier=clinician_observed
     document → source_type=imported_document, evidence_tier=clinician_observed
     """
-    import asyncio
+    _check_body_session(request.session_id, http_request)
     loop = asyncio.get_event_loop()
     db = get_db()
     try:

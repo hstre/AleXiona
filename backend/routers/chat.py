@@ -3,7 +3,7 @@ import json
 import structlog
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter, HTTPException, Request
-from api_errors import internal_error
+from api_errors import internal_error, validation_error
 
 log = structlog.get_logger(__name__)
 from fastapi.responses import StreamingResponse
@@ -27,6 +27,9 @@ _executor = ThreadPoolExecutor(max_workers=10)
 @router.post("", response_model=ChatResponse)
 @limiter.limit("10/minute")
 async def chat(request: ChatRequest, http_request: Request):
+    token_sid = getattr(getattr(http_request.state, "user", None), "session_id", "")
+    if token_sid and request.session_id != token_sid:
+        raise validation_error("Session ID in body does not match session token")
     db   = get_db()
     loop = asyncio.get_event_loop()
     try:
@@ -82,6 +85,9 @@ async def chat(request: ChatRequest, http_request: Request):
 @router.post("/stream")
 @limiter.limit("10/minute")
 async def chat_stream(request: ChatRequest, http_request: Request):
+    token_sid = getattr(getattr(http_request.state, "user", None), "session_id", "")
+    if token_sid and request.session_id != token_sid:
+        raise validation_error("Session ID in body does not match session token")
     db   = get_db()
     loop = asyncio.get_event_loop()
 
