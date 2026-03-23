@@ -85,14 +85,7 @@ _PUBLIC_PATHS = {"/health", "/api/auth/session"}
 async def auth_middleware(request: Request, call_next):
     """
     Validate session token on every request except public paths.
-
-    Currently runs in AUDIT mode:
-        - Missing / invalid token → request is allowed but user context
-          is set to None so individual endpoints can gate on it.
-        - Logged as auth_anonymous to surface in logs and Sentry.
-
-    To switch to ENFORCE mode (HTTP 401 on missing token) replace the
-    `pass` blocks with `return JSONResponse({"detail": "..."}, status_code=401)`.
+    Missing or invalid token → HTTP 401.
     """
     path = request.url.path
     if path in _PUBLIC_PATHS or request.method == "OPTIONS":
@@ -115,15 +108,10 @@ async def auth_middleware(request: Request, call_next):
             )
         except ValueError as e:
             log.warning("auth_invalid_token", reason=str(e), path=path)
-            request.state.user = None
-            # ENFORCE mode: uncomment next line
-            # return JSONResponse({"detail": str(e)}, status_code=401)
+            return JSONResponse({"detail": str(e)}, status_code=401)
     else:
-        log.debug("auth_anonymous", path=path)
-        request.state.user = None
-        # ENFORCE mode: uncomment next two lines
-        # if path not in _PUBLIC_PATHS:
-        #     return JSONResponse({"detail": "Session token required"}, status_code=401)
+        log.warning("auth_anonymous", path=path)
+        return JSONResponse({"detail": "Session token required"}, status_code=401)
 
     try:
         response = await call_next(request)
