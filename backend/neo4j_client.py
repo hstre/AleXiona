@@ -426,7 +426,7 @@ class Neo4jClient:
                 {
                     "id":                     r["id"],
                     "text":                   r["text"],
-                    "evidence_support_score": r["ess"] or 0.8,
+                    "evidence_support_score": r["ess"] if r["ess"] is not None else 0.8,
                     "claim_type":             r["claim_type"] or "finding",
                     "source_type":            r["source_type"] or "llm",
                     "source_ref":             r["source_ref"] or "",

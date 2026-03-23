@@ -103,6 +103,7 @@ describe('StartScreen — onStart callbacks', () => {
     fireEvent.click(screen.getByTitle(/Pulmonary Embolism/i))
     fireEvent.click(screen.getByText(/Demo laden/i))
     const call = onStart.mock.calls[0][0] as StartMode
+    expect(call.kind).toBe('demo')
     if (call.kind === 'demo') {
       expect(call.scenario).toBe('pe')
     }
@@ -114,6 +115,7 @@ describe('StartScreen — onStart callbacks', () => {
     fireEvent.click(screen.getByText('EN'))
     fireEvent.click(screen.getByText(/Demo laden/i))
     const call = onStart.mock.calls[0][0] as StartMode
+    expect(call.kind).toBe('demo')
     if (call.kind === 'demo') {
       expect(call.lang).toBe('en')
     }

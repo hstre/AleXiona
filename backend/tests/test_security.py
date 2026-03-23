@@ -80,7 +80,7 @@ class TestAuthMiddleware:
 
     def test_health_endpoint_requires_no_token(self, client):
         resp = client.get("/health")
-        assert resp.status_code in (200, 404)  # present or not, but not 401
+        assert resp.status_code == 200
 
     def test_auth_session_endpoint_requires_no_token(self, client):
         resp = client.post("/api/auth/session", json={"role": "clinician"})
