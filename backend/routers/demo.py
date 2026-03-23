@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from demo_seed import seed_demo
 from api_errors import internal_error
+from auth import UserSession, require_user
 
 router = APIRouter(prefix="/api/demo", tags=["demo"])
 
@@ -69,7 +70,11 @@ async def seed(
     session_id: str,
     lang:     str = Query(default="en",  pattern="^(en|de)$"),
     scenario: str = Query(default="cap", pattern="^(cap|pe|ards|nstemi)$"),
+    user: UserSession = Depends(require_user),
 ):
+    # Enforce session ownership: token must be bound to this session_id
+    if user.session_id and user.session_id != session_id:
+        raise HTTPException(status_code=403, detail="Access denied")
     try:
         result = seed_demo(session_id, lang=lang, scenario=scenario)
         return result

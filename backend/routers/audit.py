@@ -6,9 +6,10 @@ GET /api/audit/session/{session_id} → all AuditEvents for a session, newest fi
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from api_errors import internal_error, not_found
+from auth import UserSession, require_user
 from models import AuditEvent, AuditEventType, AuditTrailResponse
 from neo4j_client import get_db
 
@@ -31,15 +32,20 @@ def _to_audit_event(row: dict) -> AuditEvent:
 
 
 @router.get("/claim/{claim_id}", response_model=AuditTrailResponse)
-async def get_claim_audit_trail(claim_id: str):
+async def get_claim_audit_trail(
+    claim_id: str,
+    user: UserSession = Depends(require_user),
+):
     """Return the full audit trail for a single Claim, oldest event first."""
     db = get_db()
     try:
+        claim = db.get_claim_by_id(claim_id)
+        if claim is None:
+            raise not_found(f"Claim {claim_id!r} not found")
+        # Enforce ownership: claim must belong to the token's session
+        if user.session_id and claim.get("session_id") != user.session_id:
+            raise HTTPException(status_code=403, detail="Access denied")
         rows = db.get_claim_audit_trail(claim_id)
-        if not rows:
-            # Check whether the claim itself exists to distinguish 404 vs empty log
-            if db.get_claim_by_id(claim_id) is None:
-                raise not_found(f"Claim {claim_id!r} not found")
         return AuditTrailResponse(
             claim_id=claim_id,
             events=[_to_audit_event(r) for r in rows],
@@ -51,8 +57,13 @@ async def get_claim_audit_trail(claim_id: str):
 
 
 @router.get("/session/{session_id}", response_model=AuditTrailResponse)
-async def get_session_audit_trail(session_id: str):
+async def get_session_audit_trail(
+    session_id: str,
+    user: UserSession = Depends(require_user),
+):
     """Return all AuditEvents for a session, oldest first."""
+    if user.session_id and user.session_id != session_id:
+        raise HTTPException(status_code=403, detail="Access denied")
     db = get_db()
     try:
         rows = db.get_session_audit_trail(session_id)

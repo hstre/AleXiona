@@ -235,7 +235,7 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
           })
           while (queue.length) {
             const { id: curId, ancestor } = queue.shift()!
-            const cur = cy.$('#' + curId)
+            const cur = cy.$id(curId)
             cur.connectedEdges('[label="derives_from"]').forEach((e: any) => {
               e.addClass('chain-edge')
               const other = e.source().id() === curId ? e.target() : e.source()
