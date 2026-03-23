@@ -456,7 +456,7 @@ class ClinicalInputType(str, Enum):
 
 
 class ClinicalInput(BaseModel):
-    text:        str
+    text:        str = Field(..., min_length=1, max_length=20_000)
     input_type:  ClinicalInputType
     source_ref:  str               = ""       # e.g. "Synlab-Befund 2024-03-21"
     event_time:  Optional[datetime] = None

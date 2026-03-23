@@ -8,13 +8,19 @@ let _sessionToken: string | null =
   typeof window !== 'undefined' ? sessionStorage.getItem('alexiona_token') : null
 
 /** Obtain a session token if we don't have one yet.  Called lazily before the
- *  first API request so SSR/build-time imports don't trigger a fetch. */
+ *  first API request so SSR/build-time imports don't trigger a fetch.
+ *  The token is bound to the session_id currently stored in localStorage so
+ *  the backend can enforce session ownership. */
 async function ensureSession(): Promise<void> {
   if (_sessionToken) return
+  const sessionId =
+    typeof window !== 'undefined'
+      ? (localStorage.getItem('alexiona_session') ?? undefined)
+      : undefined
   const res = await fetch(`${API_URL}/api/auth/session`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ role: 'clinician' }),
+    body: JSON.stringify({ role: 'clinician', session_id: sessionId }),
   })
   if (!res.ok) throw new Error(`Auth failed: HTTP ${res.status}`)
   const data = await res.json() as { token: string }

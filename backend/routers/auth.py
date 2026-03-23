@@ -1,10 +1,10 @@
 """Auth router — session token creation and introspection."""
 
+import uuid
 import structlog
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from auth import create_token, decode_token, require_user, UserSession
-from fastapi import Depends
 
 log = structlog.get_logger(__name__)
 
@@ -12,7 +12,8 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 class SessionRequest(BaseModel):
-    role: str = "clinician"   # "clinician" | "demo"
+    role:       str = "clinician"   # "clinician" | "demo"
+    session_id: str = ""            # clinical session UUID to bind to this token
 
 
 class SessionResponse(BaseModel):
@@ -35,7 +36,8 @@ def create_session(body: SessionRequest, request: Request):
     if body.role not in ("clinician", "demo"):
         raise HTTPException(status_code=422, detail="role must be 'clinician' or 'demo'")
 
-    token = create_token(body.role)
+    sid   = body.session_id or str(uuid.uuid4())
+    token = create_token(body.role, sid)
     # Decode to extract the generated user_id without storing state
     user = decode_token(token)
 

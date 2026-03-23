@@ -1,4 +1,5 @@
 import os
+import uuid as _uuid
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -79,13 +80,35 @@ app.add_middleware(
 
 # ── Auth middleware ───────────────────────────────────────────────────────────
 # Public paths that do not require a session token.
-_PUBLIC_PATHS = {"/health", "/api/auth/session"}
+_PUBLIC_PATHS = {"/health", "/api/auth/session", "/api/graph/report-types"}
+
+
+def _path_session_id(path: str) -> str | None:
+    """
+    Extract the session_id UUID segment from API paths such as
+      /api/graph/{session_id}/...
+      /api/sessions/{session_id}
+      /api/chat/{session_id}
+    Returns None when the path carries no session_id (e.g. /api/sessions list).
+    """
+    parts = [p for p in path.split("/") if p]
+    # parts: ['api', '<router>', '<maybe-session-id>', ...]
+    if len(parts) >= 3:
+        candidate = parts[2]
+        try:
+            _uuid.UUID(candidate)
+            return candidate
+        except ValueError:
+            pass
+    return None
+
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     """
     Validate session token on every request except public paths.
     Missing or invalid token → HTTP 401.
+    Mismatched session_id (token vs URL path) → HTTP 403.
     """
     path = request.url.path
     if path in _PUBLIC_PATHS or request.method == "OPTIONS":
@@ -112,6 +135,15 @@ async def auth_middleware(request: Request, call_next):
     else:
         log.warning("auth_anonymous", path=path)
         return JSONResponse({"detail": "Session token required"}, status_code=401)
+
+    # Session ownership check: if the token carries a session_id (sid) and the
+    # URL contains a UUID in the session_id position, they must match.
+    if user.session_id:
+        path_sid = _path_session_id(path)
+        if path_sid and path_sid != user.session_id:
+            log.warning("session_mismatch",
+                        token_sid=user.session_id, path_sid=path_sid, path=path)
+            return JSONResponse({"detail": "Access denied"}, status_code=403)
 
     try:
         response = await call_next(request)

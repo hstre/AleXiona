@@ -37,8 +37,14 @@ from fastapi import Depends, HTTPException, Request, status
 
 log = structlog.get_logger(__name__)
 
-_SECRET_KEY    = os.getenv("SECRET_KEY", "change-me-in-production-please")
-_MAX_AGE       = int(os.getenv("SESSION_MAX_AGE_HOURS", "12")) * 3600
+_raw_secret = os.getenv("SECRET_KEY", "")
+if not _raw_secret:
+    raise RuntimeError(
+        "SECRET_KEY environment variable is not set. "
+        "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+    )
+_SECRET_KEY    = _raw_secret
+_MAX_AGE       = int(os.getenv("SESSION_MAX_AGE_HOURS", "8")) * 3600
 _SALT          = "alexiona-session-v1"
 
 _serializer = URLSafeTimedSerializer(_SECRET_KEY, salt=_SALT)
@@ -47,8 +53,9 @@ _serializer = URLSafeTimedSerializer(_SECRET_KEY, salt=_SALT)
 
 @dataclass
 class UserSession:
-    user_id: str
-    role:    str          # "clinician" | "demo"
+    user_id:    str
+    role:       str          # "clinician" | "demo"
+    session_id: str          # clinical session UUID bound to this token
 
     @property
     def is_clinician(self) -> bool:
@@ -56,11 +63,11 @@ class UserSession:
 
 # ── Token helpers ─────────────────────────────────────────────────────────────
 
-def create_token(role: str) -> str:
-    """Create a signed, time-limited session token."""
+def create_token(role: str, session_id: str) -> str:
+    """Create a signed, time-limited session token bound to a clinical session."""
     if role not in ("clinician", "demo"):
         raise ValueError(f"Unknown role: {role!r}")
-    payload = {"uid": str(uuid.uuid4()), "role": role}
+    payload = {"uid": str(uuid.uuid4()), "role": role, "sid": session_id}
     return _serializer.dumps(payload)
 
 
@@ -72,7 +79,11 @@ def decode_token(token: str) -> UserSession:
         raise ValueError("Session expired — please log in again")
     except BadSignature:
         raise ValueError("Invalid session token")
-    return UserSession(user_id=payload["uid"], role=payload["role"])
+    return UserSession(
+        user_id=payload["uid"],
+        role=payload["role"],
+        session_id=payload.get("sid", ""),   # "" → old tokens without sid (compat)
+    )
 
 # ── FastAPI dependencies ───────────────────────────────────────────────────────
 
