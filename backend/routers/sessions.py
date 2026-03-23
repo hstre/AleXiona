@@ -24,7 +24,13 @@ async def list_sessions(request: Request, user: UserSession = Depends(require_us
 @router.delete("/{session_id}")
 @limiter.limit("5/minute")
 async def delete_session(session_id: str, request: Request, user: UserSession = Depends(require_user)):
-    """Delete a session.  Ownership enforced by middleware (token.sid == path sid) and require_user."""
+    """Delete a session.  Ownership enforced by explicit check and middleware."""
+    # Middleware enforces token.sid == path sid when token carries a session_id.
+    # Explicit check covers the edge case of tokens without a bound session_id
+    # (old/demo tokens) which would otherwise bypass the middleware guard.
+    if not user.session_id or user.session_id != session_id:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Access denied")
     try:
         get_db().delete_session(session_id)
         return {"status": "deleted"}
