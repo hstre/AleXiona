@@ -23,8 +23,8 @@ async def list_sessions(http_request: Request, user: UserSession = Depends(requi
 
 @router.delete("/{session_id}")
 @limiter.limit("5/minute")
-async def delete_session(session_id: str, http_request: Request):
-    """Delete a session.  Ownership is enforced by the auth middleware."""
+async def delete_session(session_id: str, http_request: Request, user: UserSession = Depends(require_user)):
+    """Delete a session.  Ownership enforced by middleware (token.sid == path sid) and require_user."""
     try:
         get_db().delete_session(session_id)
         return {"status": "deleted"}

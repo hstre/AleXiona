@@ -136,7 +136,6 @@ class Neo4jClient:
     # ── Write ────────────────────────────────────────────────────────────────
 
     def store_claims(self, claims: list[Claim], session_id: str) -> list[str]:
-        self._cache.invalidate(session_id)
         claim_ids = []
         with self.driver.session() as s, s.begin_transaction() as tx:
             for claim in claims:
@@ -228,6 +227,9 @@ class Neo4jClient:
                         rel_type=rel.type,
                     )
 
+        # Invalidate AFTER the transaction commits so concurrent reads don't
+        # fetch stale data that predates the write.
+        self._cache.invalidate(session_id)
         return claim_ids
 
     def link_possible_related(self, new_claim_ids: list[str], session_id: str) -> None:

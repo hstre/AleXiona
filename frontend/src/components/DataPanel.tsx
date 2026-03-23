@@ -157,13 +157,12 @@ export default function DataPanel({
     setBulkWorking(true)
     const ids = Array.from(selected)
     try {
-      if (bulkAction === 'status') {
-        await batchPatch(ids, { status: bulkStatus })
-      } else {
-        await batchPatch(ids, { claim_type: bulkType })
-      }
+      const failed = bulkAction === 'status'
+        ? await batchPatch(ids, { status: bulkStatus })
+        : await batchPatch(ids, { claim_type: bulkType })
       setSelected(new Set())
       onNewClaims()
+      if (failed > 0) setApiError(`${failed} of ${ids.length} updates failed`)
     } catch (err) {
       setApiError(err instanceof Error ? err.message : 'Bulk update failed')
     } finally {
@@ -175,9 +174,11 @@ export default function DataPanel({
     if (selected.size === 0 || !confirm(`Delete ${selected.size} claim${selected.size > 1 ? 's' : ''}?`)) return
     setBulkWorking(true)
     try {
-      await batchDelete(Array.from(selected))
+      const ids = Array.from(selected)
+      const failed = await batchDelete(ids)
       setSelected(new Set())
       onNewClaims()
+      if (failed > 0) setApiError(`${failed} of ${ids.length} deletes failed`)
     } catch (err) {
       setApiError(err instanceof Error ? err.message : 'Delete failed')
     } finally {

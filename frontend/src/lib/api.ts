@@ -93,6 +93,7 @@ export type ClaimType =
 export type SourceType =
   | 'clinician' | 'llm' | 'guideline'
   | 'imaging_model' | 'lab_system' | 'imported_document'
+  | 'patient_report' | 'wearable' | 'home_device' | 'caregiver_report'
 
 export type ClaimStatus = 'active' | 'observed' | 'inferred' | 'confirmed' | 'contested' | 'refuted' | 'withdrawn' | 'resolved' | 'superseded'
 export type ClaimTrend  = 'improving' | 'worsening' | 'stable' | 'unknown'
@@ -261,7 +262,8 @@ export async function* streamMessage(
   })
   if (!res.ok) throw await parseError(res)
 
-  const reader  = res.body!.getReader()
+  if (!res.body) throw new Error('Streaming response body is null')
+  const reader  = res.body.getReader()
   const decoder = new TextDecoder()
   let   buf     = ''
 
@@ -314,14 +316,16 @@ export async function deleteClaim(claimId: string): Promise<void> {
   if (!res.ok) throw await parseError(res)
 }
 
-/** Patch multiple claims in parallel. Silently skips ids that fail. */
-export async function batchPatch(ids: string[], fields: ClaimPatch): Promise<void> {
-  await Promise.all(ids.map(id => patchClaim(id, fields).catch(() => {})))
+/** Patch multiple claims in parallel. Returns count of failures (0 = all ok). */
+export async function batchPatch(ids: string[], fields: ClaimPatch): Promise<number> {
+  const results = await Promise.allSettled(ids.map(id => patchClaim(id, fields)))
+  return results.filter(r => r.status === 'rejected').length
 }
 
-/** Delete multiple claims in parallel. Silently skips ids that fail. */
-export async function batchDelete(ids: string[]): Promise<void> {
-  await Promise.all(ids.map(id => deleteClaim(id).catch(() => {})))
+/** Delete multiple claims in parallel. Returns count of failures (0 = all ok). */
+export async function batchDelete(ids: string[]): Promise<number> {
+  const results = await Promise.allSettled(ids.map(id => deleteClaim(id)))
+  return results.filter(r => r.status === 'rejected').length
 }
 
 export async function runCounterfactual(
