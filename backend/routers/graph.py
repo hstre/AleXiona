@@ -117,7 +117,7 @@ class HypothesisCounterfactualPayload(BaseModel):
 
 @router.post("/{session_id}/counterfactual/hypothesis", response_model=HypothesisCounterfactualResult)
 @limiter.limit("5/minute")
-async def hypothesis_counterfactual(session_id: str, payload: HypothesisCounterfactualPayload, http_request: Request):
+async def hypothesis_counterfactual(session_id: str, payload: HypothesisCounterfactualPayload, request: Request):
     """Ask: 'What would need to change for this hypothesis to be false?'"""
     db = get_db()
     try:
@@ -135,7 +135,7 @@ async def hypothesis_counterfactual(session_id: str, payload: HypothesisCounterf
 
 @router.post("/{session_id}/counterfactual/{claim_id}", response_model=CounterfactualResult)
 @limiter.limit("5/minute")
-async def counterfactual(session_id: str, claim_id: str, http_request: Request):
+async def counterfactual(session_id: str, claim_id: str, request: Request):
     db = get_db()
     try:
         all_claims = db.get_all_claims_for_session(session_id)
@@ -205,7 +205,7 @@ class ConflictExplainPayload(BaseModel):
 
 @router.post("/{session_id}/conflicts/explain")
 @limiter.limit("10/minute")
-async def explain_conflict(session_id: str, payload: ConflictExplainPayload, http_request: Request):
+async def explain_conflict(session_id: str, payload: ConflictExplainPayload, request: Request):
     try:
         claims = get_db().get_all_claims_for_session(session_id)
         explanation = _explain_conflict(payload.model_dump(), claims)
@@ -258,11 +258,18 @@ async def get_claim_chain(session_id: str, claim_id: str):
 
 
 @router.patch("/claim/{claim_id}")
-async def update_claim(claim_id: str, update: NodeUpdate):
+@limiter.limit("30/minute")
+async def update_claim(claim_id: str, update: NodeUpdate, request: Request):
     db = get_db()
     try:
         before = db.get_claim_by_id(claim_id)
-        session_id = (before or {}).get("session_id", "")
+        if not before:
+            raise not_found(f"Claim {claim_id!r} not found")
+        session_id = before.get("session_id", "")
+        # Ownership: token session_id must match the claim's session_id
+        token_sid = getattr(getattr(request.state, "user", None), "session_id", "")
+        if token_sid and session_id != token_sid:
+            raise HTTPException(status_code=403, detail="Access denied")
         changes = update.model_dump(exclude_none=True)
         db.update_claim(claim_id, changes, session_id=session_id)
         after = db.get_claim_by_id(claim_id)
@@ -274,13 +281,15 @@ async def update_claim(claim_id: str, update: NodeUpdate):
             meta={"changed_fields": list(changes.keys())},
         )
         return {"status": "updated"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise internal_error(e)
 
 
 @router.get("/{session_id}/reasoning/explain", response_model=ReasoningExplanation)
 @limiter.limit("20/minute")
-async def get_reasoning_explanation(session_id: str, http_request: Request):
+async def get_reasoning_explanation(session_id: str, request: Request):
     """
     Per-claim contribution breakdown for every active hypothesis.
 
@@ -431,7 +440,7 @@ async def list_report_types():
 
 @router.post("/{session_id}/report", response_model=ClinicalReport)
 @limiter.limit("5/minute")
-async def create_report(session_id: str, body: GenerateReportRequest, http_request: Request):
+async def create_report(session_id: str, body: GenerateReportRequest, request: Request):
     """
     Generate a clinical report from the current claim graph.
 
@@ -569,11 +578,18 @@ async def get_med(session_id: str):
 
 
 @router.delete("/claim/{claim_id}")
-async def delete_claim(claim_id: str):
+@limiter.limit("30/minute")
+async def delete_claim(claim_id: str, request: Request):
     db = get_db()
     try:
         before = db.get_claim_by_id(claim_id)
-        session_id = (before or {}).get("session_id", "")
+        if not before:
+            raise not_found(f"Claim {claim_id!r} not found")
+        session_id = before.get("session_id", "")
+        # Ownership: token session_id must match the claim's session_id
+        token_sid = getattr(getattr(request.state, "user", None), "session_id", "")
+        if token_sid and session_id != token_sid:
+            raise HTTPException(status_code=403, detail="Access denied")
         db.delete_claim(claim_id, session_id=session_id)
         log_deleted(
             claim_id, session_id,
@@ -581,5 +597,7 @@ async def delete_claim(claim_id: str):
             before=before,
         )
         return {"status": "deleted"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise internal_error(e)

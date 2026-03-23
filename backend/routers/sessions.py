@@ -9,7 +9,7 @@ router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
 @router.get("")
 @limiter.limit("20/minute")
-async def list_sessions(http_request: Request, user: UserSession = Depends(require_user)):
+async def list_sessions(request: Request, user: UserSession = Depends(require_user)):
     """Return only the session belonging to the current token."""
     try:
         sessions = get_db().list_sessions()
@@ -23,7 +23,7 @@ async def list_sessions(http_request: Request, user: UserSession = Depends(requi
 
 @router.delete("/{session_id}")
 @limiter.limit("5/minute")
-async def delete_session(session_id: str, http_request: Request, user: UserSession = Depends(require_user)):
+async def delete_session(session_id: str, request: Request, user: UserSession = Depends(require_user)):
     """Delete a session.  Ownership enforced by middleware (token.sid == path sid) and require_user."""
     try:
         get_db().delete_session(session_id)

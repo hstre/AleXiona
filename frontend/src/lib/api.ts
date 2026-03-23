@@ -95,7 +95,7 @@ export type SourceType =
   | 'imaging_model' | 'lab_system' | 'imported_document'
   | 'patient_report' | 'wearable' | 'home_device' | 'caregiver_report'
 
-export type ClaimStatus = 'active' | 'observed' | 'inferred' | 'confirmed' | 'contested' | 'refuted' | 'withdrawn' | 'resolved' | 'superseded'
+export type ClaimStatus = 'active' | 'observed' | 'inferred' | 'confirmed' | 'contested' | 'refuted' | 'withdrawn' | 'resolved' | 'superseded' | 'tentative'
 export type ClaimTrend  = 'improving' | 'worsening' | 'stable' | 'unknown'
 
 export type ConflictType     = 'competing_hypothesis' | 'negation' | 'evidence_mismatch' | 'timeline_gap' | 'therapy_without_indication' | 'stale_hypothesis' | 'contradictory_values' | 'temporal_inconsistency'

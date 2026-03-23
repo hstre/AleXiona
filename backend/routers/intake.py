@@ -65,24 +65,24 @@ _MEASUREMENT_TIER: dict[str, str] = {
 
 # ── POST /api/intake/conversation ─────────────────────────────────────────────
 
-def _check_body_session(request_session_id: str, http_request: Request) -> None:
+def _check_body_session(request_session_id: str, request: Request) -> None:
     """Raise 422 if the session_id in the request body doesn't match the token."""
-    token_sid = getattr(getattr(http_request.state, "user", None), "session_id", "")
+    token_sid = getattr(getattr(request.state, "user", None), "session_id", "")
     if token_sid and request_session_id != token_sid:
         raise validation_error("Session ID in body does not match session token")
 
 
 @router.post("/conversation", response_model=IntakeConversationResponse)
 @limiter.limit("10/minute")
-async def intake_conversation(request: IntakeConversationRequest, http_request: Request):
+async def intake_conversation(body: IntakeConversationRequest, request: Request):
     """Patient / caregiver free text → Claims (patient_generated tier).
 
     The LLM extracts structure; source_type and evidence_tier are overridden
     at this boundary to patient_report / caregiver_report.
     Epistemic safeguards: no 'diagnosis' claim_type, no 'confirmed' status.
     """
-    _check_body_session(request.session_id, http_request)
-    if not request.text or not request.text.strip():
+    _check_body_session(body.session_id, request)
+    if not body.text or not body.text.strip():
         raise validation_error("Conversation text cannot be empty.")
 
     loop = asyncio.get_event_loop()
@@ -91,23 +91,23 @@ async def intake_conversation(request: IntakeConversationRequest, http_request: 
         extraction = await loop.run_in_executor(
             _executor,
             lambda: extract_claims_conversation(
-                request.text,
-                source_type=request.source_type,
-                source_ref=request.source_ref,
+                body.text,
+                source_type=body.source_type,
+                source_ref=body.source_ref,
             ),
         )
         if extraction.claims:
-            claim_ids = db.store_claims(extraction.claims, request.session_id)
+            claim_ids = db.store_claims(extraction.claims, body.session_id)
             log_created_batch(
-                claim_ids, extraction.claims, request.session_id,
+                claim_ids, extraction.claims, body.session_id,
                 actor=AuditActor.intake_conversation,
                 pipeline_stage="Stage 1–3: LLM extraction + patient_generated override",
-                meta={"source_type": request.source_type, "source_ref": request.source_ref},
+                meta={"source_type": body.source_type, "source_ref": body.source_ref},
             )
 
         return IntakeConversationResponse(
             claims=extraction.claims,
-            session_id=request.session_id,
+            session_id=body.session_id,
         )
     except HTTPException:
         raise
@@ -119,20 +119,20 @@ async def intake_conversation(request: IntakeConversationRequest, http_request: 
 
 @router.post("/measurements", response_model=IntakeMeasurementsResponse)
 @limiter.limit("30/minute")
-async def intake_measurements(request: IntakeMeasurementsRequest, http_request: Request):
+async def intake_measurements(body: IntakeMeasurementsRequest, request: Request):
     """Wearable / home-device measurements + PatientObservations → Claims + TrendSignals.
 
     Purely rule-based — no LLM call.  Each measurement produces a point-in-time
     Claim; series with ≥ 3 points additionally produce a TrendSignal Claim.
     """
-    _check_body_session(request.session_id, http_request)
+    _check_body_session(body.session_id, request)
     db = get_db()
     try:
         claims: list[Claim] = []
         trend_signals: list[TrendSignal] = []
 
         # 1. PatientObservations (free-text self-reports alongside device data)
-        for obs in request.observations:
+        for obs in body.observations:
             candidate = ingest_patient_observation(obs)
             claim = candidate_to_claim(
                 candidate,
@@ -143,7 +143,7 @@ async def intake_measurements(request: IntakeMeasurementsRequest, http_request: 
             claims.append(claim)
 
         # 2. Measurements — point-in-time claims
-        for pgm in request.measurements:
+        for pgm in body.measurements:
             candidate = ingest_measurement(pgm)
             claim = candidate_to_claim(
                 candidate,
@@ -155,7 +155,7 @@ async def intake_measurements(request: IntakeMeasurementsRequest, http_request: 
 
         # 3. Trend detection per token
         by_token: dict[str, list] = defaultdict(list)
-        for pgm in request.measurements:
+        for pgm in body.measurements:
             by_token[pgm.token].append(pgm)
 
         for token_pgms in by_token.values():
@@ -191,18 +191,18 @@ async def intake_measurements(request: IntakeMeasurementsRequest, http_request: 
             claims.append(trend_claim)
 
         if claims:
-            claim_ids = db.store_claims(claims, request.session_id)
+            claim_ids = db.store_claims(claims, body.session_id)
             log_created_batch(
-                claim_ids, claims, request.session_id,
+                claim_ids, claims, body.session_id,
                 actor=AuditActor.intake_measurements,
                 pipeline_stage="Stage 2: Rule-based measurement normalization",
-                meta={"n_measurements": len(request.measurements), "n_trends": len(trend_signals)},
+                meta={"n_measurements": len(body.measurements), "n_trends": len(trend_signals)},
             )
 
         return IntakeMeasurementsResponse(
             claims=claims,
             trend_signals=trend_signals,
-            session_id=request.session_id,
+            session_id=body.session_id,
         )
     except HTTPException:
         raise
@@ -214,7 +214,7 @@ async def intake_measurements(request: IntakeMeasurementsRequest, http_request: 
 
 @router.post("/clinical", response_model=IntakeClinicalResponse)
 @limiter.limit("10/minute")
-async def intake_clinical(request: IntakeClinicalRequest, http_request: Request):
+async def intake_clinical(body: IntakeClinicalRequest, request: Request):
     """Structured clinical inputs (lab, medication, document, vitals) → Claims.
 
     Each ClinicalInput is processed separately so source_type and evidence_tier
@@ -223,13 +223,13 @@ async def intake_clinical(request: IntakeClinicalRequest, http_request: Request)
     medication/vitals → source_type=clinician, evidence_tier=clinician_observed
     document → source_type=imported_document, evidence_tier=clinician_observed
     """
-    _check_body_session(request.session_id, http_request)
+    _check_body_session(body.session_id, request)
     loop = asyncio.get_event_loop()
     db = get_db()
     try:
         all_claims: list[Claim] = []
 
-        for clinical_input in request.inputs:
+        for clinical_input in body.inputs:
             if not clinical_input.text or not clinical_input.text.strip():
                 raise validation_error("Clinical input text cannot be empty.")
             event_hint = (
@@ -248,18 +248,18 @@ async def intake_clinical(request: IntakeClinicalRequest, http_request: Request)
             all_claims.extend(extraction.claims)
 
         if all_claims:
-            claim_ids = db.store_claims(all_claims, request.session_id)
-            input_types = list({ci.input_type.value for ci in request.inputs})
+            claim_ids = db.store_claims(all_claims, body.session_id)
+            input_types = list({ci.input_type.value for ci in body.inputs})
             log_created_batch(
-                claim_ids, all_claims, request.session_id,
+                claim_ids, all_claims, body.session_id,
                 actor=AuditActor.intake_clinical,
                 pipeline_stage="Stage 1–3: LLM extraction + clinical tier override",
-                meta={"input_types": input_types, "n_inputs": len(request.inputs)},
+                meta={"input_types": input_types, "n_inputs": len(body.inputs)},
             )
 
         return IntakeClinicalResponse(
             claims=all_claims,
-            session_id=request.session_id,
+            session_id=body.session_id,
         )
     except HTTPException:
         raise

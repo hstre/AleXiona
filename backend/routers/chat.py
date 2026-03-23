@@ -26,30 +26,30 @@ _executor = ThreadPoolExecutor(max_workers=10)
 
 @router.post("", response_model=ChatResponse)
 @limiter.limit("10/minute")
-async def chat(request: ChatRequest, http_request: Request):
-    token_sid = getattr(getattr(http_request.state, "user", None), "session_id", "")
-    if token_sid and request.session_id != token_sid:
+async def chat(body: ChatRequest, request: Request):
+    token_sid = getattr(getattr(request.state, "user", None), "session_id", "")
+    if token_sid and body.session_id != token_sid:
         raise validation_error("Session ID in body does not match session token")
     db   = get_db()
     loop = asyncio.get_event_loop()
     try:
-        extraction = extract_claims(request.message)
+        extraction = extract_claims(body.message)
 
         if extraction.claims:
-            claim_ids = db.store_claims(extraction.claims, request.session_id)
+            claim_ids = db.store_claims(extraction.claims, body.session_id)
             log_created_batch(
-                claim_ids, extraction.claims, request.session_id,
+                claim_ids, extraction.claims, body.session_id,
                 actor=AuditActor.chat,
                 pipeline_stage="Stage 1–3: LLM extraction via /api/chat",
             )
 
-        all_claims    = db.get_all_claims_for_session(request.session_id)
-        graph_context = db.get_context_for_query(request.session_id)
+        all_claims    = db.get_all_claims_for_session(body.session_id)
+        graph_context = db.get_context_for_query(body.session_id)
 
         reply_result, reasoning_result = await asyncio.gather(
             loop.run_in_executor(
                 _executor, answer_with_context,
-                request.message, request.history, graph_context,
+                body.message, body.history, graph_context,
             ),
             loop.run_in_executor(_executor, analyze_reasoning, all_claims),
             return_exceptions=True,
@@ -69,7 +69,7 @@ async def chat(request: ChatRequest, http_request: Request):
         return ChatResponse(
             reply=reply,
             claims=extraction.claims,
-            session_id=request.session_id,
+            session_id=body.session_id,
             reasoning=reasoning,
             conflicts=conflicts,
         )
@@ -84,9 +84,9 @@ async def chat(request: ChatRequest, http_request: Request):
 
 @router.post("/stream")
 @limiter.limit("10/minute")
-async def chat_stream(request: ChatRequest, http_request: Request):
-    token_sid = getattr(getattr(http_request.state, "user", None), "session_id", "")
-    if token_sid and request.session_id != token_sid:
+async def chat_stream(body: ChatRequest, request: Request):
+    token_sid = getattr(getattr(request.state, "user", None), "session_id", "")
+    if token_sid and body.session_id != token_sid:
         raise validation_error("Session ID in body does not match session token")
     db   = get_db()
     loop = asyncio.get_event_loop()
@@ -95,7 +95,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
         # 1. Extract + store claims (sync work, run in thread)
         try:
             extraction = await loop.run_in_executor(
-                _executor, extract_claims, request.message
+                _executor, extract_claims, body.message
             )
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
@@ -104,10 +104,10 @@ async def chat_stream(request: ChatRequest, http_request: Request):
         if extraction.claims:
             try:
                 claim_ids = await loop.run_in_executor(
-                    _executor, db.store_claims, extraction.claims, request.session_id
+                    _executor, db.store_claims, extraction.claims, body.session_id
                 )
                 log_created_batch(
-                    claim_ids, extraction.claims, request.session_id,
+                    claim_ids, extraction.claims, body.session_id,
                     actor=AuditActor.chat,
                     pipeline_stage="Stage 1–3: LLM extraction via /api/chat/stream",
                 )
@@ -122,20 +122,20 @@ async def chat_stream(request: ChatRequest, http_request: Request):
 
         # 3. Fetch session context
         all_claims    = await loop.run_in_executor(
-            _executor, db.get_all_claims_for_session, request.session_id
+            _executor, db.get_all_claims_for_session, body.session_id
         )
         graph_context = await loop.run_in_executor(
-            _executor, db.get_context_for_query, request.session_id
+            _executor, db.get_context_for_query, body.session_id
         )
 
         # 4. Stream LLM reply tokens
         full_reply = ""
         try:
-            async for token in stream_answer_with_context(
-                request.message, request.history, graph_context
+            async for tok in stream_answer_with_context(
+                body.message, body.history, graph_context
             ):
-                full_reply += token
-                yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
+                full_reply += tok
+                yield f"data: {json.dumps({'type': 'token', 'content': tok})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
             return
@@ -160,7 +160,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
             "claims":     claims_payload,
             "reasoning":  reasoning.model_dump(mode="json") if reasoning else None,
             "conflicts":  [c.model_dump(mode="json") for c in conflicts],
-            "session_id": request.session_id,
+            "session_id": body.session_id,
         }
         yield f"data: {json.dumps(done_payload)}\n\n"
 
