@@ -33,6 +33,24 @@ _LAB_TYPES       = {"lab"}
 _STALE_LAB_HOURS = 48.0  # lab results older than this trigger stale_lab_evidence
 
 
+def _claim_is_active(claim: dict) -> bool:
+    """Return True if the claim is epistemically active (status + valid_until check)."""
+    if claim.get("status", "active") not in _ACTIVE_STATUSES:
+        return False
+    valid_until = claim.get("valid_until")
+    if valid_until is None:
+        return True
+    now = datetime.now(timezone.utc)
+    if isinstance(valid_until, str):
+        try:
+            valid_until = datetime.fromisoformat(valid_until.replace("Z", "+00:00"))
+        except ValueError:
+            return True
+    if hasattr(valid_until, "tzinfo") and valid_until.tzinfo is None:
+        valid_until = valid_until.replace(tzinfo=timezone.utc)
+    return valid_until >= now
+
+
 def _parse_event_time(claim: dict) -> datetime | None:
     """Extract event_time as a timezone-aware datetime, or None."""
     et = claim.get("event_time")
@@ -50,7 +68,7 @@ def _parse_event_time(claim: dict) -> datetime | None:
 
 
 def detect_conflicts(claims: list[dict]) -> list[Conflict]:
-    active = [c for c in claims if c.get("status", "active") in _ACTIVE_STATUSES]
+    active = [c for c in claims if _claim_is_active(c)]
     conflicts: list[Conflict] = []
 
     # ── Rule 1: Competing diagnoses / hypotheses ─────────────────────────────

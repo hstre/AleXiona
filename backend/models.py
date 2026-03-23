@@ -161,6 +161,7 @@ class Claim(BaseModel):
 
     # ── Epistemic provenance ─────────────────────────────────────────────────
     supersedes_claim_id:    Optional[str]        = None   # claim ID this replaces
+    negated:                bool                 = False  # claim asserts absence / rules out finding
     uncertainty_flag:       bool                 = False  # LLM/clinician flagged uncertainty
     assumptions:            list[str]            = []     # stated assumptions behind this claim
     normalized_token:       Optional[str]        = None   # canonical lab token (e.g. "crp")
@@ -399,6 +400,7 @@ class NodeUpdate(BaseModel):
     source_ref:             Optional[str]         = None
     notes:                  Optional[str]         = None
     # Epistemic fields patchable by clinician
+    negated:                Optional[bool]        = None
     uncertainty_flag:       Optional[bool]        = None
     supersedes_claim_id:    Optional[str]         = None
     valid_until:            Optional[datetime]    = None
@@ -545,6 +547,7 @@ class OrchestratorState(BaseModel):
     score_breakdown:    OrchestratorScoreBreakdown
     alternatives:       list[OrchestratorAlternative]
     state_transition:   Optional[str] = None  # e.g. "undecided → contested"; None when unchanged
+    decision_allowed:   bool          = False  # True when status == "confident"
     generated_at:       str
 
 

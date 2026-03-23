@@ -38,6 +38,25 @@ _LEAD_TYPES      = {"diagnosis", "hypothesis"}
 # contested is included — it means under review, not invalidated.
 _ACTIVE_STATUSES = {"active", "observed", "inferred", "confirmed", "contested"}
 
+
+def _claim_is_active(claim: dict) -> bool:
+    """Return True if the claim is epistemically active (status + valid_until check)."""
+    if claim.get("status", "active") not in _ACTIVE_STATUSES:
+        return False
+    valid_until = claim.get("valid_until")
+    if valid_until is None:
+        return True
+    now = datetime.now(timezone.utc)
+    if isinstance(valid_until, str):
+        try:
+            valid_until = datetime.fromisoformat(valid_until.replace("Z", "+00:00"))
+        except ValueError:
+            return True
+    if hasattr(valid_until, "tzinfo") and valid_until.tzinfo is None:
+        valid_until = valid_until.replace(tzinfo=timezone.utc)
+    return valid_until >= now
+
+
 # Source-weight boost applied to evidence claims with status="confirmed"
 _CONFIRMED_BOOST = 1.5
 
@@ -388,13 +407,14 @@ def score_hypothesis(hypothesis: dict, all_claims: list[dict]) -> HypothesisScor
     for c in all_claims:
         if c["id"] == hypothesis.get("id"):
             continue
-        c_status = c.get("status", "active")
-        if c_status not in _ACTIVE_STATUSES:
+        if not _claim_is_active(c):
             continue
         if c.get("claim_type") not in _EVIDENCE_TYPES:
             continue
 
         c_terms_neg = _key_terms_with_negation(c["text"])
+        if c.get("negated"):
+            c_terms_neg = {f"negated_{t}" if not t.startswith("negated_") else t for t in c_terms_neg}
         negated_c   = {t[8:] for t in c_terms_neg if t.startswith("negated_")}
         c_positive  = {t for t in c_terms_neg if not t.startswith("negated_")}
 
@@ -440,7 +460,7 @@ def score_hypothesis(hypothesis: dict, all_claims: list[dict]) -> HypothesisScor
         src_ref = c.get("source_ref", "")
         if not (src_ref.startswith("trend:") or src_ref.startswith("trend_signal:")):
             continue
-        if c.get("status", "active") not in _ACTIVE_STATUSES:
+        if not _claim_is_active(c):
             continue
         flag_match = _TREND_FLAG_RE.search(c.get("text", ""))
         if not flag_match:
@@ -488,7 +508,7 @@ def rank_hypotheses(all_claims: list[dict]) -> list[HypothesisScore]:
     hypotheses = [
         c for c in all_claims
         if c.get("claim_type") in _LEAD_TYPES
-        and c.get("status") in _ACTIVE_STATUSES
+        and _claim_is_active(c)
     ]
     scored = [score_hypothesis(h, all_claims) for h in hypotheses]
 
@@ -522,13 +542,14 @@ def _explain_single_hypothesis(
     for c in all_claims:
         if c["id"] == hypothesis.get("id"):
             continue
-        c_status = c.get("status", "active")
-        if c_status not in _ACTIVE_STATUSES:
+        if not _claim_is_active(c):
             continue
         if c.get("claim_type") not in _EVIDENCE_TYPES:
             continue
 
         c_terms_neg = _key_terms_with_negation(c["text"])
+        if c.get("negated"):
+            c_terms_neg = {f"negated_{t}" if not t.startswith("negated_") else t for t in c_terms_neg}
         negated_c   = {t[8:] for t in c_terms_neg if t.startswith("negated_")}
         c_positive  = {t for t in c_terms_neg if not t.startswith("negated_")}
 
@@ -612,7 +633,7 @@ def _explain_single_hypothesis(
         src_ref = c.get("source_ref", "")
         if not (src_ref.startswith("trend:") or src_ref.startswith("trend_signal:")):
             continue
-        if c.get("status", "active") not in _ACTIVE_STATUSES:
+        if not _claim_is_active(c):
             continue
         flag_match = _TREND_FLAG_RE.search(c.get("text", ""))
         if not flag_match:
@@ -685,7 +706,7 @@ def explain_hypothesis_scores(
     hypotheses = [
         c for c in all_claims
         if c.get("claim_type") in _LEAD_TYPES
-        and c.get("status") in _ACTIVE_STATUSES
+        and _claim_is_active(c)
     ]
     explained = [_explain_single_hypothesis(h, all_claims) for h in hypotheses]
     return sorted(explained, key=lambda x: x["rule_based_score"], reverse=True)
@@ -801,7 +822,7 @@ def _term_present_in_claims(term: str, claims: list[dict]) -> bool:
             break
 
     for c in claims:
-        if c.get("status") not in _ACTIVE_STATUSES or c.get("claim_type") not in _EVIDENCE_TYPES:
+        if not _claim_is_active(c) or c.get("claim_type") not in _EVIDENCE_TYPES:
             continue
         text = c["text"].lower()
 
@@ -913,7 +934,7 @@ def evaluate_all_guidelines(all_claims: list[dict]) -> dict[str, dict]:
     hypotheses = [
         c for c in all_claims
         if c.get("claim_type") in _LEAD_TYPES
-        and c.get("status") in _ACTIVE_STATUSES
+        and _claim_is_active(c)
     ]
     return {h["text"]: evaluate_guideline(h["text"], all_claims) for h in hypotheses}
 

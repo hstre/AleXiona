@@ -219,6 +219,7 @@ def orchestrate(
             "score_breakdown":    _zero_breakdown(),
             "alternatives":       [],
             "state_transition":   transition,
+            "decision_allowed":   False,
             "generated_at":       datetime.now(timezone.utc).isoformat(),
         }
 
@@ -329,6 +330,7 @@ def orchestrate(
         "score_breakdown":    breakdown,
         "alternatives":       alternatives,
         "state_transition":   transition,
+        "decision_allowed":   st == "confident",
         "generated_at":       datetime.now(timezone.utc).isoformat(),
     }
 

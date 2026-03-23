@@ -164,6 +164,7 @@ class Neo4jClient:
                         time_offset: $to, trend: $trend,
                         created_at: $now,
                         evidence_tier: $evidence_tier,
+                        negated: $negated,
                         uncertainty_flag: $uncertainty_flag,
                         normalized_token: $normalized_token,
                         patient_data_ref: $patient_data_ref,
@@ -190,6 +191,7 @@ class Neo4jClient:
                     trend=claim.trend.value,
                     now=now,
                     evidence_tier=claim.evidence_tier,
+                    negated=claim.negated,
                     uncertainty_flag=claim.uncertainty_flag,
                     normalized_token=claim.normalized_token,
                     patient_data_ref=claim.patient_data_ref,
@@ -300,7 +302,7 @@ class Neo4jClient:
     _ALLOWED_UPDATE_FIELDS: frozenset = frozenset({
         "text", "evidence_support_score", "claim_type", "source_type",
         "status", "trend", "time_offset", "source_ref", "notes",
-        "uncertainty_flag", "supersedes_claim_id", "valid_until",
+        "negated", "uncertainty_flag", "supersedes_claim_id", "valid_until",
         "evidence_tier",
     })
 
@@ -417,7 +419,9 @@ class Neo4jClient:
                        c.time_offset AS time_offset,
                        c.trend AS trend,
                        c.created_at AS created_at,
-                       c.notes AS notes
+                       c.notes AS notes,
+                       c.negated AS negated,
+                       c.valid_until AS valid_until
                 ORDER BY c.created_at
                 """,
                 session_id=session_id,
@@ -437,6 +441,8 @@ class Neo4jClient:
                     "trend":                  r["trend"] or "unknown",
                     "created_at":             r["created_at"] or "",
                     "notes":                  r["notes"] or "",
+                    "negated":                bool(r.get("negated") or False),
+                    "valid_until":            r.get("valid_until"),
                 }
                 for r in result
             ]
