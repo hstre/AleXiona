@@ -279,8 +279,8 @@ export async function* streamMessage(
       if (!text) continue
       try {
         yield JSON.parse(text) as StreamEvent
-      } catch {
-        // malformed line — skip
+      } catch (e) {
+        console.warn('[stream] malformed SSE line, skipping:', text, e)
       }
     }
   }
@@ -297,7 +297,7 @@ export interface ClaimPatch {
   evidence_support_score?: number
   claim_type?:             ClaimType
   status?:                 ClaimStatus
-  trend?:                  string
+  trend?:                  ClaimTrend
   time_offset?:            string | null
   source_ref?:             string
   notes?:                  string

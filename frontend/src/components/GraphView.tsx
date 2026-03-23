@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import type { GraphData, GraphNode, ClaimType, ClaimStatus, CounterfactualResult } from '@/lib/api'
+import type { GraphData, GraphNode, ClaimType, ClaimStatus, ClaimTrend, CounterfactualResult } from '@/lib/api'
 import { patchClaim, deleteClaim, runCounterfactual } from '@/lib/api'
 import { getTypeMeta, STATUS_META, TREND_META, confColor, confPct, essLabel, ESS_LABEL_META, CLAIM_TYPE_META } from '@/lib/utils'
 
@@ -148,7 +148,7 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
   const [editEss,        setEditEss]        = useState(0.8)
   const [editType,       setEditType]       = useState<ClaimType>('finding')
   const [editStatus,     setEditStatus]     = useState<ClaimStatus>('active')
-  const [editTrend,      setEditTrend]      = useState('unknown')
+  const [editTrend,      setEditTrend]      = useState<ClaimTrend>('unknown')
   const [editTimeOffset, setEditTimeOffset] = useState('')
   const [editSourceRef,  setEditSourceRef]  = useState('')
   const [editNotes,      setEditNotes]      = useState('')
@@ -510,7 +510,7 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
                   <div className="flex gap-2">
                     <div className="flex-1">
                       <p className="mb-1" style={{ color: 'var(--text-muted)' }}>Trend</p>
-                      <select value={editTrend} onChange={e => setEditTrend(e.target.value)}
+                      <select value={editTrend} onChange={e => setEditTrend(e.target.value as ClaimTrend)}
                         className="w-full text-xs rounded-md px-1.5 py-1 outline-none"
                         style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)' }}>
                         {Object.entries(TREND_META).map(([k, v]) => (

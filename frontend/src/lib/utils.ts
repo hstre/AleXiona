@@ -56,6 +56,7 @@ export const STATUS_META: Record<ClaimStatus, { label: string; color: string }> 
   withdrawn:  { label: 'Withdrawn',  color: '#9ca3af' },
   resolved:   { label: 'Resolved',   color: '#6b7280' },
   superseded: { label: 'Superseded', color: '#f59e0b' },
+  tentative:  { label: 'Tentative',  color: '#fb923c' },
 }
 
 // ── Trend ─────────────────────────────────────────────────────────────────────

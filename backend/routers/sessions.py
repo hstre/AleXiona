@@ -12,11 +12,11 @@ router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 async def list_sessions(request: Request, user: UserSession = Depends(require_user)):
     """Return only the session belonging to the current token."""
     try:
+        if not user.session_id:
+            # Token has no bound session_id (e.g. old/demo token) → expose nothing
+            return []
         sessions = get_db().list_sessions()
-        # Each user may only see their own session
-        if user.session_id:
-            return [s for s in sessions if s.get("session_id") == user.session_id]
-        return sessions
+        return [s for s in sessions if s.get("session_id") == user.session_id]
     except Exception as e:
         raise internal_error(e)
 
