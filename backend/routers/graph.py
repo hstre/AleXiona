@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from rate_limit import limiter
+from auth import UserSession, require_clinician
 from models import GraphData, NodeUpdate, CounterfactualResult, HypothesisCounterfactualResult, Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend, _normalize_time_offset, _parse_offset_hours, AuditActor, MEDResult, ReasoningExplanation, HypothesisExplanation, ClaimContribution, GuidelineEvaluation, RiskScoreResponse, RiskScoreItem, ClinicalRoleView, RoleAlert, RoleViewSection, ClinicalReport, ReportSection, GenerateReportRequest, ReportTypeDef, ReportSectionDef, PriorityExplanation, PriorityFactor, OrchestratorState, OrchestratorScoreBreakdown, OrchestratorAlternative
 from clinical_orchestrator import orchestrate
 from pydantic import BaseModel, Field, field_validator
@@ -117,7 +118,7 @@ class HypothesisCounterfactualPayload(BaseModel):
 
 @router.post("/{session_id}/counterfactual/hypothesis", response_model=HypothesisCounterfactualResult)
 @limiter.limit("5/minute")
-async def hypothesis_counterfactual(session_id: str, payload: HypothesisCounterfactualPayload, request: Request):
+async def hypothesis_counterfactual(session_id: str, payload: HypothesisCounterfactualPayload, request: Request, _user: UserSession = Depends(require_clinician)):
     """Ask: 'What would need to change for this hypothesis to be false?'"""
     db = get_db()
     try:
@@ -135,7 +136,7 @@ async def hypothesis_counterfactual(session_id: str, payload: HypothesisCounterf
 
 @router.post("/{session_id}/counterfactual/{claim_id}", response_model=CounterfactualResult)
 @limiter.limit("5/minute")
-async def counterfactual(session_id: str, claim_id: str, request: Request):
+async def counterfactual(session_id: str, claim_id: str, request: Request, _user: UserSession = Depends(require_clinician)):
     db = get_db()
     try:
         all_claims = db.get_all_claims_for_session(session_id)
@@ -205,7 +206,7 @@ class ConflictExplainPayload(BaseModel):
 
 @router.post("/{session_id}/conflicts/explain")
 @limiter.limit("10/minute")
-async def explain_conflict(session_id: str, payload: ConflictExplainPayload, request: Request):
+async def explain_conflict(session_id: str, payload: ConflictExplainPayload, request: Request, _user: UserSession = Depends(require_clinician)):
     try:
         claims = get_db().get_all_claims_for_session(session_id)
         explanation = _explain_conflict(payload.model_dump(), claims)
@@ -289,7 +290,7 @@ async def update_claim(claim_id: str, update: NodeUpdate, request: Request):
 
 @router.get("/{session_id}/reasoning/explain", response_model=ReasoningExplanation)
 @limiter.limit("20/minute")
-async def get_reasoning_explanation(session_id: str, request: Request):
+async def get_reasoning_explanation(session_id: str, request: Request, _user: UserSession = Depends(require_clinician)):
     """
     Per-claim contribution breakdown for every active hypothesis.
 
@@ -440,7 +441,7 @@ async def list_report_types():
 
 @router.post("/{session_id}/report", response_model=ClinicalReport)
 @limiter.limit("5/minute")
-async def create_report(session_id: str, body: GenerateReportRequest, request: Request):
+async def create_report(session_id: str, body: GenerateReportRequest, request: Request, _user: UserSession = Depends(require_clinician)):
     """
     Generate a clinical report from the current claim graph.
 

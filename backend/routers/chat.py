@@ -2,8 +2,9 @@ import asyncio
 import json
 import structlog
 from concurrent.futures import ThreadPoolExecutor
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from api_errors import internal_error, validation_error
+from auth import UserSession, require_clinician
 
 log = structlog.get_logger(__name__)
 from fastapi.responses import StreamingResponse
@@ -26,7 +27,7 @@ _executor = ThreadPoolExecutor(max_workers=10)
 
 @router.post("", response_model=ChatResponse)
 @limiter.limit("10/minute")
-async def chat(body: ChatRequest, request: Request):
+async def chat(body: ChatRequest, request: Request, _user: UserSession = Depends(require_clinician)):
     token_sid = getattr(getattr(request.state, "user", None), "session_id", "")
     if token_sid and body.session_id != token_sid:
         raise validation_error("Session ID in body does not match session token")
@@ -84,7 +85,7 @@ async def chat(body: ChatRequest, request: Request):
 
 @router.post("/stream")
 @limiter.limit("10/minute")
-async def chat_stream(body: ChatRequest, request: Request):
+async def chat_stream(body: ChatRequest, request: Request, _user: UserSession = Depends(require_clinician)):
     token_sid = getattr(getattr(request.state, "user", None), "session_id", "")
     if token_sid and body.session_id != token_sid:
         raise validation_error("Session ID in body does not match session token")

@@ -22,9 +22,10 @@ import structlog
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from api_errors import internal_error, validation_error
+from auth import UserSession, require_clinician
 from llm_client import extract_claims_conversation, extract_claims_clinical
 from datetime import datetime, timezone
 
@@ -74,7 +75,7 @@ def _check_body_session(request_session_id: str, request: Request) -> None:
 
 @router.post("/conversation", response_model=IntakeConversationResponse)
 @limiter.limit("10/minute")
-async def intake_conversation(body: IntakeConversationRequest, request: Request):
+async def intake_conversation(body: IntakeConversationRequest, request: Request, _user: UserSession = Depends(require_clinician)):
     """Patient / caregiver free text → Claims (patient_generated tier).
 
     The LLM extracts structure; source_type and evidence_tier are overridden
@@ -214,7 +215,7 @@ async def intake_measurements(body: IntakeMeasurementsRequest, request: Request)
 
 @router.post("/clinical", response_model=IntakeClinicalResponse)
 @limiter.limit("10/minute")
-async def intake_clinical(body: IntakeClinicalRequest, request: Request):
+async def intake_clinical(body: IntakeClinicalRequest, request: Request, _user: UserSession = Depends(require_clinician)):
     """Structured clinical inputs (lab, medication, document, vitals) → Claims.
 
     Each ClinicalInput is processed separately so source_type and evidence_tier

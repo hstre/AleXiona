@@ -446,7 +446,7 @@ def score_hypothesis(hypothesis: dict, all_claims: list[dict]) -> HypothesisScor
             # should not directly confirm a clinical diagnosis.
             is_patient    = src_type in _PATIENT_SOURCES
             is_diagnosis  = hypothesis.get("claim_type") == "diagnosis"
-            confirm_w     = 1.0 if is_patient else (_CONFIRMED_BOOST if c_status == "confirmed" else 1.0)
+            confirm_w     = 1.0 if is_patient else (_CONFIRMED_BOOST if c.get("status") == "confirmed" else 1.0)
             patient_diag_w = 0.5 if (is_patient and is_diagnosis) else 1.0
             support_score += ess * weight * src_w * t_w * confirm_w * patient_diag_w
             supporting_ids.append(c["id"])
@@ -607,7 +607,7 @@ def _explain_single_hypothesis(
             t_w         = _temporal_weight(c)
             is_patient   = src_type in _PATIENT_SOURCES
             is_diagnosis = hypothesis.get("claim_type") == "diagnosis"
-            confirm_w    = 1.0 if is_patient else (_CONFIRMED_BOOST if c_status == "confirmed" else 1.0)
+            confirm_w    = 1.0 if is_patient else (_CONFIRMED_BOOST if c.get("status") == "confirmed" else 1.0)
             patient_diag_w = 0.5 if (is_patient and is_diagnosis) else 1.0
             contrib = ess * weight * src_w * t_w * confirm_w * patient_diag_w
             support_score += contrib
