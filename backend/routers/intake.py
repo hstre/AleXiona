@@ -25,6 +25,8 @@ from fastapi import APIRouter, HTTPException, Request
 
 from api_errors import internal_error, validation_error
 from llm_client import extract_claims_conversation, extract_claims_clinical
+from datetime import datetime, timezone
+
 from models import (
     IntakeConversationRequest,
     IntakeConversationResponse,
@@ -34,10 +36,13 @@ from models import (
     IntakeClinicalResponse,
     Claim,
     TrendSignal,
+    AuditActor,
+    ClaimType,
+    ClaimStatus,
+    ClaimTrend,
 )
 from neo4j_client import get_db
 from audit_log import log_created_batch
-from models import AuditActor
 from patient_data import (
     ingest_measurement,
     ingest_patient_observation,
@@ -156,8 +161,6 @@ async def intake_measurements(request: IntakeMeasurementsRequest, http_request: 
                 f"{abs(trend.magnitude_pct):.1f}% over {trend.window_hours:.1f}h"
                 + (f" [{trend.clinical_flag}]" if trend.clinical_flag else "")
             )
-            from models import ClaimType, ClaimStatus, ClaimTrend
-            from datetime import datetime, timezone
             trend_claim = Claim(
                 text=trend_text,
                 entities=[trend.token],

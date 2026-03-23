@@ -22,10 +22,19 @@ async function ensureSession(): Promise<void> {
   if (typeof window !== 'undefined') sessionStorage.setItem('alexiona_token', data.token)
 }
 
+/** Normalise any HeadersInit value to a plain object. */
+function headersToObject(h: HeadersInit | undefined): Record<string, string> {
+  if (!h) return {}
+  if (h instanceof Headers) return Object.fromEntries(h.entries())
+  if (Array.isArray(h)) return Object.fromEntries(h)
+  return h as Record<string, string>
+}
+
 /** Headers for every authenticated request. */
 async function authHeaders(): Promise<Record<string, string>> {
   await ensureSession()
-  return { 'Content-Type': 'application/json', 'X-Session-Token': _sessionToken! }
+  if (!_sessionToken) throw new Error('Failed to obtain session token')
+  return { 'Content-Type': 'application/json', 'X-Session-Token': _sessionToken }
 }
 
 /** Clear the local session token (e.g. on 401 from server). */
@@ -39,10 +48,10 @@ export function clearSession(): void {
  * On 401 (expired token): clears session, obtains a new token, retries once.
  */
 async function apiFetch(url: string, init: RequestInit = {}): Promise<Response> {
-  const res = await fetch(url, { ...init, headers: { ...await authHeaders(), ...(init.headers as Record<string,string> ?? {}) } })
+  const res = await fetch(url, { ...init, headers: { ...await authHeaders(), ...headersToObject(init.headers) } })
   if (res.status === 401) {
     clearSession()
-    return fetch(url, { ...init, headers: { ...await authHeaders(), ...(init.headers as Record<string,string> ?? {}) } })
+    return fetch(url, { ...init, headers: { ...await authHeaders(), ...headersToObject(init.headers) } })
   }
   return res
 }

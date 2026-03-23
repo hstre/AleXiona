@@ -3,7 +3,7 @@
 import structlog
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
-from auth import create_token, require_user, UserSession
+from auth import create_token, decode_token, require_user, UserSession
 from fastapi import Depends
 
 log = structlog.get_logger(__name__)
@@ -37,7 +37,6 @@ def create_session(body: SessionRequest, request: Request):
 
     token = create_token(body.role)
     # Decode to extract the generated user_id without storing state
-    from auth import decode_token
     user = decode_token(token)
 
     log.info("session_created", user_id=user.user_id, role=user.role,

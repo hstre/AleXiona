@@ -167,6 +167,7 @@ Clinician / Import
        │
        ▼
   Next.js 14 UI
+  ├── ◉ Start Screen  ← new/resume/demo entry point
   ├── ◎ Clinical Orchestrator Panel  ← default view: ONE unified state
   ├── ◈ Evidence Graph (Cytoscape.js)
   ├── ⏱ Timeline Panel
@@ -229,6 +230,9 @@ Clinician / Import
 
 | Endpoint | Description |
 |---|---|
+| `POST /api/auth/session` | Issue a signed session token (`{"role":"clinician"\|"demo"}`) |
+| `GET  /api/auth/session` | Introspect current token |
+| `GET  /health` | Health check (public, no auth required) |
 | `GET  /{session_id}/orchestrate` | **Single authoritative state** — score, status, verdict, next action |
 | `GET  /{session_id}/priority` | Priority decomposition — why is this hypothesis leading? |
 | `POST /{session_id}/report` | Generate Arztbrief / Entlassbrief / Konsiliarbrief / Befundbericht |
@@ -348,6 +352,23 @@ score(H) = Σ(ess_i × overlap_weight_i × source_weight_i × temporal_weight_i)
 
 ---
 
+## Security Hardening
+
+AleXiona is designed for use in clinical environments. The following hardening measures are implemented:
+
+| Concern | Implementation |
+|---|---|
+| **Authentication** | All API endpoints (except `/health` and `POST /api/auth/session`) require a valid HMAC-signed session token in the `X-Session-Token` header. Tokens are issued by the backend and stored in `sessionStorage` for the browser tab lifetime. |
+| **Rate limiting** | General endpoints: 100 req/min per IP. LLM endpoints (`/chat`, `/stream`, `/intake/*`): 10 req/min per IP. Enforced by slowapi. |
+| **Input validation** | Pydantic v2 field constraints on all inbound payloads: message max 10 000 chars, intake text max 50 000 chars, history max 100 entries, manual claim max 5 000 chars. |
+| **LLM timeouts** | All `completions.create()` calls have explicit timeouts (30–90 s depending on operation) to prevent indefinite hangs. |
+| **Structured logging** | structlog with JSON output in production (`LOG_FORMAT=json`). Coloured text in dev. Request context (user_id, role) is bound per-request. |
+| **Error monitoring** | Sentry SDK with `traces_sample_rate=0.0` and `send_default_pii=False`. Errors only — no performance tracing, GDPR-safe. Enable by setting `SENTRY_DSN`. |
+| **Atomic DB writes** | `store_claims()` uses a single Neo4j transaction (`s.begin_transaction()`) so partial graph writes cannot leave orphaned nodes. |
+| **React Error Boundary** | All frontend components are wrapped in an `ErrorBoundary` that catches render errors and shows a German-language fallback screen with a retry button. |
+
+---
+
 ## Quick Start
 
 ### Prerequisites
@@ -358,7 +379,10 @@ score(H) = Σ(ess_i × overlap_weight_i × source_weight_i × temporal_weight_i)
 
 ```bash
 cp .env.example .env
-# Add your OPENAI_API_KEY to .env
+# Required: OPENAI_API_KEY
+# Optional: SENTRY_DSN (errors-only monitoring)
+#           SESSION_SECRET_KEY (default: dev-only value, change in production)
+#           LOG_FORMAT=json (structured JSON logs for aggregators)
 
 docker compose up
 ```
@@ -373,7 +397,10 @@ docker compose up
 ```bash
 cd backend
 pip install -r requirements.txt
-NEO4J_URI=bolt://localhost:7687 OPENAI_API_KEY=sk-... uvicorn main:app --reload
+NEO4J_URI=bolt://localhost:7687 \
+  OPENAI_API_KEY=sk-... \
+  SESSION_SECRET_KEY=change-me-in-production \
+  uvicorn main:app --reload
 ```
 
 **Frontend:**
@@ -381,6 +408,21 @@ NEO4J_URI=bolt://localhost:7687 OPENAI_API_KEY=sk-... uvicorn main:app --reload
 cd frontend
 npm install
 npm run dev
+```
+
+### Smoke Test
+
+```bash
+# Requires backend running on localhost:8000
+python scripts/smoke.py
+
+# Start backend automatically and wait up to 30 s
+python scripts/smoke.py --start-backend --wait 30
+```
+
+Or via Make:
+```bash
+make smoke
 ```
 
 ---
@@ -393,4 +435,8 @@ npm run dev
 | Backend | Python 3.11, FastAPI, Pydantic v2 |
 | LLM | OpenAI GPT-4o (structured JSON output) |
 | Graph DB | Neo4j 5 (Docker) |
+| Auth | itsdangerous (HMAC-signed session tokens) |
+| Rate limiting | slowapi (100 req/min general, 10 req/min LLM endpoints) |
+| Logging | structlog (JSON in production, coloured text in dev) |
+| Error monitoring | Sentry SDK (errors only, `traces_sample_rate=0.0`, no PII) |
 | PDF export | jsPDF |

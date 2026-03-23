@@ -56,8 +56,9 @@ export default function Home() {
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   // ── Session ───────────────────────────────────────────────────────────────
-  // Read existing session id from storage (used by StartScreen)
-  const existingSessionId = typeof window !== 'undefined' ? localStorage.getItem(SESSION_KEY) : null
+  // Read existing session id from storage after mount (avoids SSR mismatch)
+  const [existingSessionId, setExistingSessionId] = useState<string | null>(null)
+  useEffect(() => { setExistingSessionId(localStorage.getItem(SESSION_KEY)) }, [])
 
   const handleStart = useCallback(async (mode: StartMode) => {
     if (mode.kind === 'new') {
