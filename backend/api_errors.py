@@ -4,10 +4,10 @@ Every HTTPException raised through these helpers carries a structured
 ``detail`` dict with a machine-readable ``code`` and a human-readable
 ``message``, making client-side error display straightforward.
 """
-import logging
+import structlog
 from fastapi import HTTPException
 
-log = logging.getLogger(__name__)
+log = structlog.get_logger(__name__)
 
 
 def internal_error(exc: Exception) -> HTTPException:

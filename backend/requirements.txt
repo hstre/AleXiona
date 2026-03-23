@@ -6,3 +6,7 @@ neo4j==5.17.0
 pydantic==2.6.1
 httpx==0.26.0
 python-multipart==0.0.9
+itsdangerous==2.1.2
+slowapi==0.1.9
+structlog==24.1.0
+sentry-sdk[fastapi]==1.44.1

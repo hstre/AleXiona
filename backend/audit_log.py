@@ -16,14 +16,14 @@ request.
 
 from __future__ import annotations
 
-import logging
+import structlog
 import uuid
 from datetime import datetime, timezone
 from typing import Sequence
 
 from models import AuditActor, AuditEvent, AuditEventType, Claim
 
-log = logging.getLogger(__name__)
+log = structlog.get_logger(__name__)
 
 
 def _now() -> datetime:

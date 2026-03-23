@@ -1,6 +1,6 @@
 import os
 import json
-import logging
+import structlog
 import time
 from typing import AsyncIterator
 from pydantic import ValidationError
@@ -18,7 +18,7 @@ from models import (
 from reasoning_engine import build_reasoning_context, evaluate_all_guidelines
 from lab_parser import parse_lab_value
 
-log = logging.getLogger(__name__)
+log = structlog.get_logger(__name__)
 
 # Client and model resolved from llm_config (provider selected via LLM_PROVIDER env var).
 

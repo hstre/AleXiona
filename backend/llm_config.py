@@ -30,10 +30,10 @@ a custom base_url — no additional packages required.
 from __future__ import annotations
 
 import os
-import logging
+import structlog
 from typing import Any
 
-log = logging.getLogger(__name__)
+log = structlog.get_logger(__name__)
 
 # ── Read configuration ─────────────────────────────────────────────────────────
 

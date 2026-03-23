@@ -17,13 +17,11 @@ POST /api/intake/clinical
     source_type is mapped from input_type at the boundary.
 """
 
-from __future__ import annotations
-
-import logging
+import structlog
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from api_errors import internal_error, validation_error
 from llm_client import extract_claims_conversation, extract_claims_clinical
@@ -47,8 +45,9 @@ from patient_data import (
     candidate_to_claim,
 )
 
-log = logging.getLogger(__name__)
+log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/intake", tags=["intake"])
+from rate_limit import limiter
 _executor = ThreadPoolExecutor(max_workers=10)
 
 # source_type → evidence_tier for measurement ingestion
@@ -61,7 +60,8 @@ _MEASUREMENT_TIER: dict[str, str] = {
 # ── POST /api/intake/conversation ─────────────────────────────────────────────
 
 @router.post("/conversation", response_model=IntakeConversationResponse)
-async def intake_conversation(request: IntakeConversationRequest):
+@limiter.limit("10/minute")
+async def intake_conversation(request: IntakeConversationRequest, http_request: Request):
     """Patient / caregiver free text → Claims (patient_generated tier).
 
     The LLM extracts structure; source_type and evidence_tier are overridden
@@ -105,7 +105,8 @@ async def intake_conversation(request: IntakeConversationRequest):
 # ── POST /api/intake/measurements ─────────────────────────────────────────────
 
 @router.post("/measurements", response_model=IntakeMeasurementsResponse)
-async def intake_measurements(request: IntakeMeasurementsRequest):
+@limiter.limit("30/minute")
+async def intake_measurements(request: IntakeMeasurementsRequest, http_request: Request):
     """Wearable / home-device measurements + PatientObservations → Claims + TrendSignals.
 
     Purely rule-based — no LLM call.  Each measurement produces a point-in-time
@@ -200,7 +201,8 @@ async def intake_measurements(request: IntakeMeasurementsRequest):
 # ── POST /api/intake/clinical ─────────────────────────────────────────────────
 
 @router.post("/clinical", response_model=IntakeClinicalResponse)
-async def intake_clinical(request: IntakeClinicalRequest):
+@limiter.limit("10/minute")
+async def intake_clinical(request: IntakeClinicalRequest, http_request: Request):
     """Structured clinical inputs (lab, medication, document, vitals) → Claims.
 
     Each ClinicalInput is processed separately so source_type and evidence_tier

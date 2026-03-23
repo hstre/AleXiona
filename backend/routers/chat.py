@@ -1,11 +1,11 @@
 import asyncio
 import json
-import logging
+import structlog
 from concurrent.futures import ThreadPoolExecutor
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from api_errors import internal_error
 
-log = logging.getLogger(__name__)
+log = structlog.get_logger(__name__)
 from fastapi.responses import StreamingResponse
 from models import ChatRequest, ChatResponse
 from llm_client import (
@@ -16,6 +16,7 @@ from neo4j_client import get_db
 from conflict_engine import detect_conflicts
 from audit_log import log_created_batch
 from models import AuditActor
+from rate_limit import limiter
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 _executor = ThreadPoolExecutor(max_workers=10)
@@ -24,7 +25,8 @@ _executor = ThreadPoolExecutor(max_workers=10)
 # ── Sync endpoint (kept for compatibility) ────────────────────────────────────
 
 @router.post("", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+@limiter.limit("10/minute")
+async def chat(request: ChatRequest, http_request: Request):
     db   = get_db()
     loop = asyncio.get_event_loop()
     try:
@@ -78,7 +80,8 @@ async def chat(request: ChatRequest):
 # ── Streaming endpoint ────────────────────────────────────────────────────────
 
 @router.post("/stream")
-async def chat_stream(request: ChatRequest):
+@limiter.limit("10/minute")
+async def chat_stream(request: ChatRequest, http_request: Request):
     db   = get_db()
     loop = asyncio.get_event_loop()
 
