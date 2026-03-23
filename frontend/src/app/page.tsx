@@ -20,8 +20,10 @@ import OrchestratorPanel  from '@/components/OrchestratorPanel'
 import { getGraph, seedDemo, exportSession, explainConflict } from '@/lib/api'
 import type { GraphData, Claim, ClaimType, ReasoningResult, Conflict, GraphNode, DemoScenario } from '@/lib/api'
 import { SESSION_KEY, shortId, confPct, essLabel, CONFLICT_SEVERITY_META, CLAIM_TYPE_META } from '@/lib/utils'
+import StartScreen, { type StartMode } from '@/components/StartScreen'
 
 export default function Home() {
+  const [appStarted,  setAppStarted]  = useState(false)
   const [sessionId,   setSessionId]   = useState<string | null>(null)
   const [graphData,   setGraphData]   = useState<GraphData>({ nodes: [], edges: [] })
   const [reasoning,   setReasoning]   = useState<ReasoningResult | null>(null)
@@ -54,11 +56,27 @@ export default function Home() {
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   // ── Session ───────────────────────────────────────────────────────────────
-  useEffect(() => {
-    const stored = localStorage.getItem(SESSION_KEY)
-    const id     = stored || uuidv4()
-    if (!stored) localStorage.setItem(SESSION_KEY, id)
-    setSessionId(id)
+  // Read existing session id from storage (used by StartScreen)
+  const existingSessionId = typeof window !== 'undefined' ? localStorage.getItem(SESSION_KEY) : null
+
+  const handleStart = useCallback(async (mode: StartMode) => {
+    if (mode.kind === 'new') {
+      const id = uuidv4()
+      localStorage.setItem(SESSION_KEY, id)
+      setSessionId(id)
+      setGraphData({ nodes: [], edges: [] })
+    } else if (mode.kind === 'resume') {
+      setSessionId(mode.sessionId)
+    } else if (mode.kind === 'demo') {
+      const id = uuidv4()
+      localStorage.setItem(SESSION_KEY, id)
+      setSessionId(id)
+      setGraphData({ nodes: [], edges: [] })
+      setDemoScenario(mode.scenario)
+      setDemoLang(mode.lang)
+      // Seed is triggered by the sidebar button after startup; we just preselect scenario/lang
+    }
+    setAppStarted(true)
   }, [])
 
   // ── Graph ─────────────────────────────────────────────────────────────────
@@ -395,6 +413,11 @@ export default function Home() {
   const entityCount = graphData.nodes.filter(n => n.type === 'Entity').length
 
   const CLAIM_TYPES = Object.keys(CLAIM_TYPE_META) as ClaimType[]
+
+  // ── Start screen ────────────────────────────────────────────────────────
+  if (!appStarted) {
+    return <StartScreen existingSessionId={existingSessionId} onStart={handleStart} />
+  }
 
   return (
     <div className="flex flex-col h-screen" style={{ background: 'var(--bg)' }}>
