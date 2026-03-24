@@ -267,9 +267,9 @@ async def update_claim(claim_id: str, update: NodeUpdate, request: Request):
         if not before:
             raise not_found(f"Claim {claim_id!r} not found")
         session_id = before.get("session_id", "")
-        # Ownership: token session_id must match the claim's session_id
+        # Ownership: require bound token and match claim's session_id
         token_sid = getattr(getattr(request.state, "user", None), "session_id", "")
-        if token_sid and session_id != token_sid:
+        if not token_sid or session_id != token_sid:
             raise HTTPException(status_code=403, detail="Access denied")
         changes = update.model_dump(exclude_none=True)
         db.update_claim(claim_id, changes, session_id=session_id)
@@ -587,9 +587,9 @@ async def delete_claim(claim_id: str, request: Request):
         if not before:
             raise not_found(f"Claim {claim_id!r} not found")
         session_id = before.get("session_id", "")
-        # Ownership: token session_id must match the claim's session_id
+        # Ownership: require bound token and match claim's session_id
         token_sid = getattr(getattr(request.state, "user", None), "session_id", "")
-        if token_sid and session_id != token_sid:
+        if not token_sid or session_id != token_sid:
             raise HTTPException(status_code=403, detail="Access denied")
         db.delete_claim(claim_id, session_id=session_id)
         log_deleted(

@@ -356,9 +356,9 @@ class Neo4jClient:
                 actor=event.actor,
                 pipeline_stage=event.pipeline_stage,
                 timestamp=event.timestamp.isoformat(),
-                before=json.dumps(event.before) if event.before is not None else None,
-                after=json.dumps(event.after) if event.after is not None else None,
-                meta=json.dumps(event.meta),
+                before=json.dumps(event.before, default=str) if event.before is not None else None,
+                after=json.dumps(event.after, default=str) if event.after is not None else None,
+                meta=json.dumps(event.meta, default=str),
             )
 
     def get_claim_audit_trail(self, claim_id: str) -> list[dict]:

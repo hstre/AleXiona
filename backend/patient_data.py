@@ -294,8 +294,10 @@ def extract_trend_signal(
         direction = "stable"
     elif slope > 0:
         direction = "rising"
-    else:
+    elif slope < 0:
         direction = "falling"
+    else:
+        direction = "stable"
 
     # Volatile: check if sign flips more than once
     if n_points >= 4:

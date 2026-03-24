@@ -735,7 +735,7 @@ def get_missing_evidence_for_differential(
             covered |= _key_terms(c["text"])
 
     uncovered_a = unique_a - covered
-    uncovered_b = unique_b - terms_a  # relative to the shared context
+    uncovered_b = unique_b - covered  # relative to the shared context
 
     hints = []
     if uncovered_a:

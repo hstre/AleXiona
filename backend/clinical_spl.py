@@ -355,12 +355,8 @@ def run_dual_spl_pipeline(
             cands_beta  = _ENGINE.emit(proj_beta, k=3)
             cand_beta   = cands_beta[0]  if cands_beta  else None
 
-        # For BRANCH_CANDIDATE, manually set emission metrics on projections
+        # For BRANCH_CANDIDATE, compute h_norm for provenance
         if branched:
-            import math as _math
-            proj_alpha.h_norm = _math.log(1) if not proj_alpha.h_norm else proj_alpha.h_norm
-            proj_beta.h_norm  = _math.log(1) if not proj_beta.h_norm  else proj_beta.h_norm
-            # Compute h_norm for provenance
             from spl import compute_h_norm as _h
             proj_alpha.h_norm = _h(proj_alpha.P_r)
             proj_beta.h_norm  = _h(proj_beta.P_r)

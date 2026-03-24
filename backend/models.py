@@ -180,6 +180,11 @@ class Claim(BaseModel):
     spl_emission_rule:      Optional[str]        = None   # "E1" | "E2" | "E3" | "E0"
     spl_h_norm:             Optional[float]      = None   # normalised Shannon entropy ∈ [0,1]
 
+    @field_validator('evidence_support_score', mode='before')
+    @classmethod
+    def clamp_ess(cls, v: float | None) -> float | None:
+        return _clamp_ess(v)
+
 
 class ClaimExtractionResult(BaseModel):
     claims: list[Claim]
