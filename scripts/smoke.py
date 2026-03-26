@@ -42,23 +42,42 @@ SKIP = "\033[33m~\033[0m"
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
-def _get(url: str, timeout: int = 5) -> tuple[int, bytes]:
-    try:
-        with urllib.request.urlopen(url, timeout=timeout) as r:
-            return r.status, r.read()
-    except urllib.error.HTTPError as e:
-        return e.code, e.read()
-
-
-def _post(url: str, body: dict | None = None, timeout: int = 10) -> tuple[int, bytes]:
-    data = json.dumps(body or {}).encode()
-    req  = urllib.request.Request(url, data=data, method="POST",
-                                  headers={"Content-Type": "application/json"})
+def _get(url: str, timeout: int = 5, token: str | None = None) -> tuple[int, bytes]:
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.status, r.read()
     except urllib.error.HTTPError as e:
         return e.code, e.read()
+
+
+def _post(url: str, body: dict | None = None, timeout: int = 10,
+          token: str | None = None) -> tuple[int, bytes]:
+    data = json.dumps(body or {}).encode()
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, data=data, method="POST", headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read()
+
+
+def _delete(url: str, timeout: int = 5, token: str | None = None) -> int:
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, method="DELETE", headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status
+    except urllib.error.HTTPError as e:
+        return e.code
 
 
 def _wait_for_backend(max_wait: int = 30) -> bool:
@@ -73,6 +92,24 @@ def _wait_for_backend(max_wait: int = 30) -> bool:
             pass
         time.sleep(1)
     return False
+
+
+def _acquire_token() -> str | None:
+    """
+    Obtain a short-lived demo session token via POST /api/auth/session.
+    Returns the token string, or None if the auth endpoint is unavailable.
+    """
+    status, body = _post(
+        f"{BACKEND_URL}/api/auth/session",
+        body={"role": "demo"},
+        timeout=5,
+    )
+    if status != 200:
+        return None
+    try:
+        return json.loads(body).get("token")
+    except Exception:
+        return None
 
 
 # ── checks ────────────────────────────────────────────────────────────────────
@@ -102,13 +139,19 @@ def check_health() -> bool:
     return check("Backend /health", ok, json.dumps(data))
 
 
-def check_neo4j() -> bool:
+def check_auth(token: str | None) -> bool:
+    """Verify that token acquisition succeeded."""
+    return check("Auth token", token is not None,
+                 "token issued" if token else "POST /api/auth/session failed")
+
+
+def check_neo4j(token: str | None) -> bool:
     """
     /api/sessions lists sessions from Neo4j.
     A 200 response (even an empty list) means Neo4j is up and connected.
     A 500 means the DB is unreachable.
     """
-    status, body = _get(f"{BACKEND_URL}/api/sessions")
+    status, body = _get(f"{BACKEND_URL}/api/sessions", token=token)
     if status == 200:
         try:
             data = json.loads(body)
@@ -119,7 +162,7 @@ def check_neo4j() -> bool:
     return check("Neo4j connection", False, f"HTTP {status} from /api/sessions")
 
 
-def check_demo_seed() -> bool:
+def check_demo_seed(token: str | None) -> bool:
     """
     Seed a fresh throw-away session with the CAP demo scenario.
     Verifies that the backend can build Claims from seed data and write them to Neo4j.
@@ -127,7 +170,7 @@ def check_demo_seed() -> bool:
     """
     session_id = f"smoke-{uuid.uuid4().hex[:8]}"
     url = f"{BACKEND_URL}/api/demo/seed/{session_id}?lang=en&scenario=cap"
-    status, body = _post(url)
+    status, body = _post(url, token=token)
     if status != 200:
         return check("Demo seed (CAP)", False, f"HTTP {status}")
     try:
@@ -141,24 +184,19 @@ def check_demo_seed() -> bool:
 
     if ok:
         # Best-effort cleanup — don't fail the smoke test if this fails
-        try:
-            req = urllib.request.Request(
-                f"{BACKEND_URL}/api/sessions/{session_id}", method="DELETE"
-            )
-            urllib.request.urlopen(req, timeout=5).close()
-        except Exception:
-            pass
+        _delete(f"{BACKEND_URL}/api/sessions/{session_id}", token=token)
 
     return check("Demo seed (CAP)", ok, detail)
 
 
-def check_graph_endpoint(session_id: str | None = None) -> bool:
+def check_graph_endpoint(token: str | None, session_id: str | None = None) -> bool:
     """
     Query an existing session's graph, or verify the graph endpoint is reachable.
+    A 401 here means auth is wired correctly; route is reachable.
     """
     if session_id:
         url = f"{BACKEND_URL}/api/graph/{session_id}"
-        status, body = _get(url)
+        status, body = _get(url, token=token)
         if status == 200:
             try:
                 data = json.loads(body)
@@ -168,9 +206,9 @@ def check_graph_endpoint(session_id: str | None = None) -> bool:
             except Exception:
                 return check("Graph endpoint", False, "non-JSON response")
         return check("Graph endpoint", False, f"HTTP {status}")
-    # No session to test — just verify the route exists (404 for unknown session is fine)
-    status, _ = _get(f"{BACKEND_URL}/api/graph/smoke-probe-nosession")
-    reachable = status in (200, 404, 422)
+    # No session to test — verify the route exists (200/401/404/422 all mean reachable)
+    status, _ = _get(f"{BACKEND_URL}/api/graph/smoke-probe-nosession", token=token)
+    reachable = status in (200, 401, 404, 422)
     return check("Graph endpoint reachable", reachable, f"HTTP {status}")
 
 
@@ -211,15 +249,19 @@ def main() -> int:
             proc.terminate()
         return 1
 
+    # Acquire a demo token for all subsequent authenticated checks
+    token = _acquire_token()
+
     # Run checks
     check_health()
-    neo4j_ok = check_neo4j()
+    check_auth(token)
+    neo4j_ok = check_neo4j(token)
     if neo4j_ok:
-        check_demo_seed()
+        check_demo_seed(token)
     else:
         results.append(("Demo seed (CAP)", None, "skipped — Neo4j unreachable"))  # type: ignore[arg-type]
         print(f"  {SKIP}  Demo seed (CAP)  [skipped — Neo4j unreachable]")
-    check_graph_endpoint()
+    check_graph_endpoint(token)
     check_frontend()
 
     # Summary
