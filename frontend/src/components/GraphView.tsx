@@ -7,14 +7,29 @@ import { getTypeMeta, STATUS_META, TREND_META, confColor, confPct, essLabel, ESS
 
 export type GraphLayout = 'cose' | 'breadthfirst' | 'concentric' | 'grid'
 
-export function buildLayout(name: GraphLayout): any {
+export interface CytoscapeLayoutConfig {
+  name: string
+  animate?: boolean
+  animationDuration?: number
+  directed?: boolean
+  padding?: number
+  spacingFactor?: number
+  avoidOverlap?: boolean
+  nodeRepulsion?: number
+  idealEdgeLength?: number
+  randomize?: boolean
+  concentric?: (node: { data: (key: string) => unknown }) => number
+  levelWidth?: () => number
+}
+
+export function buildLayout(name: GraphLayout): CytoscapeLayoutConfig {
   switch (name) {
     case 'breadthfirst':
       return { name: 'breadthfirst', animate: true, animationDuration: 500, directed: true, padding: 50, spacingFactor: 1.6 }
     case 'concentric':
       return {
         name: 'concentric', animate: true, animationDuration: 500, padding: 50,
-        concentric: (node: any) => node.data('type') === 'Claim' ? (node.data('evidence_support_score') ?? 0.5) : 0,
+        concentric: (node: { data: (key: string) => unknown }) => node.data('type') === 'Claim' ? ((node.data('evidence_support_score') as number) ?? 0.5) : 0,
         levelWidth: () => 0.25,
       }
     case 'grid':

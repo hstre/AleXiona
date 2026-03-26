@@ -52,13 +52,13 @@ def _safe_json(raw: str | None, default):
 def _deserialize_audit_row(node: dict) -> dict:
     """Convert a raw Neo4j AuditEvent node to a plain Python dict."""
     return {
-        "id":             node["id"],
-        "event_type":     node["event_type"],
-        "claim_id":       node["claim_id"],
-        "session_id":     node["session_id"],
-        "actor":          node["actor"],
-        "pipeline_stage": node["pipeline_stage"],
-        "timestamp":      node["timestamp"],
+        "id":             node.get("id", ""),
+        "event_type":     node.get("event_type", ""),
+        "claim_id":       node.get("claim_id", ""),
+        "session_id":     node.get("session_id", ""),
+        "actor":          node.get("actor", ""),
+        "pipeline_stage": node.get("pipeline_stage", ""),
+        "timestamp":      node.get("timestamp", ""),
         "before":         _safe_json(node.get("before"), None),
         "after":          _safe_json(node.get("after"),  None),
         "meta":           _safe_json(node.get("meta"),   {}),

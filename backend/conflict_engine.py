@@ -2,9 +2,12 @@
 Rule-based conflict detection for AleXiona V0.
 Operates on claim dicts returned from Neo4j.
 """
+import logging
 import re
 from datetime import datetime, timezone, timedelta
 from models import Conflict, ConflictType, ConflictSeverity, _parse_offset_hours
+
+_log = logging.getLogger(__name__)
 
 _NEGATION_RE = re.compile(
     r'\b(kein[e]?|nicht|nein|ohne|fehlt|negativ|absent|no\b|not\b|without|negative|ruled out)\b',
@@ -63,6 +66,7 @@ def _parse_event_time(claim: dict) -> datetime | None:
             dt = datetime.fromisoformat(et.replace("Z", "+00:00"))
             return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
         except ValueError:
+            _log.debug("_parse_event_time: unparsebare event_time '%s' in claim %s", et, claim.get("id", "?"))
             return None
     return None
 

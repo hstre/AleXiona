@@ -377,8 +377,8 @@ class Conflict(BaseModel):
 # ── API ───────────────────────────────────────────────────────────────────────
 
 class ChatMessage(BaseModel):
-    role:    str
-    content: str
+    role:    str = Field(..., max_length=50)
+    content: str = Field(..., max_length=5_000)
 
 
 class ChatRequest(BaseModel):
