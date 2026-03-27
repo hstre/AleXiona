@@ -373,23 +373,65 @@ AleXiona is designed for use in clinical environments. The following hardening m
 
 ### Prerequisites
 - Docker + Docker Compose
-- OpenAI API key
+- An LLM API key (OpenAI, Groq, Mistral, Anthropic — or a local Ollama instance)
 
 ### Run
 
 ```bash
-cp .env.example .env
-# Required: OPENAI_API_KEY
-# Optional: SENTRY_DSN (errors-only monitoring)
-#           SECRET_KEY (default: dev-only value, change in production)
-#           LOG_FORMAT=json (structured JSON logs for aggregators)
+git clone https://github.com/hstre/AleXiona
+cd AleXiona
+docker compose up
+```
 
+Open **http://localhost:3000**, click the ⚙ gear icon in the top-right corner,
+enter your API key, click **Verbindung testen**, then **Speichern**.
+
+> **No `.env` required for startup.**  The API key is configured inside the app
+> and takes effect immediately without a restart.  The demo scenarios and the
+> evidence graph work without an API key — only chat, reasoning analysis, and
+> report generation require one.
+
+Alternatively, set the key before startup via `.env`:
+
+```bash
+cp .env.example .env
+# Edit .env: set OPENAI_API_KEY=sk-...
 docker compose up
 ```
 
 - Frontend: http://localhost:3000
-- Backend API: http://localhost:8000/docs
+- Backend API docs: http://localhost:8000/docs
 - Neo4j Browser: http://localhost:7474 (neo4j / alexiona123)
+
+### Demo
+
+1. Open http://localhost:3000
+2. Select a clinical scenario (CAP, PE, ARDS, NSTEMI) and language
+3. Click **Demo starten** — the evidence graph is populated automatically
+4. Explore the graph, orchestrator view, risk scores, and timeline
+5. Set your API key via ⚙ to enable chat, AI reasoning, and report generation
+
+Available scenarios:
+
+| Scenario | Description |
+|---|---|
+| **CAP** | Community-acquired Pneumonia — fever, CRP, CT consolidation, antibiotic response |
+| **PE** | High-risk Pulmonary Embolism — saddle embolus, Wells 7, D-Dimer, rtPA |
+| **ARDS** | ARDS + Gram-negative Sepsis — Berlin criteria, mechanical ventilation |
+| **NSTEMI** | Non-ST-elevation MI — troponin rise, ECG changes, dual antiplatelet |
+
+### Supported LLM Providers
+
+Configure via the ⚙ gear icon or environment variables:
+
+| Provider | Env var default | Notes |
+|---|---|---|
+| `openai` | `gpt-4o` | Default |
+| `groq` | `llama-3.3-70b-versatile` | Fast, free tier available |
+| `mistral` | `mistral-large-latest` | |
+| `anthropic` | `claude-sonnet-4-5` | Requires `pip install anthropic` |
+| `ollama` | `llama3.2` | Local, no API key needed |
+| `openai_compatible` | — | Any OpenAI-compatible endpoint |
 
 ### Local Dev
 

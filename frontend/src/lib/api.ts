@@ -399,6 +399,46 @@ export async function generateReport(
   return safeJson(res)
 }
 
+// ── LLM configuration ────────────────────────────────────────────────────────
+
+export interface LLMConfig {
+  provider:    string
+  model:       string
+  api_key_set: boolean
+}
+
+export interface LLMTestResult {
+  ok:          boolean
+  latency_ms?: number
+  error?:      string
+}
+
+export async function getLLMConfig(): Promise<LLMConfig> {
+  const res = await apiFetch(`${API_URL}/api/config/llm`)
+  if (!res.ok) throw await parseError(res)
+  return safeJson(res)
+}
+
+export async function saveLLMConfig(cfg: {
+  provider:  string
+  api_key:   string
+  model?:    string
+  base_url?: string
+}): Promise<LLMConfig> {
+  const res = await apiFetch(`${API_URL}/api/config/llm`, {
+    method: 'POST',
+    body:   JSON.stringify(cfg),
+  })
+  if (!res.ok) throw await parseError(res)
+  return safeJson(res)
+}
+
+export async function testLLMConfig(): Promise<LLMTestResult> {
+  const res = await apiFetch(`${API_URL}/api/config/llm/test`, { method: 'POST' })
+  if (!res.ok) throw await parseError(res)
+  return safeJson(res)
+}
+
 export async function listSessions(): Promise<SessionInfo[]> {
   const res = await apiFetch(`${API_URL}/api/sessions`)
   if (!res.ok) throw await parseError(res)

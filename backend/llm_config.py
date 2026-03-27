@@ -11,6 +11,7 @@ Supported providers and the required environment variables:
 
   LLM_API_KEY    API key. Falls back to OPENAI_API_KEY for backwards
                  compatibility. Not required for ollama (local, no auth).
+                 Can also be set at runtime via POST /api/config/llm.
 
   LLM_BASE_URL   Base URL for openai_compatible or a non-default ollama host.
 
@@ -26,21 +27,21 @@ Provider defaults
 
 All non-Anthropic providers are accessed via the OpenAI Python SDK with
 a custom base_url — no additional packages required.
+
+Runtime reconfiguration
+───────────────────────
+  Call reconfigure(provider, api_key, model, base_url) to swap the active
+  LLM client without restarting the server.  The proxy objects sync_client
+  and async_client always delegate to the current active client.
 """
 from __future__ import annotations
 
 import os
 import structlog
+from dataclasses import dataclass
 from typing import Any
 
 log = structlog.get_logger(__name__)
-
-# ── Read configuration ─────────────────────────────────────────────────────────
-
-PROVIDER = os.getenv("LLM_PROVIDER", "groq").lower()
-MODEL    = os.getenv("LLM_MODEL", "")
-API_KEY  = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY", "")
-BASE_URL = os.getenv("LLM_BASE_URL", "")
 
 # ── Provider presets ──────────────────────────────────────────────────────────
 
@@ -48,7 +49,7 @@ _PRESETS: dict[str, dict[str, Any]] = {
     "openai": {
         "base_url":      None,
         "default_model": "gpt-4o",
-        "api_key":       None,    # uses API_KEY
+        "api_key":       None,    # uses provided api_key
     },
     "groq": {
         "base_url":      "https://api.groq.com/openai/v1",
@@ -61,17 +62,17 @@ _PRESETS: dict[str, dict[str, Any]] = {
         "api_key":       None,
     },
     "ollama": {
-        "base_url":      BASE_URL or "http://localhost:11434/v1",
+        "base_url":      None,   # resolved at build time from base_url param
         "default_model": "llama3.2",
-        "api_key":       "ollama",          # ollama ignores the key but SDK requires one
+        "api_key":       "ollama",   # ollama ignores the key but SDK requires one
     },
     "openai_compatible": {
-        "base_url":      BASE_URL,
-        "default_model": MODEL or "gpt-4o",
+        "base_url":      None,   # must be provided
+        "default_model": "gpt-4o",
         "api_key":       None,
     },
     "anthropic": {
-        "base_url":      None,              # handled separately via Anthropic SDK
+        "base_url":      None,   # handled separately via Anthropic SDK
         "default_model": "claude-sonnet-4-5",
         "api_key":       None,
     },
@@ -213,7 +214,6 @@ class _AsyncCompletions:
         if system:
             kwargs["system"] = system
         if stream:
-            # Return the wrapper directly — it is an async iterable, not a coroutine.
             return _AsyncStream(self._native, kwargs)
         resp = await self._native.messages.create(**kwargs)
         return _FakeCompletion(resp.content[0].text)
@@ -238,19 +238,34 @@ class _AnthropicAsyncAdapter:
 
 # ── Builder ───────────────────────────────────────────────────────────────────
 
-def _build() -> tuple[Any, Any, str]:
-    """Return (sync_client, async_client, model_name)."""
-    preset = _PRESETS.get(PROVIDER)
+def _build(
+    provider: str | None = None,
+    api_key:  str | None = None,
+    model:    str | None = None,
+    base_url: str | None = None,
+) -> tuple[Any, Any, str]:
+    """Return (sync_client, async_client, model_name).
+
+    Parameters take precedence over environment variables.
+    """
+    _provider = (provider or os.getenv("LLM_PROVIDER", "openai")).lower()
+    _api_key  = api_key if api_key is not None else (
+        os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY", "")
+    )
+    _model    = model    or os.getenv("LLM_MODEL", "")
+    _base_url = base_url or os.getenv("LLM_BASE_URL", "")
+
+    preset = _PRESETS.get(_provider)
     if preset is None:
         raise RuntimeError(
-            f"Unknown LLM_PROVIDER '{PROVIDER}'. "
+            f"Unknown LLM provider '{_provider}'. "
             f"Valid values: {', '.join(_PRESETS)}"
         )
 
-    effective_model = MODEL or preset["default_model"]
+    effective_model = _model or preset["default_model"]
 
     # ── Anthropic (native SDK) ────────────────────────────────────────────────
-    if PROVIDER == "anthropic":
+    if _provider == "anthropic":
         try:
             import anthropic as _anth
         except ImportError as exc:
@@ -258,8 +273,8 @@ def _build() -> tuple[Any, Any, str]:
                 "LLM_PROVIDER=anthropic requires the 'anthropic' package. "
                 "Install it with:  pip install anthropic"
             ) from exc
-        sync_native  = _anth.Anthropic(api_key=API_KEY)
-        async_native = _anth.AsyncAnthropic(api_key=API_KEY)
+        sync_native  = _anth.Anthropic(api_key=_api_key)
+        async_native = _anth.AsyncAnthropic(api_key=_api_key)
         log.info("LLM provider: anthropic | model: %s", effective_model)
         return (
             _AnthropicSyncAdapter(sync_native,  effective_model),
@@ -270,21 +285,115 @@ def _build() -> tuple[Any, Any, str]:
     # ── OpenAI-compatible providers ───────────────────────────────────────────
     from openai import OpenAI, AsyncOpenAI
 
-    if PROVIDER == "openai_compatible" and not preset["base_url"]:
+    # Resolve base_url: param > env > preset default
+    resolved_base_url = (
+        _base_url
+        or (_provider == "ollama" and "http://localhost:11434/v1")
+        or preset["base_url"]
+        or None
+    )
+
+    if _provider == "openai_compatible" and not resolved_base_url:
         raise RuntimeError(
-            "LLM_PROVIDER=openai_compatible requires LLM_BASE_URL to be set."
+            "provider=openai_compatible requires base_url to be set."
         )
 
-    api_key = preset.get("api_key") or API_KEY or "none"
-    kwargs: dict[str, Any] = {"api_key": api_key}
-    if preset["base_url"]:
-        kwargs["base_url"] = preset["base_url"]
+    effective_api_key = preset.get("api_key") or _api_key or "none"
+    kwargs: dict[str, Any] = {"api_key": effective_api_key}
+    if resolved_base_url:
+        kwargs["base_url"] = resolved_base_url
 
     log.info("LLM provider: %s | model: %s | base_url: %s",
-             PROVIDER, effective_model, preset["base_url"] or "(default)")
+             _provider, effective_model, resolved_base_url or "(default)")
     return OpenAI(**kwargs), AsyncOpenAI(**kwargs), effective_model
 
 
-# ── Module-level exports ──────────────────────────────────────────────────────
+# ── Mutable runtime state ─────────────────────────────────────────────────────
 
-sync_client, async_client, MODEL = _build()
+@dataclass
+class _LLMState:
+    sync_client:  Any
+    async_client: Any
+    model:        str
+    provider:     str
+    api_key_set:  bool
+
+
+def _init_state() -> _LLMState:
+    _provider = os.getenv("LLM_PROVIDER", "openai").lower()
+    _api_key  = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY", "")
+    sc, ac, m = _build()
+    return _LLMState(
+        sync_client=sc,
+        async_client=ac,
+        model=m,
+        provider=_provider,
+        api_key_set=bool(_api_key),
+    )
+
+
+_state: _LLMState = _init_state()
+
+
+# ── Proxy objects (always delegate to current _state) ─────────────────────────
+# Importers get a stable reference to the proxy; after reconfigure() the proxy
+# transparently delegates to the new underlying client.
+
+class _SyncProxy:
+    """Proxy for the active sync LLM client."""
+    def __getattr__(self, name: str) -> Any:
+        return getattr(_state.sync_client, name)
+
+class _AsyncProxy:
+    """Proxy for the active async LLM client."""
+    def __getattr__(self, name: str) -> Any:
+        return getattr(_state.async_client, name)
+
+
+sync_client  = _SyncProxy()
+async_client = _AsyncProxy()
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
+
+def get_model() -> str:
+    """Return the currently active model name."""
+    return _state.model
+
+
+def get_provider_info() -> dict:
+    """Return a safe summary of the current LLM configuration (no key value)."""
+    return {
+        "provider":    _state.provider,
+        "model":       _state.model,
+        "api_key_set": _state.api_key_set,
+    }
+
+
+def reconfigure(
+    provider: str,
+    api_key:  str,
+    model:    str = "",
+    base_url: str = "",
+) -> None:
+    """Swap the active LLM client at runtime without restarting the server.
+
+    Raises RuntimeError on invalid provider or missing required fields.
+    The proxy objects sync_client / async_client immediately reflect the
+    new configuration on the next call.
+    """
+    global _state
+    sc, ac, m = _build(
+        provider=provider,
+        api_key=api_key or None,
+        model=model or None,
+        base_url=base_url or None,
+    )
+    _state = _LLMState(
+        sync_client=sc,
+        async_client=ac,
+        model=m,
+        provider=provider.lower(),
+        api_key_set=bool(api_key),
+    )
+    log.info("LLM reconfigured", provider=provider, model=m)

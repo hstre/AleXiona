@@ -5,7 +5,7 @@ import time
 from typing import AsyncIterator
 from pydantic import ValidationError
 from datetime import datetime, timezone
-from llm_config import sync_client as client, async_client, MODEL
+from llm_config import sync_client as client, async_client, get_model
 from clinical_spl import run_spl_pipeline, run_dual_spl_pipeline
 from models import (
     Claim, ClaimExtractionResult, ChatMessage,
@@ -174,7 +174,7 @@ def _llm_json(
     for attempt in range(max_retries + 1):
         try:
             response = client.chat.completions.create(
-                model=MODEL,
+                model=get_model(),
                 messages=messages,
                 response_format={"type": "json_object"},
                 temperature=temperature,
@@ -516,7 +516,7 @@ def explain_conflict(conflict: dict, claims: list[dict]) -> str:
     )
     try:
         response = client.chat.completions.create(
-            model=MODEL,
+            model=get_model(),
             messages=[
                 {"role": "system", "content": CONFLICT_EXPLAIN_PROMPT},
                 {"role": "user",   "content": prompt},
@@ -938,7 +938,7 @@ def answer_with_context(
     messages.append({"role": "user", "content": user_message})
 
     response = client.chat.completions.create(
-        model=MODEL, messages=messages, temperature=0.3, timeout=45.0,
+        model=get_model(), messages=messages, temperature=0.3, timeout=45.0,
     )
     return response.choices[0].message.content
 
@@ -968,7 +968,7 @@ async def stream_answer_with_context(
     """Yield LLM reply tokens one by one via OpenAI streaming."""
     messages = _build_query_messages(user_message, history, graph_context)
     stream = await async_client.chat.completions.create(
-        model=MODEL, messages=messages, temperature=0.3, stream=True, timeout=90.0,
+        model=get_model(), messages=messages, temperature=0.3, stream=True, timeout=90.0,
     )
     async for chunk in stream:
         delta = chunk.choices[0].delta.content or ""
@@ -992,7 +992,7 @@ async def generate_report(prompt: str) -> dict[str, str]:
         ValueError: LLM returned non-JSON or empty sections.
     """
     resp = await async_client.chat.completions.create(
-        model=MODEL,
+        model=get_model(),
         messages=[{"role": "user", "content": prompt}],
         temperature=0.4,        # slightly higher than reasoning — narrative prose
         response_format={"type": "json_object"},

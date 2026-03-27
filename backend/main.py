@@ -44,6 +44,7 @@ from rate_limit import limiter
 # ── App + router imports ──────────────────────────────────────────────────────
 from routers import chat, graph, sessions, demo, intake, audit
 from routers.auth import router as auth_router
+from routers.config import router as config_router
 from auth import decode_token
 
 
@@ -159,6 +160,7 @@ app.include_router(sessions.router)
 app.include_router(demo.router)
 app.include_router(intake.router)
 app.include_router(audit.router)
+app.include_router(config_router)
 
 
 @app.get("/health")
