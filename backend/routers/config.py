@@ -51,7 +51,8 @@ def update_llm_config(
     except RuntimeError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        log.error("llm_reconfigure_error", error=str(e), exc_info=True)
+        raise HTTPException(status_code=500, detail="Konfiguration konnte nicht gespeichert werden.")
 
 
 @router.post("/llm/test")

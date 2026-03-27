@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { getLLMConfig, saveLLMConfig, testLLMConfig } from '@/lib/api'
 import type { LLMTestResult } from '@/lib/api'
 
@@ -9,12 +9,12 @@ interface Props {
 }
 
 const PROVIDERS = [
-  { value: 'openai',            label: 'OpenAI',             placeholder: 'sk-...',        hasBaseUrl: false },
-  { value: 'groq',              label: 'Groq',               placeholder: 'gsk_...',       hasBaseUrl: false },
-  { value: 'mistral',           label: 'Mistral',            placeholder: 'API key',       hasBaseUrl: false },
-  { value: 'anthropic',        label: 'Anthropic',          placeholder: 'sk-ant-...',    hasBaseUrl: false },
-  { value: 'ollama',            label: 'Ollama (local)',     placeholder: '(not required)', hasBaseUrl: true  },
-  { value: 'openai_compatible', label: 'OpenAI Compatible',  placeholder: 'API key',       hasBaseUrl: true  },
+  { value: 'openai',            label: 'OpenAI',             placeholder: 'sk-...',         hasBaseUrl: false, requiresKey: true  },
+  { value: 'groq',              label: 'Groq',               placeholder: 'gsk_...',        hasBaseUrl: false, requiresKey: true  },
+  { value: 'mistral',           label: 'Mistral',            placeholder: 'API key',        hasBaseUrl: false, requiresKey: true  },
+  { value: 'anthropic',         label: 'Anthropic',          placeholder: 'sk-ant-...',     hasBaseUrl: false, requiresKey: true  },
+  { value: 'ollama',            label: 'Ollama (local)',     placeholder: '(nicht nötig)',  hasBaseUrl: true,  requiresKey: false },
+  { value: 'openai_compatible', label: 'OpenAI Compatible',  placeholder: 'API key',        hasBaseUrl: true,  requiresKey: false },
 ]
 
 const DEFAULT_MODELS: Record<string, string> = {
@@ -40,8 +40,11 @@ export default function LLMConfigModal({ onClose }: Props) {
   const [loading,     setLoading]     = useState(true)
   const [saving,      setSaving]      = useState(false)
   const [testing,     setTesting]     = useState(false)
+  const [testSeconds, setTestSeconds] = useState(0)
   const [testResult,  setTestResult]  = useState<LLMTestResult | null>(null)
   const [saveMsg,     setSaveMsg]     = useState<{ ok: boolean; text: string } | null>(null)
+  const [validationError, setValidationError] = useState<string | null>(null)
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Load current config on open
   useEffect(() => {
@@ -50,10 +53,22 @@ export default function LLMConfigModal({ onClose }: Props) {
         setProvider(cfg.provider)
         setModel(cfg.model)
         setKeySet(cfg.api_key_set)
+        setBaseUrl(DEFAULT_BASE_URLS[cfg.provider] ?? '')
       })
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [])
+
+  // Elapsed-time counter while test is running
+  useEffect(() => {
+    if (testing) {
+      setTestSeconds(0)
+      timerRef.current = setInterval(() => setTestSeconds(s => s + 1), 1000)
+    } else {
+      if (timerRef.current) clearInterval(timerRef.current)
+    }
+    return () => { if (timerRef.current) clearInterval(timerRef.current) }
+  }, [testing])
 
   const handleProviderChange = (p: string) => {
     setProvider(p)
@@ -61,9 +76,24 @@ export default function LLMConfigModal({ onClose }: Props) {
     setBaseUrl(DEFAULT_BASE_URLS[p] ?? '')
     setTestResult(null)
     setSaveMsg(null)
+    setValidationError(null)
+  }
+
+  const validate = (): string | null => {
+    const meta = PROVIDERS.find(p => p.value === provider)!
+    if (meta.requiresKey && !keySet && !apiKey.trim()) {
+      return `${meta.label} benötigt einen API-Schlüssel.`
+    }
+    if (provider === 'openai_compatible' && !baseUrl.trim()) {
+      return 'OpenAI Compatible benötigt eine Base URL.'
+    }
+    return null
   }
 
   const handleSave = async () => {
+    const err = validate()
+    if (err) { setValidationError(err); return }
+    setValidationError(null)
     setSaving(true)
     setSaveMsg(null)
     setTestResult(null)
@@ -87,6 +117,7 @@ export default function LLMConfigModal({ onClose }: Props) {
   const handleTest = async () => {
     setTesting(true)
     setTestResult(null)
+    setSaveMsg(null)
     try {
       const result = await testLLMConfig()
       setTestResult(result)
@@ -162,6 +193,9 @@ export default function LLMConfigModal({ onClose }: Props) {
               <div>
                 <label style={labelStyle}>
                   API-Schlüssel
+                  {meta.requiresKey && !keySet && (
+                    <span className="ml-1" style={{ color: '#ef4444' }}>*</span>
+                  )}
                   {keySet && (
                     <span className="ml-2 px-1.5 py-0.5 rounded text-xs"
                       style={{ background: '#f0fdf4', color: '#16a34a' }}>
@@ -172,9 +206,9 @@ export default function LLMConfigModal({ onClose }: Props) {
                 <input
                   type="password"
                   style={inputStyle}
-                  placeholder={keySet ? '(unverändert lassen um beizubehalten)' : meta.placeholder}
+                  placeholder={keySet ? 'Leer lassen um beizubehalten' : meta.placeholder}
                   value={apiKey}
-                  onChange={e => setApiKey(e.target.value)}
+                  onChange={e => { setApiKey(e.target.value); setValidationError(null) }}
                   autoComplete="new-password"
                 />
               </div>
@@ -202,16 +236,34 @@ export default function LLMConfigModal({ onClose }: Props) {
                   </label>
                   <input
                     type="text"
-                    style={inputStyle}
+                    style={{
+                      ...inputStyle,
+                      borderColor: validationError && provider === 'openai_compatible' && !baseUrl.trim()
+                        ? '#ef4444' : 'var(--border)',
+                    }}
                     placeholder={DEFAULT_BASE_URLS[provider] || 'https://…/v1'}
                     value={baseUrl}
-                    onChange={e => setBaseUrl(e.target.value)}
+                    onChange={e => { setBaseUrl(e.target.value); setValidationError(null) }}
                   />
                 </div>
               )}
 
-              {/* Test result */}
-              {testResult && (
+              {/* Validation error */}
+              {validationError && (
+                <div className="rounded-lg px-3 py-2 text-xs"
+                  style={{ background: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca' }}>
+                  {validationError}
+                </div>
+              )}
+
+              {/* Test result / testing indicator */}
+              {testing && (
+                <div className="rounded-lg px-3 py-2 text-xs"
+                  style={{ background: 'var(--surface-2)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
+                  Verbindung wird geprüft …{testSeconds >= 3 ? ` (${testSeconds}s)` : ''}
+                </div>
+              )}
+              {!testing && testResult && (
                 <div className="rounded-lg px-3 py-2 text-xs"
                   style={{
                     background: testResult.ok ? '#f0fdf4' : '#fef2f2',
@@ -243,7 +295,7 @@ export default function LLMConfigModal({ onClose }: Props) {
           <div className="flex gap-2 px-5 pb-5">
             <button
               onClick={handleSave}
-              disabled={saving}
+              disabled={saving || testing}
               className="flex-1 py-2 rounded-xl text-sm font-semibold disabled:opacity-40"
               style={{ background: 'var(--brand)', color: 'white' }}
             >
@@ -255,7 +307,7 @@ export default function LLMConfigModal({ onClose }: Props) {
               className="py-2 px-4 rounded-xl text-sm font-medium disabled:opacity-40"
               style={{ background: 'var(--surface-2)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}
             >
-              {testing ? '…' : 'Verbindung testen'}
+              {testing ? `${testSeconds}s …` : 'Verbindung testen'}
             </button>
           </div>
         )}

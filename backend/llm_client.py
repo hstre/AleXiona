@@ -373,7 +373,8 @@ def analyze_reasoning(claims: list[dict]) -> ReasoningResult | None:
             ],
             focus_points=data.get("focus_points", []),
         )
-    except Exception:
+    except Exception as exc:
+        log.warning("analyze_reasoning_failed", error=str(exc), exc_info=True)
         return None
 
 
@@ -422,7 +423,8 @@ def run_counterfactual(
             reasoning_trace=data.get("reasoning_trace", ""),
             guideline_shift=guideline_shift,
         )
-    except Exception:
+    except Exception as exc:
+        log.warning("run_counterfactual_failed", error=str(exc), exc_info=True)
         return None
 
 
@@ -484,7 +486,8 @@ def run_hypothesis_counterfactual(
             alternative_if_false=data.get("alternative_if_false", ""),
             reasoning_trace=data.get("reasoning_trace", ""),
         )
-    except Exception:
+    except Exception as exc:
+        log.warning("run_hypothesis_counterfactual_failed", error=str(exc), exc_info=True)
         return None
 
 
