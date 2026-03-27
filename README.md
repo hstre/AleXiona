@@ -185,7 +185,7 @@ Clinician / Import
   │     ├── Status determination (confident / undecided / contested / insufficient)
   │     ├── German verdict + next_action
   │     └── GET /{session_id}/orchestrate
-  ├── LLM Client (OpenAI GPT-4o, structured JSON)
+  ├── LLM Client (OpenAI / Groq / Mistral / Anthropic / Ollama, structured JSON)
   │     ├── Claim extraction (5-stage: LLM → normalise → Pydantic → SPL → persist)
   │     ├── Clinical reasoning summary
   │     ├── Report generation (Arztbrief, Entlassbrief, Konsiliarbrief, Befundbericht)
@@ -395,7 +395,7 @@ Alternatively, set the key before startup via `.env`:
 
 ```bash
 cp .env.example .env
-# Edit .env: set OPENAI_API_KEY=sk-...
+# Edit .env: set LLM_PROVIDER and LLM_API_KEY (or OPENAI_API_KEY for backwards compatibility)
 docker compose up
 ```
 
@@ -440,10 +440,14 @@ Configure via the ⚙ gear icon or environment variables:
 cd backend
 pip install -r requirements.txt
 NEO4J_URI=bolt://localhost:7687 \
-  OPENAI_API_KEY=sk-... \
-  SESSION_SECRET_KEY=change-me-in-production \
+  LLM_PROVIDER=openai \
+  LLM_API_KEY=sk-... \
   uvicorn main:app --reload
 ```
+
+> `LLM_PROVIDER` accepts `openai` | `groq` | `mistral` | `anthropic` | `ollama` | `openai_compatible`.
+> `OPENAI_API_KEY` still works as a fallback for `openai` provider.
+> Alternatively, leave all LLM env vars unset and configure via the ⚙ gear icon in the running app.
 
 **Frontend:**
 ```bash
@@ -475,7 +479,7 @@ make smoke
 |---|---|
 | Frontend | Next.js 14, React 18, Cytoscape.js, Tailwind CSS |
 | Backend | Python 3.11, FastAPI, Pydantic v2 |
-| LLM | OpenAI GPT-4o (structured JSON output) |
+| LLM | OpenAI · Groq · Mistral · Anthropic · Ollama (configurable via ⚙ in-app or env vars) |
 | Graph DB | Neo4j 5 (Docker) |
 | Auth | itsdangerous (HMAC-signed session tokens) |
 | Rate limiting | slowapi (100 req/min general, 10 req/min LLM endpoints) |
