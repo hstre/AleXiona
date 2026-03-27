@@ -1,5 +1,6 @@
 .env
 *.env.local
+backend/.llm_config.json
 node_modules/
 .next/
 __pycache__/

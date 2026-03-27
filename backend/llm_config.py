@@ -36,12 +36,16 @@ Runtime reconfiguration
 """
 from __future__ import annotations
 
+import json
 import os
 import structlog
 from dataclasses import dataclass
 from typing import Any
 
 log = structlog.get_logger(__name__)
+
+# Config persisted here so it survives container restarts (backend dir is volume-mounted).
+_CONFIG_FILE = os.path.join(os.path.dirname(__file__), ".llm_config.json")
 
 # ── Provider presets ──────────────────────────────────────────────────────────
 
@@ -319,16 +323,57 @@ class _LLMState:
     api_key_set:  bool
 
 
+def _load_persisted() -> dict | None:
+    """Load saved config from disk.  Returns None if file absent or corrupt."""
+    try:
+        with open(_CONFIG_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict) and "provider" in data:
+            return data
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    return None
+
+
+def _save_persisted(provider: str, api_key: str, model: str, base_url: str) -> None:
+    """Write current config to disk.  Failures are logged but never propagated."""
+    try:
+        with open(_CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(
+                {"provider": provider, "api_key": api_key,
+                 "model": model, "base_url": base_url},
+                f,
+            )
+    except Exception as exc:
+        log.warning("llm_config_persist_failed", error=str(exc))
+
+
 def _init_state() -> _LLMState:
+    """Initialise from persisted config first, env vars as fallback."""
+    saved = _load_persisted()
+    if saved:
+        provider = saved.get("provider", "openai")
+        api_key  = saved.get("api_key",  "")
+        model    = saved.get("model",    "")
+        base_url = saved.get("base_url", "")
+        log.info("LLM config loaded from disk", provider=provider)
+        sc, ac, m = _build(
+            provider=provider,
+            api_key=api_key or None,
+            model=model or None,
+            base_url=base_url or None,
+        )
+        return _LLMState(
+            sync_client=sc, async_client=ac, model=m,
+            provider=provider, api_key_set=bool(api_key),
+        )
+    # Fall back to environment variables
     _provider = os.getenv("LLM_PROVIDER", "openai").lower()
     _api_key  = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY", "")
     sc, ac, m = _build()
     return _LLMState(
-        sync_client=sc,
-        async_client=ac,
-        model=m,
-        provider=_provider,
-        api_key_set=bool(_api_key),
+        sync_client=sc, async_client=ac, model=m,
+        provider=_provider, api_key_set=bool(_api_key),
     )
 
 
@@ -396,4 +441,5 @@ def reconfigure(
         provider=provider.lower(),
         api_key_set=bool(api_key),
     )
+    _save_persisted(provider.lower(), api_key, model, base_url)
     log.info("LLM reconfigured", provider=provider, model=m)
