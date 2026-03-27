@@ -15,8 +15,19 @@ Each scorer returns a CompositeScore containing:
                    source_type="guideline", claim_type="finding" claim
 """
 from __future__ import annotations
+import re as _re
 from dataclasses import dataclass, field
 from lab_parser import qualitative_for_token
+
+# Mirrors conflict_engine._ACTIVE_STATUSES — claims in these states count as evidence.
+_ACTIVE_STATUSES = frozenset({"active", "observed", "inferred", "confirmed", "contested"})
+
+# ── Age extraction ─────────────────────────────────────────────────────────────
+# Matches "67 Jahre", "67j", "67 years old", "67 y.o." etc.
+_AGE_RE = _re.compile(
+    r'\b(\d{2,3})\s*(?:j(?:ahre?)?\.?|years?(?:\s+old)?|y\.?o\.?|a\.)\b',
+    _re.IGNORECASE,
+)
 
 
 @dataclass
@@ -60,28 +71,41 @@ def _text_matches_any(text: str, terms: list[str]) -> bool:
     return any(term in t for term in terms)
 
 
-def _claim_has_term(claims: list[dict], terms: list[str], status: str = "active") -> bool:
+def _claim_has_term(claims: list[dict], terms: list[str]) -> bool:
     for c in claims:
-        if c.get("status") != status:
+        if c.get("status", "active") not in _ACTIVE_STATUSES:
             continue
         if _text_matches_any(c.get("text", ""), terms):
             return True
     return False
 
 
+_NEG_RE = _re.compile(
+    r'\b(no|not|without|kein[e]?|nicht|ohne|absent|negativ|ruled out)\b',
+    _re.IGNORECASE,
+)
+
+
 def _negation_present(claims: list[dict], terms: list[str]) -> bool:
     """True if any claim explicitly negates all of *terms* (e.g. 'no DVT')."""
-    import re
-    _NEG = re.compile(
-        r'\b(no|not|without|kein[e]?|nicht|ohne|absent|negativ|ruled out)\b',
-        re.IGNORECASE,
-    )
     for c in claims:
-        if c.get("status") != "active":
+        if c.get("status", "active") not in _ACTIVE_STATUSES:
             continue
         text = c.get("text", "").lower()
-        if _NEG.search(text) and any(t in text for t in terms):
+        if _NEG_RE.search(text) and any(t in text for t in terms):
             return True
+    return False
+
+
+def _age_in_claims(claims: list[dict], min_age: int, max_age: int | None = None) -> bool:
+    """True if any active claim mentions an age in [min_age, max_age] with context words."""
+    for c in claims:
+        if c.get("status", "active") not in _ACTIVE_STATUSES:
+            continue
+        for m in _AGE_RE.finditer(c.get("text", "")):
+            age = int(m.group(1))
+            if age >= min_age and (max_age is None or age <= max_age):
+                return True
     return False
 
 
@@ -179,7 +203,7 @@ def compute_wells_pe(all_claims: list[dict]) -> CompositeScore:
         criteria_missing.append("DVT clinical exam")
 
     # PE as leading diagnosis (already in graph as leading hypothesis)
-    if _claim_has_term(all_claims, ["pulmonary embolism", "pe ", "lungenembolie"]):
+    if _claim_has_term(all_claims, ["pulmonary embolism", "pe ", " pe", "lungenembolie"]):
         criteria_met.append("PE leading diagnosis (+3)")
         points += 3
 
@@ -279,10 +303,8 @@ def compute_grace_acs(all_claims: list[dict]) -> CompositeScore:
     else:
         criteria_missing.append("ECG / ST changes")
 
-    # Age ≥ 75 (heuristic from text)
-    if _claim_has_term(all_claims, ["75", "76", "77", "78", "79", "80", "81", "82",
-                                     "83", "84", "85", "86", "87", "88", "89", "90",
-                                     "years old", "jahre alt"]):
+    # Age ≥ 75 (requires age-context words to avoid matching lab values)
+    if _age_in_claims(all_claims, 75):
         criteria_met.append("Age ≥ 75 (+1)")
         points += 1
 
@@ -373,16 +395,11 @@ def compute_heart(all_claims: list[dict]) -> CompositeScore:
     else:
         criteria_missing.append("E: ECG")
 
-    # A — Age
-    if _claim_has_term(all_claims, ["65", "66", "67", "68", "69", "70", "71", "72", "73",
-                                     "74", "75", "76", "77", "78", "79", "80",
-                                     "81", "82", "83", "84", "85", "86", "87", "88", "89",
-                                     "90", "91", "92", "93", "94", "95"]):
+    # A — Age (requires age-context words to avoid matching lab values)
+    if _age_in_claims(all_claims, 65):
         criteria_met.append("A: Age ≥65 (+2)")
         points += 2
-    elif _claim_has_term(all_claims, ["45", "46", "47", "48", "49", "50", "51", "52", "53",
-                                       "54", "55", "56", "57", "58", "59", "60", "61", "62",
-                                       "63", "64", "years old", "jahre alt"]):
+    elif _age_in_claims(all_claims, 45, 64):
         criteria_met.append("A: Age 45–64 (+1)")
         points += 1
     else:
@@ -461,9 +478,8 @@ def compute_perc(all_claims: list[dict]) -> CompositeScore:
     criteria_met:     list[str] = []   # criteria PRESENT (= PERC positive factors)
     criteria_missing: list[str] = []   # criteria not documented (cannot rule out)
 
-    # Age ≥ 50
-    age_terms = [str(i) for i in range(50, 100)] + ["years old", "jahre alt"]
-    if _claim_has_term(all_claims, age_terms):
+    # Age ≥ 50 (requires age-context words to avoid matching lab values)
+    if _age_in_claims(all_claims, 50):
         criteria_met.append("Age ≥50")
     else:
         criteria_missing.append("Age")
@@ -584,9 +600,8 @@ def compute_curb65(all_claims: list[dict]) -> CompositeScore:
     else:
         criteria_missing.append("B: Blood pressure")
 
-    # 65 — Age ≥ 65
-    age_terms_65 = [str(i) for i in range(65, 100)] + ["years old", "jahre alt"]
-    if _claim_has_term(all_claims, age_terms_65):
+    # 65 — Age ≥ 65 (requires age-context words to avoid matching lab values)
+    if _age_in_claims(all_claims, 65):
         criteria_met.append("65: Age ≥65 (+1)")
         points += 1
     else:
@@ -612,12 +627,12 @@ def compute_curb65(all_claims: list[dict]) -> CompositeScore:
 
 _SCORE_RELEVANCE: dict[str, list[str]] = {
     "qSOFA":     ["sepsis", "septic shock", "urosepsis"],
-    "Wells-PE":  ["pulmonary embolism", "lungenembolie", "pe "],
+    "Wells-PE":  ["pulmonary embolism", "lungenembolie", "pe ", " pe"],
     "GRACE-ACS": ["myocardial infarction", "stemi", "nstemi", "acs",
                   "acute coronary", "herzinfarkt"],
     "HEART":     ["chest pain", "brustschmerz", "myocardial infarction",
                   "acs", "coronary", "cardiac"],
-    "PERC":      ["pulmonary embolism", "lungenembolie", "pe ", "pe-"],
+    "PERC":      ["pulmonary embolism", "lungenembolie", "pe ", " pe", "pe-"],
     "CURB-65":   ["pneumonia", "pneumonie", "cap"],
 }
 

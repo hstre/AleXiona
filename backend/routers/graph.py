@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from rate_limit import limiter
-from auth import UserSession, require_clinician
+from auth import UserSession, require_clinician, require_user
 from models import GraphData, NodeUpdate, CounterfactualResult, HypothesisCounterfactualResult, Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend, _normalize_time_offset, _parse_offset_hours, AuditActor, MEDResult, ReasoningExplanation, HypothesisExplanation, ClaimContribution, GuidelineEvaluation, RiskScoreResponse, RiskScoreItem, ClinicalRoleView, RoleAlert, RoleViewSection, ClinicalReport, ReportSection, GenerateReportRequest, ReportTypeDef, ReportSectionDef, PriorityExplanation, PriorityFactor, OrchestratorState, OrchestratorScoreBreakdown, OrchestratorAlternative
 from clinical_orchestrator import orchestrate
 from pydantic import BaseModel, Field, field_validator
@@ -96,7 +96,7 @@ async def add_manual_claim(session_id: str, payload: ManualClaimPayload, _user: 
 
 
 @router.get("/{session_id}", response_model=GraphData)
-async def get_graph(session_id: str):
+async def get_graph(session_id: str, _user: UserSession = Depends(require_user)):
     try:
         return get_db().get_graph(session_id)
     except Exception as e:
@@ -104,7 +104,7 @@ async def get_graph(session_id: str):
 
 
 @router.get("/{session_id}/conflicts")
-async def get_conflicts(session_id: str):
+async def get_conflicts(session_id: str, _user: UserSession = Depends(require_user)):
     try:
         claims = get_db().get_all_claims_for_session(session_id)
         return detect_conflicts(claims)
@@ -155,7 +155,7 @@ async def counterfactual(session_id: str, claim_id: str, request: Request, _user
 
 
 @router.get("/{session_id}/entity-duplicates")
-async def get_entity_duplicates(session_id: str):
+async def get_entity_duplicates(session_id: str, _user: UserSession = Depends(require_user)):
     try:
         return get_db().get_entity_groups(session_id)
     except Exception as e:
@@ -180,7 +180,7 @@ async def merge_entities(session_id: str, payload: MergeEntitiesPayload, request
 
 
 @router.get("/{session_id}/export")
-async def export_session(session_id: str):
+async def export_session(session_id: str, _user: UserSession = Depends(require_user)):
     try:
         return get_db().export_session(session_id)
     except Exception as e:
@@ -223,7 +223,7 @@ async def explain_conflict(session_id: str, payload: ConflictExplainPayload, req
 
 
 @router.get("/{session_id}/claims/{claim_id}/chain")
-async def get_claim_chain(session_id: str, claim_id: str):
+async def get_claim_chain(session_id: str, claim_id: str, _user: UserSession = Depends(require_user)):
     """Return all claim IDs reachable via DERIVES_FROM edges (ancestors + descendants)."""
     try:
         db = get_db()
@@ -346,7 +346,7 @@ async def get_reasoning_explanation(session_id: str, request: Request, _user: Us
 
 
 @router.get("/{session_id}/orchestrate", response_model=OrchestratorState)
-async def get_orchestrator_state(session_id: str):
+async def get_orchestrator_state(session_id: str, _user: UserSession = Depends(require_user)):
     """
     Return the single authoritative clinical state for this session.
 
@@ -392,7 +392,7 @@ async def get_orchestrator_state(session_id: str):
 
 
 @router.get("/{session_id}/priority", response_model=PriorityExplanation)
-async def get_priority_explanation(session_id: str):
+async def get_priority_explanation(session_id: str, _user: UserSession = Depends(require_user)):
     """
     Return the central priority explanation for the current leading hypothesis.
 
@@ -500,6 +500,7 @@ async def get_role_view(
     session_id: str,
     role: str,
     specialty: Optional[str] = None,
+    _user: UserSession = Depends(require_user),
 ):
     """
     Role-filtered clinical view — each role sees exactly what they need.
@@ -541,7 +542,7 @@ async def get_role_view(
 
 
 @router.get("/{session_id}/risk-scores", response_model=RiskScoreResponse)
-async def get_risk_scores(session_id: str):
+async def get_risk_scores(session_id: str, _user: UserSession = Depends(require_user)):
     """
     Compute all six validated bedside risk scores from the current claim graph.
 
@@ -568,7 +569,7 @@ async def get_risk_scores(session_id: str):
 
 
 @router.get("/{session_id}/med", response_model=MEDResult)
-async def get_med(session_id: str):
+async def get_med(session_id: str, _user: UserSession = Depends(require_user)):
     """Compute the Minimal Evidence to Decision set for the current session."""
     db = get_db()
     try:

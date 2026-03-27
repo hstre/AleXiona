@@ -15,6 +15,7 @@ from __future__ import annotations
 from lab_parser import lab_summary
 from reasoning_engine import rank_hypotheses, evaluate_all_guidelines
 from composite_scores import compute_all_scores
+from models import PatientContext
 
 # ── Report type definitions ────────────────────────────────────────────────────
 
@@ -161,7 +162,7 @@ def _build_claim_context(all_claims: list[dict]) -> str:
 def build_report_prompt(
     report_type: str,
     all_claims: list[dict],
-    patient_context: dict | None = None,
+    patient_context: PatientContext | None = None,
 ) -> str:
     """
     Build a complete LLM prompt for clinical report generation.
@@ -188,7 +189,7 @@ def build_report_prompt(
     patient_block = ""
     if patient_context:
         patient_block = "\n=== PATIENTENKONTEXT ===\n" + "\n".join(
-            f"  {k}: {v}" for k, v in patient_context.items() if v
+            f"  {k}: {v}" for k, v in patient_context.model_dump(exclude_none=True).items() if v
         ) + "\n"
 
     return f"""Du bist ein klinischer Dokumentationsassistent.

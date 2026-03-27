@@ -13,6 +13,9 @@ import re
 from dataclasses import dataclass
 from typing import Optional
 
+# Claim statuses that count as epistemically active — mirrors conflict_engine.
+_ACTIVE_STATUSES = frozenset({"active", "observed", "inferred", "confirmed", "contested"})
+
 
 # ── Reference thresholds ──────────────────────────────────────────────────────
 # All values are in the listed canonical unit.
@@ -141,12 +144,20 @@ def _normalize_number(s: str) -> float:
     return float(s.replace(",", "."))
 
 
+def _alias_in_text(alias: str, text: str) -> bool:
+    """Substring match; uses word boundaries for short aliases (≤3 chars) to
+    prevent 'rr' matching within 'crr', or 'hb' within 'inhibitor'."""
+    if len(alias) <= 3:
+        return bool(re.search(rf'\b{re.escape(alias)}\b', text, re.IGNORECASE))
+    return alias in text
+
+
 def _match_token(text: str) -> Optional[tuple[str, dict]]:
     """Find the first LAB_THRESHOLDS entry whose alias appears in *text*."""
     t = text.lower()
     for token, spec in LAB_THRESHOLDS.items():
         for alias in spec["aliases"]:
-            if alias in t:
+            if _alias_in_text(alias, t):
                 return token, spec
     return None
 
@@ -211,12 +222,12 @@ def parse_lab_values(texts: list[str]) -> list[LabResult]:
 
 def qualitative_for_token(token: str, all_claims: list[dict]) -> Optional[str]:
     """Return the most recent qualitative assessment ("high"/"low"/"normal") for
-    a given lab token across all active claims, or None if not found.
+    a given lab token across all epistemically active claims, or None if not found.
 
     Used by evaluate_guideline / composite score functions.
     """
     for c in reversed(all_claims):
-        if c.get("status") != "active":
+        if c.get("status", "active") not in _ACTIVE_STATUSES:
             continue
         result = parse_lab_value(c.get("text", ""))
         if result and result.token == token:
@@ -225,10 +236,10 @@ def qualitative_for_token(token: str, all_claims: list[dict]) -> Optional[str]:
 
 
 def lab_summary(all_claims: list[dict]) -> dict[str, LabResult]:
-    """Return a token → most-recent LabResult mapping for all active claims."""
+    """Return a token → most-recent LabResult mapping for all epistemically active claims."""
     summary: dict[str, LabResult] = {}
     for c in all_claims:
-        if c.get("status") != "active":
+        if c.get("status", "active") not in _ACTIVE_STATUSES:
             continue
         result = parse_lab_value(c.get("text", ""))
         if result:

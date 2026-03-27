@@ -103,10 +103,10 @@ export type SourceType =
   | 'imaging_model' | 'lab_system' | 'imported_document'
   | 'patient_report' | 'wearable' | 'home_device' | 'caregiver_report'
 
-export type ClaimStatus = 'active' | 'observed' | 'inferred' | 'confirmed' | 'contested' | 'refuted' | 'withdrawn' | 'resolved' | 'superseded' | 'tentative'
+export type ClaimStatus = 'active' | 'observed' | 'inferred' | 'confirmed' | 'contested' | 'refuted' | 'withdrawn' | 'resolved' | 'superseded'
 export type ClaimTrend  = 'improving' | 'worsening' | 'stable' | 'unknown'
 
-export type ConflictType     = 'competing_hypothesis' | 'negation' | 'evidence_mismatch' | 'timeline_gap' | 'therapy_without_indication' | 'stale_hypothesis' | 'contradictory_values' | 'temporal_inconsistency'
+export type ConflictType     = 'competing_hypothesis' | 'negation' | 'evidence_mismatch' | 'timeline_gap' | 'therapy_without_indication' | 'stale_hypothesis' | 'contradictory_values' | 'temporal_inconsistency' | 'stale_lab_evidence' | 'time_paradox'
 export type ConflictSeverity = 'error' | 'warning' | 'info'
 
 // ── Core models ─────────────────────────────────────────────────────────────
