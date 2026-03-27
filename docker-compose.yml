@@ -8,7 +8,6 @@ services:
       - "7687:7687"
     environment:
       NEO4J_AUTH: neo4j/alexiona123
-      NEO4J_PLUGINS: '["apoc"]'
     volumes:
       - neo4j_data:/data
       - neo4j_logs:/logs

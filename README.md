@@ -381,7 +381,7 @@ AleXiona is designed for use in clinical environments. The following hardening m
 cp .env.example .env
 # Required: OPENAI_API_KEY
 # Optional: SENTRY_DSN (errors-only monitoring)
-#           SESSION_SECRET_KEY (default: dev-only value, change in production)
+#           SECRET_KEY (default: dev-only value, change in production)
 #           LOG_FORMAT=json (structured JSON logs for aggregators)
 
 docker compose up

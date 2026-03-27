@@ -75,7 +75,19 @@ export default function Home() {
       setGraphData({ nodes: [], edges: [] })
       setDemoScenario(mode.scenario)
       setDemoLang(mode.lang)
-      // Seed is triggered by the sidebar button after startup; we just preselect scenario/lang
+      setAppStarted(true)
+      // Auto-seed immediately using local vars (state not yet flushed)
+      setSeeding(true)
+      seedDemo(id, mode.lang, mode.scenario)
+        .then(async result => {
+          if (result.seeded) {
+            const data = await getGraph(id)
+            setGraphData(data)
+          }
+        })
+        .catch(() => {})
+        .finally(() => setSeeding(false))
+      return
     }
     setAppStarted(true)
   }, [])
