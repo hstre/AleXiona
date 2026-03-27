@@ -1,29 +1,16 @@
 'use client'
 
 import { useState, useCallback } from 'react'
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+import { generateReport } from '@/lib/api'
+import type { ClinicalReport, ReportSection, ReportPatientContext } from '@/lib/api'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-
-interface ReportSection {
-  key:   string
-  title: string
-  text:  string
-}
-
-interface ClinicalReport {
-  session_id:   string
-  report_type:  string
-  title:        string
-  sections:     ReportSection[]
-  generated_at: string
-}
 
 interface PatientContext {
   name:         string
   geburtsdatum: string
-  aufnahmedatum: string
+  aufnahme:     string
+  entlassung:   string
   station:      string
   zuweiser:     string
 }
@@ -50,7 +37,7 @@ interface Props {
 export default function ReportPanel({ sessionId }: Props) {
   const [reportType, setReportType]   = useState<string>('arztbrief')
   const [patient, setPatient]         = useState<PatientContext>({
-    name: '', geburtsdatum: '', aufnahmedatum: '', station: '', zuweiser: '',
+    name: '', geburtsdatum: '', aufnahme: '', entlassung: '', station: '', zuweiser: '',
   })
   const [showPatient, setShowPatient] = useState(false)
   const [report, setReport]           = useState<ClinicalReport | null>(null)
@@ -68,20 +55,12 @@ export default function ReportPanel({ sessionId }: Props) {
     try {
       const patCtx = Object.fromEntries(
         Object.entries(patient).filter(([, v]) => v.trim() !== '')
+      ) as ReportPatientContext
+      const data = await generateReport(
+        sessionId,
+        reportType,
+        Object.keys(patCtx).length > 0 ? patCtx : undefined,
       )
-      const res = await fetch(`${API_URL}/api/graph/${sessionId}/report`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          report_type:     reportType,
-          patient_context: Object.keys(patCtx).length > 0 ? patCtx : undefined,
-        }),
-      })
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        throw new Error(data?.detail?.message ?? data?.detail ?? `Fehler ${res.status}`)
-      }
-      const data: ClinicalReport = await res.json()
       setReport(data)
       setSections(data.sections)
     } catch (e: unknown) {
@@ -150,7 +129,7 @@ export default function ReportPanel({ sessionId }: Props) {
       // ── Betreff ───────────────────────────────────────────────────────────
       const patName  = patient.name.trim()
       const patDOB   = patient.geburtsdatum.trim()
-      const patAdm   = patient.aufnahmedatum.trim()
+      const patAdm   = patient.aufnahme.trim()
       const patWard  = patient.station.trim()
       const zuweiser = patient.zuweiser.trim()
 
@@ -274,11 +253,12 @@ export default function ReportPanel({ sessionId }: Props) {
             gap: 8,
           }}>
             {([
-              ['name',          'Name'],
-              ['geburtsdatum',  'Geburtsdatum'],
-              ['aufnahmedatum', 'Aufnahmedatum'],
-              ['station',       'Station / Abteilung'],
-              ['zuweiser',      'Zuweiser / An'],
+              ['name',         'Name'],
+              ['geburtsdatum', 'Geburtsdatum'],
+              ['aufnahme',     'Aufnahmedatum'],
+              ['entlassung',   'Entlassungsdatum'],
+              ['station',      'Station / Abteilung'],
+              ['zuweiser',     'Zuweiser / An'],
             ] as [keyof PatientContext, string][]).map(([k, label]) => (
               <div key={k}>
                 <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 3 }}>{label}</div>

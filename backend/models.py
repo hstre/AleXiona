@@ -615,6 +615,7 @@ class PatientContext(BaseModel):
     station:       Optional[str] = Field(None, max_length=200)
     aufnahme:      Optional[str] = Field(None, max_length=30)
     entlassung:    Optional[str] = Field(None, max_length=30)
+    zuweiser:      Optional[str] = Field(None, max_length=200)
 
 
 class GenerateReportRequest(BaseModel):

@@ -357,6 +357,48 @@ export async function hypothesisCounterfactual(
   return safeJson(res)
 }
 
+// ── Report generation ────────────────────────────────────────────────────────
+
+export interface ReportPatientContext {
+  name?:         string
+  geburtsdatum?: string
+  aufnahme?:     string
+  entlassung?:   string
+  station?:      string
+  fall_id?:      string
+  zuweiser?:     string
+}
+
+export interface ReportSection {
+  key:   string
+  title: string
+  text:  string
+}
+
+export interface ClinicalReport {
+  session_id:   string
+  report_type:  string
+  title:        string
+  sections:     ReportSection[]
+  generated_at: string
+}
+
+export async function generateReport(
+  sessionId:      string,
+  reportType:     string,
+  patientContext?: ReportPatientContext,
+): Promise<ClinicalReport> {
+  const res = await apiFetch(`${API_URL}/api/graph/${sessionId}/report`, {
+    method: 'POST',
+    body: JSON.stringify({
+      report_type:     reportType,
+      patient_context: patientContext ?? undefined,
+    }),
+  })
+  if (!res.ok) throw await parseError(res)
+  return safeJson(res)
+}
+
 export async function listSessions(): Promise<SessionInfo[]> {
   const res = await apiFetch(`${API_URL}/api/sessions`)
   if (!res.ok) throw await parseError(res)

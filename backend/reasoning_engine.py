@@ -70,7 +70,7 @@ HYPOTHESIS_ALIASES: dict[str, list[str]] = {
         "community-acquired pneumonia", "pneumonie",
     ],
     "pulmonary embolism": [
-        "pulmonary embolism", "lung embolism", "lungenembolie", "pe ", "pe-",
+        "pulmonary embolism", "lung embolism", "lungenembolie", " pe", "pe ", "pe-",
     ],
     "sepsis": [
         "sepsis", "septic shock", "septischer schock", "urosepsis",
