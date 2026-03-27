@@ -592,7 +592,7 @@ class Neo4jClient:
             if len(members) >= 2
         ]
 
-    def merge_entities(self, canonical_name: str, alias_names: list[str]) -> int:
+    def merge_entities(self, session_id: str, canonical_name: str, alias_names: list[str]) -> int:
         """Redirect all MENTIONS/RELATION edges from each alias to the canonical entity,
         then delete the alias nodes. Returns the count of aliases merged.
         """
@@ -631,8 +631,8 @@ class Neo4jClient:
                 # Delete alias
                 s.run("MATCH (e:Entity {name: $name}) DETACH DELETE e", name=alias)
                 merged += 1
-        # Entity merges affect claim representations across all sessions.
-        self._cache.invalidate_all()
+        # Only invalidate the affected session's cache — not all sessions.
+        self._cache.invalidate(session_id)
         return merged
 
     # ── Session export / import ───────────────────────────────────────────────
@@ -703,3 +703,4 @@ class Neo4jClient:
         self._cache.invalidate(session_id)
         with self.driver.session() as s:
             s.run("MATCH (c:Claim {session_id: $session_id}) DETACH DELETE c", session_id=session_id)
+            s.run("MATCH (a:AuditEvent {session_id: $session_id}) DETACH DELETE a", session_id=session_id)

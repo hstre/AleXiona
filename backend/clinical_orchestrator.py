@@ -226,7 +226,7 @@ def orchestrate(
     top            = ranked[0]
     comp_contrib   = top.get("composite_score_contribution", 0.0)
     # base_evidence = score before composite boost was added by rank_hypotheses
-    base_evidence  = round(top["rule_based_score"] - comp_contrib, 3)
+    base_evidence  = round(max(0.0, top["rule_based_score"] - comp_contrib), 3)
     n_support      = len(top["supporting_claim_ids"])
     n_conflict     = len(top["conflicting_claim_ids"])
 

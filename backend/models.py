@@ -2,7 +2,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 
 _TIME_RE = re.compile(r'^(?:t\+)?(\d+(?:\.\d+)?)h?$', re.IGNORECASE)
@@ -377,7 +377,7 @@ class Conflict(BaseModel):
 # ── API ───────────────────────────────────────────────────────────────────────
 
 class ChatMessage(BaseModel):
-    role:    str = Field(..., max_length=50)
+    role:    Literal["user", "assistant"]  # rejects "system" / prompt injection
     content: str = Field(..., max_length=5_000)
 
 
@@ -603,9 +603,23 @@ class ReportSection(BaseModel):
     text:  str   # LLM-generated narrative prose
 
 
+class PatientContext(BaseModel):
+    """Optional patient identifiers for report header generation.
+
+    All fields are optional — only include what is available.
+    Max lengths prevent oversized blobs from reaching the LLM prompt.
+    """
+    name:          Optional[str] = Field(None, max_length=200)
+    geburtsdatum:  Optional[str] = Field(None, max_length=20)
+    fall_id:       Optional[str] = Field(None, max_length=100)
+    station:       Optional[str] = Field(None, max_length=200)
+    aufnahme:      Optional[str] = Field(None, max_length=30)
+    entlassung:    Optional[str] = Field(None, max_length=30)
+
+
 class GenerateReportRequest(BaseModel):
-    report_type:     str                    # "arztbrief" | "entlassbrief" | "konsilbrief" | "befundbericht"
-    patient_context: Optional[dict] = None  # e.g. {"name": "Max M.", "geburtsdatum": "1958-04-12"}
+    report_type:     str                           # "arztbrief" | "entlassbrief" | "konsilbrief" | "befundbericht"
+    patient_context: Optional[PatientContext] = None  # e.g. {"name": "Max M.", "geburtsdatum": "1958-04-12"}
 
 
 class ClinicalReport(BaseModel):

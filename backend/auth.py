@@ -28,6 +28,7 @@ Usage
         ...
 """
 
+import hashlib
 import os
 import uuid
 import structlog
@@ -47,7 +48,10 @@ _SECRET_KEY    = _raw_secret
 _MAX_AGE       = int(os.getenv("SESSION_MAX_AGE_HOURS", "8")) * 3600
 _SALT          = "alexiona-session-v1"
 
-_serializer = URLSafeTimedSerializer(_SECRET_KEY, salt=_SALT)
+_serializer = URLSafeTimedSerializer(
+    _SECRET_KEY, salt=_SALT,
+    signer_kwargs={"digest_method": hashlib.sha256},
+)
 
 # ── Data model ────────────────────────────────────────────────────────────────
 

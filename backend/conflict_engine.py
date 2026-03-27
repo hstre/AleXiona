@@ -103,7 +103,7 @@ def detect_conflicts(claims: list[dict]) -> list[Conflict]:
             neg1, neg2 = bool(_NEGATION_RE.search(t1)), bool(_NEGATION_RE.search(t2))
             if neg1 != neg2:
                 conflicts.append(Conflict(
-                    id=f"conflict-negation-{i}-{j}",
+                    id=f"conflict-negation-{c1['id']}-{c2['id']}",
                     type=ConflictType.negation,
                     severity=ConflictSeverity.error,
                     message=(
@@ -229,7 +229,7 @@ def detect_conflicts(claims: list[dict]) -> list[Conflict]:
             if (high1 and low2) or (low1 and high2):
                 t1, t2 = c1["text"], c2["text"]
                 conflicts.append(Conflict(
-                    id=f"conflict-values-{i}-{j}",
+                    id=f"conflict-values-{c1['id']}-{c2['id']}",
                     type=ConflictType.contradictory_values,
                     severity=ConflictSeverity.error,
                     message=(

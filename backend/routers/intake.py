@@ -86,7 +86,7 @@ async def intake_conversation(body: IntakeConversationRequest, request: Request,
     if not body.text or not body.text.strip():
         raise validation_error("Conversation text cannot be empty.")
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     db = get_db()
     try:
         extraction = await loop.run_in_executor(
@@ -120,7 +120,7 @@ async def intake_conversation(body: IntakeConversationRequest, request: Request,
 
 @router.post("/measurements", response_model=IntakeMeasurementsResponse)
 @limiter.limit("30/minute")
-async def intake_measurements(body: IntakeMeasurementsRequest, request: Request):
+async def intake_measurements(body: IntakeMeasurementsRequest, request: Request, _user: UserSession = Depends(require_clinician)):
     """Wearable / home-device measurements + PatientObservations → Claims + TrendSignals.
 
     Purely rule-based — no LLM call.  Each measurement produces a point-in-time
@@ -225,7 +225,7 @@ async def intake_clinical(body: IntakeClinicalRequest, request: Request, _user: 
     document → source_type=imported_document, evidence_tier=clinician_observed
     """
     _check_body_session(body.session_id, request)
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     db = get_db()
     try:
         all_claims: list[Claim] = []

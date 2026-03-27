@@ -32,7 +32,7 @@ async def chat(body: ChatRequest, request: Request, _user: UserSession = Depends
     if token_sid and body.session_id != token_sid:
         raise validation_error("Session ID in body does not match session token")
     db   = get_db()
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         extraction = extract_claims(body.message)
 
@@ -90,7 +90,7 @@ async def chat_stream(body: ChatRequest, request: Request, _user: UserSession = 
     if token_sid and body.session_id != token_sid:
         raise validation_error("Session ID in body does not match session token")
     db   = get_db()
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     async def generate():
         # 1. Extract + store claims (sync work, run in thread)
