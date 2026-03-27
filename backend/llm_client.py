@@ -326,8 +326,10 @@ def _apply_spl_to_claims(claims: list[Claim]) -> list[Claim]:
         }
         if spl.force_uncertain:
             updates["uncertainty_flag"] = True
+            # "tentative" is not a valid ClaimStatus value; map to "contested"
+            # which captures the same semantic (ambiguous, under review).
             if c.status in ("active", "inferred"):
-                updates["status"] = "tentative"
+                updates["status"] = "contested"
         result.append(c.model_copy(update=updates))
     return result
 

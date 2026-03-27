@@ -44,7 +44,7 @@ router = APIRouter(prefix="/api/graph", tags=["graph"])
 
 
 @router.post("/{session_id}/claims")
-async def add_manual_claim(session_id: str, payload: ManualClaimPayload):
+async def add_manual_claim(session_id: str, payload: ManualClaimPayload, _user: UserSession = Depends(require_clinician)):
     db = get_db()
     try:
         if payload.derived_from:
@@ -163,14 +163,17 @@ async def get_entity_duplicates(session_id: str):
 
 
 class MergeEntitiesPayload(BaseModel):
-    canonical: str
-    aliases:   list[str]
+    canonical: str = Field(..., max_length=500)
+    aliases:   list[str] = Field(..., max_length=50)
 
 
 @router.post("/{session_id}/entities/merge")
-async def merge_entities(session_id: str, payload: MergeEntitiesPayload):
+async def merge_entities(session_id: str, payload: MergeEntitiesPayload, request: Request, _user: UserSession = Depends(require_clinician)):
+    token_sid = getattr(getattr(request.state, "user", None), "session_id", "")
+    if not token_sid or token_sid != session_id:
+        raise HTTPException(status_code=403, detail="Access denied")
     try:
-        merged = get_db().merge_entities(payload.canonical, payload.aliases)
+        merged = get_db().merge_entities(session_id, payload.canonical, payload.aliases)
         return {"merged": merged}
     except Exception as e:
         raise internal_error(e)
@@ -185,11 +188,11 @@ async def export_session(session_id: str):
 
 
 class ImportPayload(BaseModel):
-    claims: list[dict]
+    claims: list[dict] = Field(..., max_length=500)
 
 
 @router.post("/{session_id}/import")
-async def import_session(session_id: str, payload: ImportPayload):
+async def import_session(session_id: str, payload: ImportPayload, _user: UserSession = Depends(require_clinician)):
     try:
         result = get_db().import_session(session_id, payload.claims)
         return result
@@ -260,7 +263,7 @@ async def get_claim_chain(session_id: str, claim_id: str):
 
 @router.patch("/claim/{claim_id}")
 @limiter.limit("30/minute")
-async def update_claim(claim_id: str, update: NodeUpdate, request: Request):
+async def update_claim(claim_id: str, update: NodeUpdate, request: Request, _user: UserSession = Depends(require_clinician)):
     db = get_db()
     try:
         before = db.get_claim_by_id(claim_id)
@@ -580,7 +583,7 @@ async def get_med(session_id: str):
 
 @router.delete("/claim/{claim_id}")
 @limiter.limit("30/minute")
-async def delete_claim(claim_id: str, request: Request):
+async def delete_claim(claim_id: str, request: Request, _user: UserSession = Depends(require_clinician)):
     db = get_db()
     try:
         before = db.get_claim_by_id(claim_id)
