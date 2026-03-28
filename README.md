@@ -401,7 +401,7 @@ docker compose up
 
 - Frontend: http://localhost:3000
 - Backend API docs: http://localhost:8000/docs
-- Neo4j Browser: http://localhost:7474 (neo4j / alexiona123)
+- Neo4j Browser: http://localhost:7474 (neo4j / alexiona123 — change `NEO4J_PASSWORD` in `.env` for production)
 
 ### Demo
 

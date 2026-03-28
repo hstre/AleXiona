@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from auth import UserSession, require_clinician
-from llm_config import get_model, get_provider_info, reconfigure, _PRESETS
+from llm_config import get_model, get_provider_info, reconfigure, sync_client, _PRESETS
 
 log    = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/config", tags=["config"])
@@ -58,7 +58,6 @@ def update_llm_config(
 @router.post("/llm/test")
 def test_llm_config(_user: UserSession = Depends(require_clinician)):
     """Make a minimal LLM call to verify the current configuration works."""
-    from llm_config import sync_client
     t0 = time.time()
     try:
         sync_client.chat.completions.create(
