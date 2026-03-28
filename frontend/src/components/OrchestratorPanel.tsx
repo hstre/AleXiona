@@ -2,6 +2,140 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { streamReasoning } from '@/lib/api'
+import { scoreColor } from '@/lib/utils'
+
+// ── useAnimatedScore ──────────────────────────────────────────────────────────
+// Smoothly animates a numeric value from its previous position to a new target.
+
+function useAnimatedScore(target: number, duration = 900): number {
+  const [display, setDisplay] = useState(0)
+  const rafRef  = useRef<number | null>(null)
+  const fromRef = useRef(0)
+
+  useEffect(() => {
+    const from  = fromRef.current
+    const start = performance.now()
+    if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    const tick = (now: number) => {
+      const p = Math.min((now - start) / duration, 1)
+      const eased = 1 - Math.pow(1 - p, 3)      // ease-out cubic
+      const val = from + (target - from) * eased
+      fromRef.current = val
+      setDisplay(val)
+      if (p < 1) rafRef.current = requestAnimationFrame(tick)
+    }
+    rafRef.current = requestAnimationFrame(tick)
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }
+  }, [target, duration])
+
+  return display
+}
+
+// ── ScoreDial ─────────────────────────────────────────────────────────────────
+// Animated SVG arc gauge — sweeps from 0 to score like a speedometer.
+
+const ARC_R  = 72
+const ARC_CX = 100
+const ARC_CY = 90
+const ARC_LEN = Math.PI * ARC_R          // semicircle arc length ≈ 226
+
+function ScoreDial({ score, color }: { score: number; color: string }) {
+  const animated = useAnimatedScore(score)
+  const x0  = ARC_CX - ARC_R
+  const x1  = ARC_CX + ARC_R
+  const path = `M ${x0} ${ARC_CY} A ${ARC_R} ${ARC_R} 0 0 1 ${x1} ${ARC_CY}`
+  const offset = ARC_LEN * (1 - Math.min(Math.max(animated, 0), 1))
+  const strokeColor = scoreColor(animated)
+  const pctDisplay  = Math.round(animated * 100)
+
+  return (
+    <svg viewBox="0 0 200 96" style={{ width: '100%', display: 'block', overflow: 'visible' }}>
+      <defs>
+        <filter id="dial-glow">
+          <feGaussianBlur stdDeviation="3" result="blur" />
+          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
+      </defs>
+      {/* Track */}
+      <path d={path} fill="none" stroke="rgba(0,0,0,0.08)" strokeWidth="12" strokeLinecap="round" />
+      {/* Fill arc */}
+      <path
+        d={path} fill="none" stroke={strokeColor} strokeWidth="12" strokeLinecap="round"
+        strokeDasharray={`${ARC_LEN} ${ARC_LEN}`}
+        strokeDashoffset={offset}
+        filter="url(#dial-glow)"
+      />
+      {/* Score text */}
+      <text x={ARC_CX} y={ARC_CY - 14} textAnchor="middle" dominantBaseline="middle"
+        fontSize="30" fontWeight="800" fill={strokeColor}
+        style={{ fontFamily: 'var(--font-mono, monospace)', letterSpacing: '-1px' }}>
+        {pctDisplay}%
+      </text>
+      {/* Min / Max labels */}
+      <text x={x0 - 4} y={ARC_CY + 16} textAnchor="middle" fontSize="9" fill="rgba(0,0,0,0.3)">0</text>
+      <text x={x1 + 4} y={ARC_CY + 16} textAnchor="middle" fontSize="9" fill="rgba(0,0,0,0.3)">100</text>
+    </svg>
+  )
+}
+
+// ── Leaderboard helpers ───────────────────────────────────────────────────────
+
+const RANK_COLORS = ['#f59e0b', '#94a3b8', '#b45309']
+
+function RankBadge({ rank }: { rank: number }) {
+  return (
+    <div style={{
+      width: 20, height: 20, borderRadius: '50%', flexShrink: 0, fontSize: 10,
+      fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: RANK_COLORS[rank] ?? 'var(--surface-2)',
+      color: rank < 3 ? '#fff' : 'var(--text-muted)',
+    }}>
+      {rank + 1}
+    </div>
+  )
+}
+
+function AnimatedBar({ value }: { value: number }) {
+  const animated = useAnimatedScore(value)
+  const color = scoreColor(animated)
+  return (
+    <div style={{ flex: 1, height: 6, background: '#e5e7eb', borderRadius: 3, overflow: 'hidden' }}>
+      <div style={{
+        width: `${Math.min(animated, 1) * 100}%`, height: '100%', borderRadius: 3,
+        background: color, boxShadow: `0 0 6px ${color}88`,
+      }} />
+    </div>
+  )
+}
+
+interface LeaderboardItemProps {
+  alt:    Alternative
+  rank:   number
+  itemH:  number
+}
+function LeaderboardItem({ alt, rank, itemH }: LeaderboardItemProps) {
+  const animated = useAnimatedScore(alt.score)
+  return (
+    <div style={{
+      position: 'absolute', left: 0, right: 0,
+      top: rank * itemH,
+      transition: 'top 0.55s cubic-bezier(0.4, 0, 0.2, 1)',
+      display: 'flex', alignItems: 'center', gap: 8,
+      height: itemH - 4,
+    }}>
+      <RankBadge rank={rank} />
+      <div style={{ flex: 1, fontSize: 12, color: 'var(--text)', lineHeight: 1.3 }}>{alt.text}</div>
+      <AnimatedBar value={alt.score} />
+      <div style={{
+        width: 34, fontSize: 12, textAlign: 'right',
+        fontVariantNumeric: 'tabular-nums',
+        color: scoreColor(animated), fontWeight: 600,
+      }}>
+        {Math.round(animated * 100)}%
+      </div>
+    </div>
+  )
+}
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -197,15 +331,9 @@ export default function OrchestratorPanel({ sessionId }: Props) {
           {state.leading_hypothesis ?? 'Keine Hypothese'}
         </div>
 
-        {/* Score arc / visual meter */}
-        <div style={{ marginBottom: 10 }}>
-          <div style={{ height: 8, background: '#e5e7eb', borderRadius: 4, overflow: 'hidden' }}>
-            <div style={{
-              width: `${score * 100}%`, height: '100%',
-              background: score >= 0.52 ? sm.color : score >= 0.25 ? '#f59e0b' : '#6b7280',
-              borderRadius: 4, transition: 'width 0.5s ease',
-            }} />
-          </div>
+        {/* Score dial */}
+        <div style={{ marginBottom: 6, marginTop: 4 }}>
+          <ScoreDial score={score} color={sm.color} />
         </div>
 
         {/* Why */}
@@ -316,32 +444,27 @@ export default function OrchestratorPanel({ sessionId }: Props) {
         </div>
       </div>
 
-      {/* ── Alternatives ─────────────────────────────────────────────────── */}
-      {state.alternatives.length > 0 && (
-        <div style={{
-          background: 'var(--surface)', border: '1px solid var(--border)',
-          borderRadius: 10, padding: '14px 16px',
-        }}>
-          <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
-            letterSpacing: '0.06em', color: 'var(--text-muted)', marginBottom: 10 }}>
-            Alternativen
+      {/* ── Alternatives Leaderboard ──────────────────────────────────────── */}
+      {state.alternatives.length > 0 && (() => {
+        const ITEM_H = 38
+        const sorted = [...state.alternatives].sort((a, b) => b.score - a.score)
+        return (
+          <div style={{
+            background: 'var(--surface)', border: '1px solid var(--border)',
+            borderRadius: 10, padding: '14px 16px',
+          }}>
+            <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
+              letterSpacing: '0.06em', color: 'var(--text-muted)', marginBottom: 12 }}>
+              Differentialdiagnosen
+            </div>
+            <div style={{ position: 'relative', height: sorted.length * ITEM_H }}>
+              {sorted.map((a, rank) => (
+                <LeaderboardItem key={a.text} alt={a} rank={rank} itemH={ITEM_H} />
+              ))}
+            </div>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {state.alternatives.map((a, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ flex: 1, fontSize: 13, color: 'var(--text)' }}>{a.text}</div>
-                <div style={{ width: 80 }}>
-                  <ScoreBar value={a.score} max={1} />
-                </div>
-                <div style={{ width: 36, fontSize: 12, color: 'var(--text-muted)',
-                  textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                  {pct(a.score)}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+        )
+      })()}
 
       {/* ── KI-Analyse (streaming narrative) ─────────────────────────────── */}
       <div style={{

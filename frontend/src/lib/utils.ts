@@ -4,9 +4,20 @@ export const SESSION_KEY = 'alexiona_session'
 export const SHORT_ID_LEN = 8
 
 export const shortId  = (id: string): string  => id.slice(0, SHORT_ID_LEN)
-export const confColor = (c: number): string  =>
+export const confColor = (c: number): string =>
   c >= 0.75 ? '#22c55e' : c >= 0.5 ? '#f59e0b' : '#ef4444'
 export const confPct   = (c: number): number  => Math.round(c * 100)
+
+/** Smooth red → amber → green interpolation for confidence scores (0–1). */
+export function scoreColor(score: number): string {
+  const s = Math.max(0, Math.min(1, score))
+  if (s < 0.45) {
+    const t = s / 0.45
+    return `rgb(${Math.round(239 + 6 * t)},${Math.round(68 + 90 * t)},${Math.round(68 - 57 * t)})`
+  }
+  const t = (s - 0.45) / 0.55
+  return `rgb(${Math.round(245 - 211 * t)},${Math.round(158 + 39 * t)},${Math.round(11 + 83 * t)})`
+}
 
 /** Human-readable evidence support label — never implies diagnostic probability. */
 export const essLabel = (c: number): 'low' | 'moderate' | 'strong' =>

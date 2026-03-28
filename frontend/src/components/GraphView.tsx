@@ -83,6 +83,14 @@ const NODE_STYLES = [
     selector: `node[type="Claim"][claim_type="${ct}"]`,
     style: { 'background-color': fill, 'border-color': border },
   })),
+  // Hypothesis nodes start with a baseline glow (pulsed further in code)
+  {
+    selector: 'node[claim_type="hypothesis"]',
+    style: {
+      'shadow-blur': 6, 'shadow-color': '#eab308',
+      'shadow-opacity': 0.35, 'shadow-offset-x': 0, 'shadow-offset-y': 0,
+    },
+  },
   {
     selector: 'node[status="superseded"], node[status="resolved"]',
     style: { opacity: 0.45, 'border-style': 'dashed' },
@@ -175,6 +183,7 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
 
   useEffect(() => {
     if (typeof window === 'undefined' || !containerRef.current) return
+    let pulsingActive = true
     import('cytoscape').then(({ default: cytoscape }) => {
       if (cyRef.current) cyRef.current.destroy()
 
@@ -270,8 +279,34 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
         }
       })
       cyRef.current = cy
+
+      // ── Pulsing glow for hypothesis nodes ─────────────────────────────────
+      const pulseNode = (node: any, color: string, maxBlur: number) => {
+        if (!pulsingActive) return
+        node.animate({
+          style: { 'shadow-blur': maxBlur, 'shadow-opacity': 0.82, 'shadow-color': color },
+          duration: 1350, easing: 'ease-in-out-sine',
+          complete: () => {
+            if (!pulsingActive) return
+            node.animate({
+              style: { 'shadow-blur': 4, 'shadow-opacity': 0.12 },
+              duration: 1350, easing: 'ease-in-out-sine',
+              complete: () => pulseNode(node, color, maxBlur),
+            })
+          },
+        })
+      }
+      cy.nodes('[claim_type="hypothesis"]').forEach((node: any) => {
+        const ess   = (node.data('evidence_support_score') ?? 0.5) as number
+        const color = ess >= 0.7 ? '#22c55e' : ess >= 0.45 ? '#f59e0b' : '#ef4444'
+        const maxBlur = 14 + ess * 26
+        setTimeout(() => pulseNode(node, color, maxBlur), Math.random() * 1800)
+      })
     })
-    return () => { if (cyRef.current) { cyRef.current.destroy(); cyRef.current = null } }
+    return () => {
+      pulsingActive = false
+      if (cyRef.current) { cyRef.current.destroy(); cyRef.current = null }
+    }
   }, [data, conflictNodeIds, layout])
 
   // Fit graph when parent requests it (keyboard shortcut 'f')
