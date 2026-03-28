@@ -44,6 +44,7 @@ from rate_limit import limiter
 # ── App + router imports ──────────────────────────────────────────────────────
 from routers import chat, graph, sessions, demo, intake, audit
 from routers.auth import router as auth_router
+from routers.config import router as config_router
 from auth import decode_token
 
 
@@ -56,8 +57,8 @@ async def lifespan(app: FastAPI):
         from neo4j_client import _instance
         if _instance is not None:
             _instance.close()
-    except Exception:
-        pass
+    except Exception as exc:
+        log.warning("neo4j_shutdown_failed", error=str(exc), exc_info=True)
 
 
 app = FastAPI(title="AleXiona API", version="0.1.0", lifespan=lifespan)
@@ -159,6 +160,7 @@ app.include_router(sessions.router)
 app.include_router(demo.router)
 app.include_router(intake.router)
 app.include_router(audit.router)
+app.include_router(config_router)
 
 
 @app.get("/health")

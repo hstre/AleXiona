@@ -1,5 +1,6 @@
 """Auth router — session token creation and introspection."""
 
+import os
 import uuid
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -9,6 +10,10 @@ from auth import create_token, decode_token, require_user, UserSession
 log = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+# When set, clinician tokens require this secret in X-Bootstrap-Secret header.
+# Leave unset in development to keep the open-access behaviour.
+_BOOTSTRAP_SECRET = os.getenv("CLINICIAN_BOOTSTRAP_SECRET", "")
 
 
 class SessionRequest(BaseModel):
@@ -35,6 +40,14 @@ def create_session(body: SessionRequest, request: Request):
     """
     if body.role not in ("clinician", "demo"):
         raise HTTPException(status_code=422, detail="role must be 'clinician' or 'demo'")
+
+    # Gate clinician tokens behind bootstrap secret when configured in production.
+    if body.role == "clinician" and _BOOTSTRAP_SECRET:
+        provided = request.headers.get("X-Bootstrap-Secret", "")
+        if provided != _BOOTSTRAP_SECRET:
+            log.warning("clinician_bootstrap_rejected",
+                        remote=request.client.host if request.client else "unknown")
+            raise HTTPException(status_code=403, detail="Access denied")
 
     sid   = body.session_id or str(uuid.uuid4())
     token = create_token(body.role, sid)

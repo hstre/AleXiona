@@ -34,25 +34,32 @@ async def chat(body: ChatRequest, request: Request, _user: UserSession = Depends
     db   = get_db()
     loop = asyncio.get_running_loop()
     try:
-        extraction = extract_claims(body.message)
+        extraction = await loop.run_in_executor(_executor, extract_claims, body.message)
 
         if extraction.claims:
-            claim_ids = db.store_claims(extraction.claims, body.session_id)
+            claim_ids = await loop.run_in_executor(
+                _executor, db.store_claims, extraction.claims, body.session_id
+            )
             log_created_batch(
                 claim_ids, extraction.claims, body.session_id,
                 actor=AuditActor.chat,
                 pipeline_stage="Stage 1–3: LLM extraction via /api/chat",
             )
 
-        all_claims    = db.get_all_claims_for_session(body.session_id)
-        graph_context = db.get_context_for_query(body.session_id)
+        all_claims    = await loop.run_in_executor(
+            _executor, db.get_all_claims_for_session, body.session_id
+        )
+        graph_context = await loop.run_in_executor(
+            _executor, db.get_context_for_query, body.session_id
+        )
 
-        reply_result, reasoning_result = await asyncio.gather(
+        reply_result, reasoning_result, conflicts_result = await asyncio.gather(
             loop.run_in_executor(
                 _executor, answer_with_context,
                 body.message, body.history, graph_context,
             ),
             loop.run_in_executor(_executor, analyze_reasoning, all_claims),
+            loop.run_in_executor(_executor, detect_conflicts, all_claims),
             return_exceptions=True,
         )
 
@@ -65,7 +72,9 @@ async def chat(body: ChatRequest, request: Request, _user: UserSession = Depends
             reasoning_result = None
         reasoning = reasoning_result
 
-        conflicts = detect_conflicts(all_claims)
+        conflicts = [] if isinstance(conflicts_result, Exception) else conflicts_result
+        if isinstance(conflicts_result, Exception):
+            log.warning("Conflict detection failed (non-fatal): %s", conflicts_result)
 
         return ChatResponse(
             reply=reply,
@@ -99,7 +108,8 @@ async def chat_stream(body: ChatRequest, request: Request, _user: UserSession = 
                 _executor, extract_claims, body.message
             )
         except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            log.error("extract_claims failed in stream: %s", e)
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Failed to process message'})}\n\n"
             return
 
         if extraction.claims:
@@ -138,7 +148,8 @@ async def chat_stream(body: ChatRequest, request: Request, _user: UserSession = 
                 full_reply += tok
                 yield f"data: {json.dumps({'type': 'token', 'content': tok})}\n\n"
         except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            log.error("stream_answer failed: %s", e)
+            yield f"data: {json.dumps({'type': 'error', 'message': 'LLM response failed'})}\n\n"
             return
 
         # 5. Reasoning + conflicts (sync, run in thread)

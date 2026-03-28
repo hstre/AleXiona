@@ -44,6 +44,15 @@ if not _raw_secret:
         "SECRET_KEY environment variable is not set. "
         "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
     )
+_KNOWN_WEAK = {"change-me-in-production", "changeme", "dev-secret", "secret", "test"}
+if _raw_secret.lower() in _KNOWN_WEAK:
+    import warnings
+    warnings.warn(
+        f"SECRET_KEY is set to a known insecure value '{_raw_secret}'. "
+        "This is only acceptable in local development. "
+        "Generate a real key with: python -c \"import secrets; print(secrets.token_urlsafe(32))\"",
+        stacklevel=1,
+    )
 _SECRET_KEY    = _raw_secret
 _MAX_AGE       = int(os.getenv("SESSION_MAX_AGE_HOURS", "8")) * 3600
 _SALT          = "alexiona-session-v1"
