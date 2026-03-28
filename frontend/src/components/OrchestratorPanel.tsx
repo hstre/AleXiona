@@ -1,16 +1,17 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { streamReasoning } from '@/lib/api'
+import { streamReasoning, getOrchestratorState } from '@/lib/api'
+import type { OrchestratorState, OrchestratorAlternative, OrchestratorScoreBreakdown } from '@/lib/api'
 import { scoreColor } from '@/lib/utils'
 
 // ── useAnimatedScore ──────────────────────────────────────────────────────────
 // Smoothly animates a numeric value from its previous position to a new target.
 
 function useAnimatedScore(target: number, duration = 900): number {
-  const [display, setDisplay] = useState(0)
+  const [display, setDisplay] = useState(target)   // start at target — no 0→target flash
   const rafRef  = useRef<number | null>(null)
-  const fromRef = useRef(0)
+  const fromRef = useRef(target)                    // animate from current value, not 0
 
   useEffect(() => {
     const from  = fromRef.current
@@ -109,7 +110,7 @@ function AnimatedBar({ value }: { value: number }) {
 }
 
 interface LeaderboardItemProps {
-  alt:    Alternative
+  alt:    OrchestratorAlternative
   rank:   number
   itemH:  number
 }
@@ -137,38 +138,6 @@ function LeaderboardItem({ alt, rank, itemH }: LeaderboardItemProps) {
   )
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-interface ScoreBreakdown {
-  evidence:  number
-  guideline: number
-  composite: number
-  temporal:  number
-  conflict:  number
-}
-
-interface Alternative {
-  text:                        string
-  score:                       number
-  composite_score_contribution: number
-}
-
-interface OrchestratorState {
-  session_id:         string
-  leading_hypothesis: string | null
-  orchestrated_score: number
-  status:             'confident' | 'undecided' | 'contested' | 'insufficient'
-  why:                string
-  key_conflicts:      string[]
-  missing_critical:   string[]
-  next_action:        string
-  score_breakdown:    ScoreBreakdown
-  alternatives:       Alternative[]
-  generated_at:       string
-}
-
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const STATUS_META: Record<string, { label: string; color: string; bg: string }> = {
@@ -178,7 +147,7 @@ const STATUS_META: Record<string, { label: string; color: string; bg: string }> 
   insufficient: { label: 'Unzureichend', color: '#1e40af', bg: '#eff6ff' },
 }
 
-const FACTOR_META: { key: keyof ScoreBreakdown; label: string; weight: string }[] = [
+const FACTOR_META: { key: keyof OrchestratorScoreBreakdown; label: string; weight: string }[] = [
   { key: 'evidence',  label: 'Evidenz',        weight: '40 %' },
   { key: 'guideline', label: 'Leitlinie',       weight: '25 %' },
   { key: 'composite', label: 'Klin. Scores',    weight: '15 %' },
@@ -213,21 +182,16 @@ export default function OrchestratorPanel({ sessionId }: Props) {
   const [state,          setState]          = useState<OrchestratorState | null>(null)
   const [loading,        setLoading]        = useState(false)
   const [error,          setError]          = useState<string | null>(null)
-  const [narrative,      setNarrative]      = useState<string>('')
-  const [narLoading,     setNarLoading]     = useState(false)
-  const [narError,       setNarError]       = useState<string | null>(null)
-  const abortNarRef = useRef(false)
+  const [narrative,  setNarrative]  = useState<string>('')
+  const [narLoading, setNarLoading] = useState(false)
+  const [narError,   setNarError]   = useState<string | null>(null)
+  const narCtrlRef = useRef<AbortController | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch(`${API_URL}/api/graph/${sessionId}/orchestrate`)
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        throw new Error(data?.detail?.message ?? data?.detail ?? `Fehler ${res.status}`)
-      }
-      setState(await res.json())
+      setState(await getOrchestratorState(sessionId))
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -238,24 +202,28 @@ export default function OrchestratorPanel({ sessionId }: Props) {
   useEffect(() => { load() }, [load])
 
   const startNarrative = useCallback(async () => {
-    abortNarRef.current = false
+    narCtrlRef.current?.abort()                   // cancel any in-flight stream
+    const ctrl = new AbortController()
+    narCtrlRef.current = ctrl
     setNarLoading(true)
     setNarrative('')
     setNarError(null)
     try {
-      for await (const event of streamReasoning(sessionId)) {
-        if (abortNarRef.current) break
-        if (event.type === 'token')  setNarrative(prev => prev + event.content)
-        if (event.type === 'error')  { setNarError(event.message); break }
+      for await (const event of streamReasoning(sessionId, ctrl.signal)) {
+        if (ctrl.signal.aborted) break
+        if (event.type === 'token') setNarrative(prev => prev + event.content)
+        if (event.type === 'error') { setNarError(event.message); break }
       }
     } catch (e: unknown) {
-      setNarError(e instanceof Error ? e.message : String(e))
+      if (!ctrl.signal.aborted)
+        setNarError(e instanceof Error ? e.message : String(e))
     } finally {
       setNarLoading(false)
     }
   }, [sessionId])
 
-  useEffect(() => () => { abortNarRef.current = true }, [])
+  // Abort any running stream when component unmounts
+  useEffect(() => () => { narCtrlRef.current?.abort() }, [])
 
   // ── Empty / error states ──────────────────────────────────────────────────
 

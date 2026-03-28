@@ -300,6 +300,38 @@ export async function getGraph(sessionId: string): Promise<GraphData> {
   return safeJson(res)
 }
 
+export interface OrchestratorScoreBreakdown {
+  evidence:  number
+  guideline: number
+  composite: number
+  temporal:  number
+  conflict:  number
+}
+export interface OrchestratorAlternative {
+  text:                         string
+  score:                        number
+  composite_score_contribution: number
+}
+export interface OrchestratorState {
+  session_id:         string
+  leading_hypothesis: string | null
+  orchestrated_score: number
+  status:             'confident' | 'undecided' | 'contested' | 'insufficient'
+  why:                string
+  key_conflicts:      string[]
+  missing_critical:   string[]
+  next_action:        string
+  score_breakdown:    OrchestratorScoreBreakdown
+  alternatives:       OrchestratorAlternative[]
+  generated_at:       string
+}
+
+export async function getOrchestratorState(sessionId: string): Promise<OrchestratorState> {
+  const res = await apiFetch(`${API_URL}/api/graph/${sessionId}/orchestrate`)
+  if (!res.ok) throw await parseError(res)
+  return safeJson(res)
+}
+
 export interface ClaimPatch {
   text?:                   string
   evidence_support_score?: number
@@ -548,9 +580,13 @@ export type ReasoningStreamEvent =
   | { type: 'error'; message: string }
 
 export async function* streamReasoning(
-  sessionId: string
+  sessionId: string,
+  signal?: AbortSignal,
 ): AsyncGenerator<ReasoningStreamEvent> {
-  const res = await apiFetch(`${API_URL}/api/graph/${sessionId}/reasoning/stream`)
+  const res = await apiFetch(
+    `${API_URL}/api/graph/${sessionId}/reasoning/stream`,
+    { signal },
+  )
   if (!res.ok) throw await parseError(res)
   if (!res.body) throw new Error('Streaming response body is null')
 
@@ -558,22 +594,26 @@ export async function* streamReasoning(
   const decoder = new TextDecoder()
   let   buf     = ''
 
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buf += decoder.decode(value, { stream: true })
-    const lines = buf.split('\n')
-    buf = lines.pop() ?? ''
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue
-      const text = line.slice(6).trim()
-      if (!text) continue
-      try {
-        yield JSON.parse(text) as ReasoningStreamEvent
-      } catch {
-        // skip malformed SSE line
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      const lines = buf.split('\n')
+      buf = lines.pop() ?? ''
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        const text = line.slice(6).trim()
+        if (!text) continue
+        try {
+          yield JSON.parse(text) as ReasoningStreamEvent
+        } catch {
+          // skip malformed SSE line
+        }
       }
     }
+  } finally {
+    reader.cancel().catch(() => {})
   }
 }
 
