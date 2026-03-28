@@ -67,8 +67,74 @@ REPORT_TYPES: dict[str, dict] = {
     },
 }
 
-_ACTIVE_STATUSES = {"active", "observed", "inferred", "confirmed", "contested"}
-_EVIDENCE_TYPES  = {"finding", "lab", "imaging", "symptom"}
+_ACTIVE_STATUSES  = {"active", "observed", "inferred", "confirmed", "contested"}
+_EVIDENCE_TYPES   = {"finding", "lab", "imaging", "symptom"}
+_REVISED_STATUSES = {"refuted", "superseded", "withdrawn"}
+_HIGH_TRUST_SOURCES = {"clinician", "lab_system", "imaging_model"}
+
+
+def _epistemic_tag(claim: dict) -> str:
+    """
+    Classify one claim into an epistemic status tag:
+
+      [GESICHERT]   — confirmed or high-quality active evidence
+      [VERDACHT]    — inferred, unconfirmed, or LLM-extracted
+      [REVIDIERT]   — refuted / superseded / withdrawn
+      [AUSSTEHEND]  — used externally for missing_critical items
+    """
+    status = claim.get("status", "active")
+    if status in _REVISED_STATUSES:
+        return "[REVIDIERT]"
+    ess    = float(claim.get("evidence_support_score") or 0.8)
+    source = claim.get("source_type", "llm")
+    if status == "confirmed" or (ess >= 0.75 and source in _HIGH_TRUST_SOURCES):
+        return "[GESICHERT]"
+    return "[VERDACHT]"
+
+
+def _build_epistemic_section(all_claims: list[dict], missing_critical: list[str]) -> str:
+    """
+    Build a compact epistemic status table for all claims + missing items.
+    Injected into the LLM prompt so the report can carry provenance tags.
+    """
+    lines: list[str] = ["=== EPISTEMISCHER STATUS DER CLAIMS ==="]
+    lines.append("Verwende diese Tags in deinem Bericht: [GESICHERT], [VERDACHT], [REVIDIERT], [AUSSTEHEND]")
+    lines.append("")
+
+    # Group by tag
+    gesichert = []
+    verdacht  = []
+    revidiert = []
+
+    for c in all_claims:
+        tag = _epistemic_tag(c)
+        entry = f"  {tag} {c['text']}"
+        if tag == "[GESICHERT]":
+            gesichert.append(entry)
+        elif tag == "[REVIDIERT]":
+            revidiert.append(entry)
+        else:
+            verdacht.append(entry)
+
+    if gesichert:
+        lines.append("Gesicherte Befunde:")
+        lines.extend(gesichert)
+        lines.append("")
+    if verdacht:
+        lines.append("Verdacht / nicht gesichert:")
+        lines.extend(verdacht)
+        lines.append("")
+    if revidiert:
+        lines.append("Revidierte / widerrufene Befunde:")
+        lines.extend(revidiert)
+        lines.append("")
+    if missing_critical:
+        lines.append("Ausstehende / fehlende kritische Untersuchungen:")
+        for m in missing_critical:
+            lines.append(f"  [AUSSTEHEND] {m}")
+        lines.append("")
+
+    return "\n".join(lines)
 
 
 def _build_claim_context(all_claims: list[dict]) -> str:
@@ -163,6 +229,7 @@ def build_report_prompt(
     report_type: str,
     all_claims: list[dict],
     patient_context: PatientContext | None = None,
+    missing_critical: list[str] | None = None,
 ) -> str:
     """
     Build a complete LLM prompt for clinical report generation.
@@ -184,7 +251,8 @@ def build_report_prompt(
         f'  "{s["key"]}": "<{s["title"]}>"'
         for s in rt["sections"]
     )
-    claim_context = _build_claim_context(all_claims)
+    claim_context    = _build_claim_context(all_claims)
+    epistemic_block  = _build_epistemic_section(all_claims, missing_critical or [])
 
     patient_block = ""
     if patient_context:
@@ -203,9 +271,18 @@ Anforderungen:
 - Fehlende Angaben mit "[nicht dokumentiert]" kennzeichnen
 - Klinische Scores und Laborwerte direkt in den passenden Abschnitt integrieren
 - Sprache: Deutsch (medizinischer Fachstil)
+- Epistemische Transparenz: Kennzeichne Aussagen mit den vorgegebenen Tags:
+    [GESICHERT]   für klinisch gesicherte Befunde (bestätigt, hohe Evidenz)
+    [VERDACHT]    für nicht gesicherte Hypothesen oder LLM-extrahierte Claims
+    [REVIDIERT]   für widerrufene oder widerlegte Befunde (nur im Verlauf erwähnen)
+    [AUSSTEHEND]  für noch ausstehende Untersuchungen / fehlende Befunde
+  Füge diese Tags direkt im Fließtext ein, z.B.:
+  "Es bestand klinisch [GESICHERT] eine Tachykardie ... [VERDACHT] auf eine Lungenembolie ..."
 {patient_block}
 === FALLZUSAMMENFASSUNG AUS DEM EVIDENZGRAPHEN ===
 {claim_context}
+
+{epistemic_block}
 
 Antworte AUSSCHLIESSLICH mit gültigem JSON in folgendem Format:
 {{

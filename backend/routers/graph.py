@@ -399,6 +399,17 @@ async def get_orchestrator_state(
         # ── Auto-persist snapshot (fire-and-forget; never blocks the response) ──
         try:
             parsed_ids = [c.strip() for c in trigger_claim_ids.split(",") if c.strip()]
+
+            # Dedup: skip if leading state is identical to the last snapshot
+            _last = db.get_last_orchestrator_snapshot(session_id)
+            _same_hyp    = (_last or {}).get("leading_hypothesis") == orch_state.leading_hypothesis
+            _same_status = (_last or {}).get("status") == orch_state.status
+            _score_close = abs(
+                ((_last or {}).get("orchestrated_score") or 0) - orch_state.orchestrated_score
+            ) < 0.02
+            if _last and _same_hyp and _same_status and _score_close:
+                return orch_state   # nothing changed — no new snapshot needed
+
             snapshot = OrchestratorSnapshot(
                 id=str(_uuid.uuid4()),
                 session_id=session_id,
@@ -659,7 +670,11 @@ async def create_report(session_id: str, body: GenerateReportRequest, request: R
     db = get_db()
     try:
         claims  = db.get_all_claims_for_session(session_id)
-        prompt  = build_report_prompt(body.report_type, claims, body.patient_context)
+        # Pull missing_critical from orchestrator for revision-aware report context
+        orch_state    = orchestrate(session_id, claims)
+        missing_crit  = orch_state.get("missing_critical", [])
+        prompt  = build_report_prompt(body.report_type, claims, body.patient_context,
+                                      missing_critical=missing_crit)
         raw     = await _generate_report(prompt)
 
         sections = []

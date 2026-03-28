@@ -81,6 +81,199 @@ function ScoreArc({ score }: { score: number }) {
   )
 }
 
+// ── Diff view ─────────────────────────────────────────────────────────────────
+
+function DiffBadge({ prev, next, label, color }: {
+  prev: string | null | undefined
+  next: string | null | undefined
+  label: string
+  color: string
+}) {
+  if (prev === next) return null
+  return (
+    <div className="space-y-1">
+      <div className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>{label}</div>
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="px-2 py-0.5 rounded-full text-xs line-through"
+          style={{ background: '#ef444422', color: '#ef4444' }}>
+          {prev ?? 'n/a'}
+        </span>
+        <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>→</span>
+        <span className="px-2 py-0.5 rounded-full text-xs font-medium"
+          style={{ background: color + '22', color }}>
+          {next ?? 'n/a'}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function SnapshotDiff({ prev, curr }: {
+  prev: OrchestratorSnapshot
+  curr: OrchestratorSnapshot
+}) {
+  const scoreDelta = curr.orchestrated_score - prev.orchestrated_score
+  const scoreUp    = scoreDelta >= 0
+  const scoreColor = scoreUp ? '#10b981' : '#ef4444'
+
+  // Compute added/removed items in lists
+  const prevConflicts = new Set(prev.key_conflicts)
+  const currConflicts = new Set(curr.key_conflicts)
+  const newConflicts  = curr.key_conflicts.filter(c => !prevConflicts.has(c))
+  const resolvedConflicts = prev.key_conflicts.filter(c => !currConflicts.has(c))
+
+  const prevMissing = new Set(prev.missing_critical)
+  const currMissing = new Set(curr.missing_critical)
+  const newMissing     = curr.missing_critical.filter(m => !prevMissing.has(m))
+  const resolvedMissing = prev.missing_critical.filter(m => !currMissing.has(m))
+
+  const prevAlts = new Map(prev.alternatives.map(a => [a.text, a.score]))
+  const rankChanges = curr.alternatives.map((a, i) => {
+    const prevScore = prevAlts.get(a.text)
+    const delta = prevScore !== undefined ? a.score - prevScore : null
+    return { text: a.text, rank: i + 1, delta }
+  }).filter(r => r.delta !== null && Math.abs(r.delta as number) >= 0.04)
+
+  const hasChanges =
+    prev.leading_hypothesis !== curr.leading_hypothesis ||
+    prev.status !== curr.status ||
+    Math.abs(scoreDelta) >= 0.02 ||
+    newConflicts.length > 0 || resolvedConflicts.length > 0 ||
+    newMissing.length > 0 || resolvedMissing.length > 0 ||
+    rankChanges.length > 0
+
+  if (!hasChanges) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center gap-2 px-6 text-center">
+        <span className="text-2xl">≈</span>
+        <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>Keine signifikante Änderung</p>
+        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+          Zwischen diesem und dem vorherigen Snapshot wurde keine klinisch relevante Änderung erkannt.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+      {/* Score delta */}
+      {Math.abs(scoreDelta) >= 0.02 && (
+        <div className="flex items-center gap-3 px-3 py-2 rounded-lg"
+          style={{ background: scoreColor + '15', border: `1px solid ${scoreColor}44` }}>
+          <span className="text-xl font-bold" style={{ color: scoreColor }}>
+            {scoreUp ? '▲' : '▼'}
+          </span>
+          <div>
+            <div className="text-xs font-medium" style={{ color: scoreColor }}>Score</div>
+            <div className="text-sm font-mono font-bold" style={{ color: scoreColor }}>
+              {Math.round(prev.orchestrated_score * 100)}%
+              <span className="mx-1 font-normal">→</span>
+              {Math.round(curr.orchestrated_score * 100)}%
+              <span className="ml-1 text-xs opacity-70">
+                ({scoreUp ? '+' : ''}{Math.round(scoreDelta * 100)}pp)
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Hypothesis change */}
+      <DiffBadge
+        prev={prev.leading_hypothesis ?? 'Unzureichend'}
+        next={curr.leading_hypothesis ?? 'Unzureichend'}
+        label="Führende Hypothese"
+        color="#3b8eea"
+      />
+
+      {/* Status change */}
+      <DiffBadge
+        prev={prev.status}
+        next={curr.status}
+        label="Status"
+        color={STATUS_META[curr.status]?.color ?? '#6b7280'}
+      />
+
+      {/* Conflicts */}
+      {(newConflicts.length > 0 || resolvedConflicts.length > 0) && (
+        <div className="space-y-1">
+          <div className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Konflikte</div>
+          {newConflicts.map((c, i) => (
+            <div key={i} className="flex items-start gap-2 text-xs"
+              style={{ color: '#ef4444' }}>
+              <span className="shrink-0">+ neu:</span>
+              <span>{c}</span>
+            </div>
+          ))}
+          {resolvedConflicts.map((c, i) => (
+            <div key={i} className="flex items-start gap-2 text-xs"
+              style={{ color: '#10b981' }}>
+              <span className="shrink-0">✓ gelöst:</span>
+              <span className="line-through opacity-60">{c}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Missing evidence */}
+      {(newMissing.length > 0 || resolvedMissing.length > 0) && (
+        <div className="space-y-1">
+          <div className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Fehlende Evidenz</div>
+          {newMissing.map((m, i) => (
+            <div key={i} className="flex items-start gap-2 text-xs"
+              style={{ color: '#f59e0b' }}>
+              <span className="shrink-0">+ neu:</span>
+              <span>{m}</span>
+            </div>
+          ))}
+          {resolvedMissing.map((m, i) => (
+            <div key={i} className="flex items-start gap-2 text-xs"
+              style={{ color: '#10b981' }}>
+              <span className="shrink-0">✓ erhalten:</span>
+              <span className="line-through opacity-60">{m}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Alternative score shifts */}
+      {rankChanges.length > 0 && (
+        <div className="space-y-1">
+          <div className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
+            Alternativen (Score-Verschiebung ≥ 4pp)
+          </div>
+          {rankChanges.map((r, i) => {
+            const up = (r.delta as number) > 0
+            const c  = up ? '#10b981' : '#ef4444'
+            return (
+              <div key={i} className="flex items-center gap-2 text-xs">
+                <span className="flex-1 truncate" style={{ color: 'var(--text-light)' }}>{r.text}</span>
+                <span style={{ color: c, fontWeight: 600 }}>
+                  {up ? '▲' : '▼'} {Math.round(Math.abs(r.delta as number) * 100)}pp
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Next action change */}
+      {prev.next_action !== curr.next_action && (
+        <div className="space-y-1">
+          <div className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Nächste Maßnahme</div>
+          <div className="text-xs line-through opacity-50" style={{ color: 'var(--text-light)' }}>
+            {prev.next_action}
+          </div>
+          <div className="flex items-start gap-1.5 px-2.5 py-1.5 rounded-lg"
+            style={{ background: 'var(--brand-pale)' }}>
+            <span className="shrink-0 text-xs" style={{ color: 'var(--brand)' }}>▶</span>
+            <span className="text-xs" style={{ color: 'var(--brand)' }}>{curr.next_action}</span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Snapshot detail panel ──────────────────────────────────────────────────────
 
 function SnapshotDetail({ snapshot, isLatest }: { snapshot: OrchestratorSnapshot; isLatest: boolean }) {
@@ -334,6 +527,7 @@ export default function ReplayPanel({ sessionId }: Props) {
   const [selectedIdx,  setSelectedIdx]  = useState(0)
   const [loading,      setLoading]      = useState(false)
   const [error,        setError]        = useState<string | null>(null)
+  const [showDiff,     setShowDiff]     = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -380,20 +574,35 @@ export default function ReplayPanel({ sessionId }: Props) {
         <div className="flex items-center gap-2">
           {/* Step controls */}
           {snapshots.length > 1 && (
-            <div className="flex items-center rounded-lg overflow-hidden border"
-              style={{ borderColor: 'var(--border)' }}>
-              <button onClick={() => setSelectedIdx(i => Math.max(0, i - 1))}
-                disabled={selectedIdx === 0}
-                className="w-7 h-7 flex items-center justify-center hover:opacity-70 disabled:opacity-30"
-                style={{ color: 'var(--text-muted)', background: 'var(--surface)' }}>‹</button>
-              <span className="px-2 text-xs font-mono"
-                style={{ color: 'var(--text-muted)', background: 'var(--surface)' }}>
-                {selectedIdx + 1}/{snapshots.length}
-              </span>
-              <button onClick={() => setSelectedIdx(i => Math.min(snapshots.length - 1, i + 1))}
-                disabled={selectedIdx === snapshots.length - 1}
-                className="w-7 h-7 flex items-center justify-center hover:opacity-70 disabled:opacity-30"
-                style={{ color: 'var(--text-muted)', background: 'var(--surface)' }}>›</button>
+            <div className="flex items-center gap-2">
+              {/* Diff toggle */}
+              {selectedIdx > 0 && (
+                <button
+                  onClick={() => setShowDiff(v => !v)}
+                  className="text-xs px-2.5 py-1 rounded-lg border transition-colors"
+                  style={{
+                    background:   showDiff ? 'var(--brand-pale)' : 'var(--surface)',
+                    color:        showDiff ? 'var(--brand)'      : 'var(--text-muted)',
+                    borderColor:  showDiff ? 'var(--brand)'      : 'var(--border)',
+                  }}>
+                  ⊿ Diff
+                </button>
+              )}
+              <div className="flex items-center rounded-lg overflow-hidden border"
+                style={{ borderColor: 'var(--border)' }}>
+                <button onClick={() => setSelectedIdx(i => Math.max(0, i - 1))}
+                  disabled={selectedIdx === 0}
+                  className="w-7 h-7 flex items-center justify-center hover:opacity-70 disabled:opacity-30"
+                  style={{ color: 'var(--text-muted)', background: 'var(--surface)' }}>‹</button>
+                <span className="px-2 text-xs font-mono"
+                  style={{ color: 'var(--text-muted)', background: 'var(--surface)' }}>
+                  {selectedIdx + 1}/{snapshots.length}
+                </span>
+                <button onClick={() => setSelectedIdx(i => Math.min(snapshots.length - 1, i + 1))}
+                  disabled={selectedIdx === snapshots.length - 1}
+                  className="w-7 h-7 flex items-center justify-center hover:opacity-70 disabled:opacity-30"
+                  style={{ color: 'var(--text-muted)', background: 'var(--surface)' }}>›</button>
+              </div>
             </div>
           )}
           <button onClick={load} disabled={loading}
@@ -433,14 +642,21 @@ export default function ReplayPanel({ sessionId }: Props) {
         </div>
       ) : selected ? (
         <>
-          <SnapshotDetail
-            snapshot={selected}
-            isLatest={selectedIdx === snapshots.length - 1}
-          />
+          {showDiff && selectedIdx > 0 ? (
+            <SnapshotDiff
+              prev={snapshots[selectedIdx - 1]}
+              curr={selected}
+            />
+          ) : (
+            <SnapshotDetail
+              snapshot={selected}
+              isLatest={selectedIdx === snapshots.length - 1}
+            />
+          )}
           <TimelineScrubber
             snapshots={snapshots}
             selectedIdx={selectedIdx}
-            onSelect={setSelectedIdx}
+            onSelect={(i) => { setSelectedIdx(i); if (i === 0) setShowDiff(false) }}
           />
         </>
       ) : null}

@@ -419,6 +419,30 @@ class Neo4jClient:
                 props=props,
             )
 
+    def get_last_orchestrator_snapshot(self, session_id: str) -> dict | None:
+        """Return only the most recent OrchestratorSnapshot for a session."""
+        import json as _json
+        with self.driver.session() as s:
+            result = s.run(
+                """
+                MATCH (sn:OrchestratorSnapshot {session_id: $session_id})
+                RETURN sn ORDER BY sn.recorded_at DESC LIMIT 1
+                """,
+                session_id=session_id,
+            )
+            row = result.single()
+            if row is None:
+                return None
+            d = dict(row["sn"])
+            for field in ("trigger_claim_ids", "key_conflicts", "missing_critical",
+                          "score_breakdown", "alternatives"):
+                if isinstance(d.get(field), str):
+                    try:
+                        d[field] = _json.loads(d[field])
+                    except Exception:
+                        pass
+            return d
+
     def get_orchestrator_snapshots(self, session_id: str) -> list[dict]:
         """Return all OrchestratorSnapshots for a session, oldest first."""
         import json as _json

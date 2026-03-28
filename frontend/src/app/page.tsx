@@ -50,6 +50,7 @@ export default function Home() {
   const [focusClaimIds,      setFocusClaimIds]      = useState<string[]>([])
   const [centerView,         setCenterView]         = useState<'orchestrator' | 'graph' | 'timeline' | 'matrix' | 'counterfactual' | 'handover' | 'report' | 'ledger' | 'replay'>('orchestrator')
   const [graphLayout,        setGraphLayout]        = useState<GraphLayout>('cose')
+  const [orchRefreshTrigger, setOrchRefreshTrigger] = useState(0)
   const [fitTrigger,         setFitTrigger]         = useState(0)
   const [showShortcuts,      setShowShortcuts]      = useState(false)
   const [showStats,          setShowStats]          = useState(false)
@@ -97,6 +98,14 @@ export default function Home() {
       setGraphLoading(false)
     }
   }, [sessionId])
+
+  /** Called by DataPanel/intake after new claims are persisted.
+   *  Refreshes the graph AND triggers the OrchestratorPanel to reload
+   *  with trigger='chat_input' so the snapshot is attributed correctly. */
+  const handleNewClaims = useCallback(async () => {
+    await refreshGraph()
+    setOrchRefreshTrigger(t => t + 1)
+  }, [refreshGraph])
 
   useEffect(() => { if (sessionId) refreshGraph() }, [sessionId, refreshGraph])
 
@@ -795,7 +804,7 @@ export default function Home() {
           <DataPanel
             key={sessionId}
             sessionId={sessionId}
-            onNewClaims={refreshGraph}
+            onNewClaims={handleNewClaims}
             onReasoning={r => setReasoning(r)}
             onConflicts={c => { setConflicts(c); setShowConflictBanner(true) }}
             allClaims={allClaims}
@@ -1003,7 +1012,10 @@ export default function Home() {
           {/* Clinical Orchestrator — single unified clinical state */}
           {centerView === 'orchestrator' && sessionId && (
             <div className="flex-1 overflow-hidden">
-              <OrchestratorPanel sessionId={sessionId} />
+              <OrchestratorPanel
+                sessionId={sessionId}
+                externalRefreshTrigger={orchRefreshTrigger}
+              />
             </div>
           )}
 

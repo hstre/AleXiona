@@ -1,38 +1,8 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-interface ScoreBreakdown {
-  evidence:  number
-  guideline: number
-  composite: number
-  temporal:  number
-  conflict:  number
-}
-
-interface Alternative {
-  text:                        string
-  score:                       number
-  composite_score_contribution: number
-}
-
-interface OrchestratorState {
-  session_id:         string
-  leading_hypothesis: string | null
-  orchestrated_score: number
-  status:             'confident' | 'undecided' | 'contested' | 'insufficient'
-  why:                string
-  key_conflicts:      string[]
-  missing_critical:   string[]
-  next_action:        string
-  score_breakdown:    ScoreBreakdown
-  alternatives:       Alternative[]
-  generated_at:       string
-}
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { getOrchestratorState } from '@/lib/api'
+import type { OrchestratorState, OrchestratorScoreBreakdown } from '@/lib/api'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -43,12 +13,12 @@ const STATUS_META: Record<string, { label: string; color: string; bg: string }> 
   insufficient: { label: 'Unzureichend', color: '#1e40af', bg: '#eff6ff' },
 }
 
-const FACTOR_META: { key: keyof ScoreBreakdown; label: string; weight: string }[] = [
-  { key: 'evidence',  label: 'Evidenz',        weight: '40 %' },
-  { key: 'guideline', label: 'Leitlinie',       weight: '25 %' },
-  { key: 'composite', label: 'Klin. Scores',    weight: '15 %' },
-  { key: 'temporal',  label: 'Aktualität',      weight: '10 %' },
-  { key: 'conflict',  label: 'Konflikte',       weight: '−10 %' },
+const FACTOR_META: { key: keyof OrchestratorScoreBreakdown; label: string; weight: string }[] = [
+  { key: 'evidence',  label: 'Evidenz',     weight: '40 %' },
+  { key: 'guideline', label: 'Leitlinie',   weight: '25 %' },
+  { key: 'composite', label: 'Klin. Scores',weight: '15 %' },
+  { key: 'temporal',  label: 'Aktualität',  weight: '10 %' },
+  { key: 'conflict',  label: 'Konflikte',   weight: '−10 %' },
 ]
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -71,24 +41,23 @@ function ScoreBar({ value, max = 0.4, isNeg = false }: { value: number; max?: nu
 // ── Component ─────────────────────────────────────────────────────────────────
 
 interface Props {
-  sessionId: string
+  sessionId:              string
+  /** Increment to trigger a reload from an external event (e.g. new claims from chat). */
+  externalRefreshTrigger?: number
 }
 
-export default function OrchestratorPanel({ sessionId }: Props) {
+export default function OrchestratorPanel({ sessionId, externalRefreshTrigger = 0 }: Props) {
   const [state,   setState]   = useState<OrchestratorState | null>(null)
   const [loading, setLoading] = useState(false)
   const [error,   setError]   = useState<string | null>(null)
+  const isFirstRender = useRef(true)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (trigger = 'manual_refresh') => {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch(`${API_URL}/api/graph/${sessionId}/orchestrate`)
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        throw new Error(data?.detail?.message ?? data?.detail ?? `Fehler ${res.status}`)
-      }
-      setState(await res.json())
+      const data = await getOrchestratorState(sessionId, trigger)
+      setState(data)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -96,7 +65,14 @@ export default function OrchestratorPanel({ sessionId }: Props) {
     }
   }, [sessionId])
 
-  useEffect(() => { load() }, [load])
+  // Initial load
+  useEffect(() => { load('manual_refresh') }, [load])
+
+  // External trigger (new claims from chat or intake)
+  useEffect(() => {
+    if (isFirstRender.current) { isFirstRender.current = false; return }
+    if (externalRefreshTrigger > 0) load('chat_input')
+  }, [externalRefreshTrigger, load])
 
   // ── Empty / error states ──────────────────────────────────────────────────
 
@@ -123,7 +99,7 @@ export default function OrchestratorPanel({ sessionId }: Props) {
     </div>
   )
 
-  const sm = STATUS_META[state.status] ?? STATUS_META.insufficient
+  const sm    = STATUS_META[state.status] ?? STATUS_META.insufficient
   const score = state.orchestrated_score
   const bd    = state.score_breakdown
 
@@ -142,7 +118,7 @@ export default function OrchestratorPanel({ sessionId }: Props) {
             {new Date(state.generated_at).toLocaleTimeString('de-DE')}
           </div>
         </div>
-        <button onClick={load} style={{
+        <button onClick={() => load('manual_refresh')} style={{
           padding: '5px 12px', borderRadius: 6, border: '1px solid var(--border)',
           background: 'var(--surface-elevated)', fontSize: 12, cursor: 'pointer',
           color: 'var(--text-muted)',
@@ -154,7 +130,6 @@ export default function OrchestratorPanel({ sessionId }: Props) {
         background: sm.bg, border: `2px solid ${sm.color}`,
         borderRadius: 12, padding: '16px 20px',
       }}>
-        {/* Status badge */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
           <div style={{
             background: sm.color, color: '#fff', fontSize: 11, fontWeight: 700,
@@ -164,15 +139,18 @@ export default function OrchestratorPanel({ sessionId }: Props) {
           <div style={{ fontSize: 12, color: sm.color, fontWeight: 600 }}>
             Gesamtscore: {pct(score)}
           </div>
+          {state.state_transition && (
+            <div style={{ fontSize: 11, color: sm.color, opacity: 0.7, marginLeft: 4 }}>
+              ({state.state_transition})
+            </div>
+          )}
         </div>
 
-        {/* Hypothesis text */}
         <div style={{ fontSize: 18, fontWeight: 700, color: sm.color, lineHeight: 1.3,
           marginBottom: 10 }}>
           {state.leading_hypothesis ?? 'Keine Hypothese'}
         </div>
 
-        {/* Score arc / visual meter */}
         <div style={{ marginBottom: 10 }}>
           <div style={{ height: 8, background: '#e5e7eb', borderRadius: 4, overflow: 'hidden' }}>
             <div style={{
@@ -183,7 +161,6 @@ export default function OrchestratorPanel({ sessionId }: Props) {
           </div>
         </div>
 
-        {/* Why */}
         <div style={{ fontSize: 13, color: sm.color, lineHeight: 1.6, opacity: 0.9 }}>
           {state.why}
         </div>
@@ -237,10 +214,8 @@ export default function OrchestratorPanel({ sessionId }: Props) {
         </div>
       </div>
 
-      {/* ── Two-column: Conflicts + Missing ──────────────────────────────── */}
+      {/* ── Conflicts + Missing ───────────────────────────────────────────── */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-
-        {/* Conflicts */}
         <div style={{
           background: 'var(--surface)', border: '1px solid var(--border)',
           borderRadius: 10, padding: '14px 16px',
@@ -257,15 +232,13 @@ export default function OrchestratorPanel({ sessionId }: Props) {
               {state.key_conflicts.map((c, i) => (
                 <li key={i} style={{ fontSize: 12, color: '#991b1b', lineHeight: 1.4,
                   paddingLeft: 14, position: 'relative' }}>
-                  <span style={{ position: 'absolute', left: 0 }}>!</span>
-                  {c}
+                  <span style={{ position: 'absolute', left: 0 }}>!</span>{c}
                 </li>
               ))}
             </ul>
           )}
         </div>
 
-        {/* Missing */}
         <div style={{
           background: 'var(--surface)', border: '1px solid var(--border)',
           borderRadius: 10, padding: '14px 16px',
@@ -282,8 +255,7 @@ export default function OrchestratorPanel({ sessionId }: Props) {
               {state.missing_critical.map((m, i) => (
                 <li key={i} style={{ fontSize: 12, color: '#1e40af', lineHeight: 1.4,
                   paddingLeft: 14, position: 'relative' }}>
-                  <span style={{ position: 'absolute', left: 0 }}>−</span>
-                  {m}
+                  <span style={{ position: 'absolute', left: 0 }}>−</span>{m}
                 </li>
               ))}
             </ul>
