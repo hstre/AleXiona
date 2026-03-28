@@ -129,6 +129,8 @@ class Neo4jClient:
             s.run("CREATE CONSTRAINT audit_event_id IF NOT EXISTS FOR (a:AuditEvent) REQUIRE a.id IS UNIQUE")
             s.run("CREATE INDEX audit_claim IF NOT EXISTS FOR (a:AuditEvent) ON (a.claim_id)")
             s.run("CREATE INDEX audit_session IF NOT EXISTS FOR (a:AuditEvent) ON (a.session_id)")
+            s.run("CREATE CONSTRAINT snapshot_id IF NOT EXISTS FOR (sn:OrchestratorSnapshot) REQUIRE sn.id IS UNIQUE")
+            s.run("CREATE INDEX snapshot_session IF NOT EXISTS FOR (sn:OrchestratorSnapshot) ON (sn.session_id)")
 
     def close(self):
         self.driver.close()
@@ -384,6 +386,62 @@ class Neo4jClient:
                 session_id=session_id,
             )
             return [_deserialize_audit_row(r["a"]) for r in result]
+
+    # ── Orchestrator Snapshots ────────────────────────────────────────────────
+
+    def store_orchestrator_snapshot(self, snapshot: "OrchestratorSnapshot") -> None:  # type: ignore[name-defined]
+        """Persist an OrchestratorSnapshot node for this session."""
+        import json as _json
+        props = {
+            "id":                 snapshot.id,
+            "session_id":         snapshot.session_id,
+            "recorded_at":        snapshot.recorded_at,
+            "trigger":            snapshot.trigger,
+            "trigger_claim_ids":  _json.dumps(snapshot.trigger_claim_ids),
+            "leading_hypothesis": snapshot.leading_hypothesis,
+            "orchestrated_score": snapshot.orchestrated_score,
+            "status":             snapshot.status,
+            "why":                snapshot.why,
+            "key_conflicts":      _json.dumps(snapshot.key_conflicts),
+            "missing_critical":   _json.dumps(snapshot.missing_critical),
+            "next_action":        snapshot.next_action,
+            "score_breakdown":    _json.dumps(snapshot.score_breakdown.model_dump()),
+            "alternatives":       _json.dumps([a.model_dump() for a in snapshot.alternatives]),
+            "state_transition":   snapshot.state_transition,
+            "decision_allowed":   snapshot.decision_allowed,
+            "generated_at":       snapshot.generated_at,
+        }
+        with self.driver.session() as s:
+            s.run(
+                """
+                CREATE (sn:OrchestratorSnapshot $props)
+                """,
+                props=props,
+            )
+
+    def get_orchestrator_snapshots(self, session_id: str) -> list[dict]:
+        """Return all OrchestratorSnapshots for a session, oldest first."""
+        import json as _json
+        with self.driver.session() as s:
+            result = s.run(
+                """
+                MATCH (sn:OrchestratorSnapshot {session_id: $session_id})
+                RETURN sn ORDER BY sn.recorded_at ASC
+                """,
+                session_id=session_id,
+            )
+            rows = []
+            for r in result:
+                d = dict(r["sn"])
+                for field in ("trigger_claim_ids", "key_conflicts", "missing_critical",
+                              "score_breakdown", "alternatives"):
+                    if isinstance(d.get(field), str):
+                        try:
+                            d[field] = _json.loads(d[field])
+                        except Exception:
+                            pass
+                rows.append(d)
+            return rows
 
     def get_claim_by_id(self, claim_id: str) -> dict | None:
         """Return a single Claim's properties as a dict, or None if not found."""

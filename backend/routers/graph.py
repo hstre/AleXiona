@@ -1,7 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+import uuid as _uuid
+from datetime import datetime, timezone
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from rate_limit import limiter
 from auth import UserSession, require_clinician, require_user
-from models import GraphData, NodeUpdate, CounterfactualResult, HypothesisCounterfactualResult, Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend, _normalize_time_offset, _parse_offset_hours, AuditActor, MEDResult, ReasoningExplanation, HypothesisExplanation, ClaimContribution, GuidelineEvaluation, RiskScoreResponse, RiskScoreItem, ClinicalRoleView, RoleAlert, RoleViewSection, ClinicalReport, ReportSection, GenerateReportRequest, ReportTypeDef, ReportSectionDef, PriorityExplanation, PriorityFactor, OrchestratorState, OrchestratorScoreBreakdown, OrchestratorAlternative
+from models import GraphData, NodeUpdate, CounterfactualResult, HypothesisCounterfactualResult, Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend, _normalize_time_offset, _parse_offset_hours, AuditActor, MEDResult, ReasoningExplanation, HypothesisExplanation, ClaimContribution, GuidelineEvaluation, RiskScoreResponse, RiskScoreItem, ClinicalRoleView, RoleAlert, RoleViewSection, ClinicalReport, ReportSection, GenerateReportRequest, ReportTypeDef, ReportSectionDef, PriorityExplanation, PriorityFactor, OrchestratorState, OrchestratorScoreBreakdown, OrchestratorAlternative, OrchestratorSnapshot, DecisionEntry
 from clinical_orchestrator import orchestrate
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional
@@ -346,7 +348,12 @@ async def get_reasoning_explanation(session_id: str, request: Request, _user: Us
 
 
 @router.get("/{session_id}/orchestrate", response_model=OrchestratorState)
-async def get_orchestrator_state(session_id: str, _user: UserSession = Depends(require_user)):
+async def get_orchestrator_state(
+    session_id: str,
+    _user: UserSession = Depends(require_user),
+    trigger: str = Query(default="manual_refresh"),
+    trigger_claim_ids: str = Query(default=""),   # comma-separated claim UUIDs
+):
     """
     Return the single authoritative clinical state for this session.
 
@@ -366,12 +373,16 @@ async def get_orchestrator_state(session_id: str, _user: UserSession = Depends(r
     No LLM call is made — all computation is deterministic and synchronous.
     For the full per-claim breakdown use /reasoning/explain.
     For the priority decomposition use /priority.
+
+    Query params:
+      trigger            — what caused this orchestration run (default: manual_refresh)
+      trigger_claim_ids  — comma-separated claim UUIDs that triggered the run
     """
     db = get_db()
     try:
         claims = db.get_all_claims_for_session(session_id)
         state  = orchestrate(session_id, claims)
-        return OrchestratorState(
+        orch_state = OrchestratorState(
             session_id=state["session_id"],
             leading_hypothesis=state["leading_hypothesis"],
             orchestrated_score=state["orchestrated_score"],
@@ -385,8 +396,186 @@ async def get_orchestrator_state(session_id: str, _user: UserSession = Depends(r
             state_transition=state.get("state_transition"),
             generated_at=state["generated_at"],
         )
+        # ── Auto-persist snapshot (fire-and-forget; never blocks the response) ──
+        try:
+            parsed_ids = [c.strip() for c in trigger_claim_ids.split(",") if c.strip()]
+            snapshot = OrchestratorSnapshot(
+                id=str(_uuid.uuid4()),
+                session_id=session_id,
+                recorded_at=datetime.now(timezone.utc).isoformat(),
+                trigger=trigger,
+                trigger_claim_ids=parsed_ids,
+                leading_hypothesis=orch_state.leading_hypothesis,
+                orchestrated_score=orch_state.orchestrated_score,
+                status=orch_state.status,
+                why=orch_state.why,
+                key_conflicts=orch_state.key_conflicts,
+                missing_critical=orch_state.missing_critical,
+                next_action=orch_state.next_action,
+                score_breakdown=orch_state.score_breakdown,
+                alternatives=orch_state.alternatives,
+                state_transition=orch_state.state_transition,
+                decision_allowed=orch_state.decision_allowed,
+                generated_at=orch_state.generated_at,
+            )
+            db.store_orchestrator_snapshot(snapshot)
+        except Exception as snap_err:
+            import structlog as _sl
+            _sl.get_logger(__name__).warning("snapshot_persist_failed", error=str(snap_err))
+        return orch_state
     except HTTPException:
         raise
+    except Exception as e:
+        raise internal_error(e)
+
+
+@router.get("/{session_id}/snapshots")
+async def get_snapshots(session_id: str, _user: UserSession = Depends(require_user)):
+    """
+    Return all persisted OrchestratorSnapshots for this session, oldest first.
+
+    Each snapshot is the full orchestrator state at one point in time.
+    Use these to power the Epistemic Time Machine replay view.
+    """
+    db = get_db()
+    try:
+        rows = db.get_orchestrator_snapshots(session_id)
+        return {"session_id": session_id, "snapshots": rows, "count": len(rows)}
+    except Exception as e:
+        raise internal_error(e)
+
+
+def _compute_decision_ledger(snapshots: list[dict]) -> list[dict]:
+    """
+    Compute Decision Ledger entries from a list of OrchestratorSnapshot dicts.
+
+    A Decision Entry is created for:
+      - The first snapshot (change_type = "initial")
+      - Any snapshot where leading_hypothesis changed
+      - Any snapshot where status changed
+      - Any snapshot where |score_delta| >= 0.08
+    """
+    if not snapshots:
+        return []
+
+    entries: list[dict] = []
+    prev = None
+
+    for sn in snapshots:
+        if prev is None:
+            change_type = "initial"
+        else:
+            hyp_changed    = sn.get("leading_hypothesis") != prev.get("leading_hypothesis")
+            status_changed = sn.get("status") != prev.get("status")
+            score_delta    = (sn.get("orchestrated_score", 0) or 0) - (prev.get("orchestrated_score", 0) or 0)
+            score_shifted  = abs(score_delta) >= 0.08
+
+            if not (hyp_changed or status_changed or score_shifted):
+                prev = sn
+                continue   # no significant change — skip
+
+            if hyp_changed:
+                change_type = "hypothesis_change"
+            elif status_changed:
+                change_type = "status_change"
+            else:
+                change_type = "score_shift"
+
+        prev_score = prev["orchestrated_score"] if prev else None
+        delta = None
+        if prev_score is not None:
+            delta = round((sn.get("orchestrated_score", 0) or 0) - prev_score, 4)
+
+        alts_raw = sn.get("alternatives", [])
+        alts = []
+        for a in (alts_raw if isinstance(alts_raw, list) else []):
+            if isinstance(a, dict):
+                alts.append({"text": a.get("text", ""), "score": a.get("score", 0),
+                             "composite_score_contribution": a.get("composite_score_contribution", 0)})
+
+        entry = {
+            "snapshot_id":         sn.get("id", ""),
+            "recorded_at":         sn.get("recorded_at", sn.get("generated_at", "")),
+            "change_type":         change_type,
+            "hypothesis":          sn.get("leading_hypothesis"),
+            "score":               sn.get("orchestrated_score", 0),
+            "status":              sn.get("status", ""),
+            "rationale":           sn.get("why", ""),
+            "next_action":         sn.get("next_action", ""),
+            "key_conflicts":       sn.get("key_conflicts", []) if isinstance(sn.get("key_conflicts"), list) else [],
+            "missing_critical":    sn.get("missing_critical", []) if isinstance(sn.get("missing_critical"), list) else [],
+            "alternatives":        alts,
+            "previous_hypothesis": prev.get("leading_hypothesis") if prev else None,
+            "previous_score":      prev_score,
+            "previous_status":     prev.get("status") if prev else None,
+            "score_delta":         delta,
+        }
+        entries.append(entry)
+        prev = sn
+
+    return entries
+
+
+@router.get("/{session_id}/decisions")
+async def get_decision_ledger(session_id: str, _user: UserSession = Depends(require_user)):
+    """
+    Return the Decision Ledger for this session.
+
+    Computed on-the-fly from persisted OrchestratorSnapshots.
+    Each entry represents a clinically significant state transition:
+      - leading hypothesis change
+      - status level change (e.g. undecided → confident)
+      - score shift ≥ 0.08
+
+    Returns a chronological list of DecisionEntry objects.
+    """
+    db = get_db()
+    try:
+        snapshots = db.get_orchestrator_snapshots(session_id)
+        entries   = _compute_decision_ledger(snapshots)
+        return {"session_id": session_id, "decisions": entries, "count": len(entries)}
+    except Exception as e:
+        raise internal_error(e)
+
+
+@router.get("/{session_id}/replay")
+async def get_replay_at(
+    session_id: str,
+    _user: UserSession = Depends(require_user),
+    at: str = Query(default="", description="ISO 8601 timestamp; returns latest snapshot at or before this time. Omit for the most recent snapshot."),
+    index: int = Query(default=-1, description="0-based snapshot index; -1 = latest"),
+):
+    """
+    Return the OrchestratorSnapshot at a specific point in time (or by index).
+
+    Use this to power the Epistemic Time Machine:
+      ?at=2024-03-28T14:10:00Z   — state at 14:10
+      ?index=3                   — 4th snapshot (0-based)
+      (no params)                — latest snapshot
+    """
+    db = get_db()
+    try:
+        snapshots = db.get_orchestrator_snapshots(session_id)
+        if not snapshots:
+            return {"session_id": session_id, "snapshot": None}
+
+        if at:
+            # Find the latest snapshot with recorded_at <= at
+            target = at.replace("Z", "+00:00")
+            chosen = None
+            for sn in snapshots:
+                if (sn.get("recorded_at") or "") <= target:
+                    chosen = sn
+                else:
+                    break
+            snapshot = chosen or snapshots[0]
+        elif index >= 0:
+            snapshot = snapshots[min(index, len(snapshots) - 1)]
+        else:
+            snapshot = snapshots[-1]
+
+        return {"session_id": session_id, "snapshot": snapshot,
+                "total_snapshots": len(snapshots)}
     except Exception as e:
         raise internal_error(e)
 

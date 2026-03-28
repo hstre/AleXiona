@@ -499,3 +499,156 @@ export async function addManualClaim(sessionId: string, claim: ManualClaim): Pro
   })
   if (!res.ok) throw await parseError(res)
 }
+
+// ── Orchestrator — OrchestratorPanel types (re-exported for other consumers) ──
+
+export interface OrchestratorScoreBreakdown {
+  evidence:  number
+  guideline: number
+  composite: number
+  temporal:  number
+  conflict:  number
+}
+
+export interface OrchestratorAlternative {
+  text:                         string
+  score:                        number
+  composite_score_contribution: number
+}
+
+export interface OrchestratorState {
+  session_id:         string
+  leading_hypothesis: string | null
+  orchestrated_score: number
+  status:             string   // "confident"|"undecided"|"contested"|"insufficient"
+  why:                string
+  key_conflicts:      string[]
+  missing_critical:   string[]
+  next_action:        string
+  score_breakdown:    OrchestratorScoreBreakdown
+  alternatives:       OrchestratorAlternative[]
+  state_transition:   string | null
+  decision_allowed:   boolean
+  generated_at:       string
+}
+
+// ── Decision Ledger / Epistemic Replay ───────────────────────────────────────
+
+export interface OrchestratorSnapshot extends OrchestratorState {
+  id:                string
+  recorded_at:       string   // wall-clock ISO 8601 when snapshot was saved
+  trigger:           string   // "chat_input"|"manual_edit"|"intake"|"manual_refresh"
+  trigger_claim_ids: string[]
+}
+
+export interface DecisionEntry {
+  snapshot_id:         string
+  recorded_at:         string
+  change_type:         string   // "initial"|"hypothesis_change"|"status_change"|"score_shift"
+  hypothesis:          string | null
+  score:               number
+  status:              string
+  rationale:           string
+  next_action:         string
+  key_conflicts:       string[]
+  missing_critical:    string[]
+  alternatives:        OrchestratorAlternative[]
+  previous_hypothesis: string | null
+  previous_score:      number | null
+  previous_status:     string | null
+  score_delta:         number | null
+}
+
+export async function getOrchestratorState(
+  sessionId: string,
+  trigger = 'manual_refresh',
+  triggerClaimIds: string[] = [],
+): Promise<OrchestratorState> {
+  const params = new URLSearchParams({ trigger })
+  if (triggerClaimIds.length) params.set('trigger_claim_ids', triggerClaimIds.join(','))
+  const res = await apiFetch(`${API_URL}/api/graph/${sessionId}/orchestrate?${params}`)
+  if (!res.ok) throw await parseError(res)
+  return safeJson(res)
+}
+
+export async function getSnapshots(sessionId: string): Promise<{
+  session_id: string
+  snapshots:  OrchestratorSnapshot[]
+  count:      number
+}> {
+  const res = await apiFetch(`${API_URL}/api/graph/${sessionId}/snapshots`)
+  if (!res.ok) throw await parseError(res)
+  return safeJson(res)
+}
+
+export async function getDecisions(sessionId: string): Promise<{
+  session_id: string
+  decisions:  DecisionEntry[]
+  count:      number
+}> {
+  const res = await apiFetch(`${API_URL}/api/graph/${sessionId}/decisions`)
+  if (!res.ok) throw await parseError(res)
+  return safeJson(res)
+}
+
+export async function getReplay(
+  sessionId: string,
+  options?: { at?: string; index?: number },
+): Promise<{
+  session_id:       string
+  snapshot:         OrchestratorSnapshot | null
+  total_snapshots:  number
+}> {
+  const params = new URLSearchParams()
+  if (options?.at    !== undefined) params.set('at',    options.at)
+  if (options?.index !== undefined) params.set('index', String(options.index))
+  const qs  = params.toString()
+  const res = await apiFetch(`${API_URL}/api/graph/${sessionId}/replay${qs ? `?${qs}` : ''}`)
+  if (!res.ok) throw await parseError(res)
+  return safeJson(res)
+}
+
+export type ReasoningStreamEvent =
+  | { type: 'token'; content: string }
+  | { type: 'done' }
+  | { type: 'error'; message: string }
+
+export async function* streamReasoning(
+  sessionId: string,
+  signal?: AbortSignal,
+): AsyncGenerator<ReasoningStreamEvent> {
+  const res = await apiFetch(`${API_URL}/api/graph/${sessionId}/reasoning/stream`, { signal })
+  if (!res.ok) throw await parseError(res)
+  if (!res.body) throw new Error('No stream body')
+
+  const reader  = res.body.getReader()
+  const decoder = new TextDecoder()
+  let   buf     = ''
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      const lines = buf.split('\n')
+      buf = lines.pop() ?? ''
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        const text = line.slice(6).trim()
+        if (!text) continue
+        try { yield JSON.parse(text) as ReasoningStreamEvent }
+        catch { /* malformed line */ }
+      }
+    }
+  } finally {
+    reader.cancel().catch(() => {})
+  }
+}
+
+export async function getOllamaModels(baseUrl: string): Promise<string[]> {
+  const res = await apiFetch(
+    `${API_URL}/api/config/ollama/models?base_url=${encodeURIComponent(baseUrl)}`
+  )
+  if (!res.ok) return []
+  const data = await safeJson<{ models: string[] }>(res)
+  return data.models ?? []
+}

@@ -747,3 +747,58 @@ class MEDResult(BaseModel):
     current_leading:     str
     current_score:       float
     minimal_decision_set: list[MEDTestResult]   # sorted by impact_score desc
+
+
+# ── Decision Ledger / Epistemic Replay ───────────────────────────────────────
+
+class OrchestratorSnapshot(BaseModel):
+    """
+    Persisted snapshot of the orchestrator state at one point in time.
+
+    Auto-saved after each /orchestrate call so the full epistemic history
+    can be replayed and diffs turned into Decision Ledger entries.
+    """
+    id:                 str                      # UUID
+    session_id:         str
+    recorded_at:        str                      # ISO 8601 UTC — wall-clock when snapshot was saved
+    trigger:            str = "chat_input"       # "chat_input"|"manual_edit"|"intake"|"manual_refresh"
+    trigger_claim_ids:  list[str] = []           # claim IDs that triggered this orchestration run
+
+    # ── All OrchestratorState fields (copied verbatim) ────────────────────────
+    leading_hypothesis: Optional[str]
+    orchestrated_score: float
+    status:             str
+    why:                str
+    key_conflicts:      list[str]
+    missing_critical:   list[str]
+    next_action:        str
+    score_breakdown:    OrchestratorScoreBreakdown
+    alternatives:       list[OrchestratorAlternative]
+    state_transition:   Optional[str] = None
+    decision_allowed:   bool = False
+    generated_at:       str                      # ISO 8601 — when the orchestrator ran
+
+
+class DecisionEntry(BaseModel):
+    """
+    One entry in the Decision Ledger, computed from two consecutive snapshots.
+
+    Represents a moment where something clinically significant changed:
+    the leading hypothesis, the status level, or the score by ≥0.1.
+    """
+    snapshot_id:          str                    # the snapshot that introduced this change
+    recorded_at:          str                    # ISO 8601 of the snapshot
+    change_type:          str                    # "hypothesis_change"|"status_change"|"score_shift"|"initial"
+    hypothesis:           Optional[str]          # current leading hypothesis (None = insufficient)
+    score:                float                  # orchestrated_score at this snapshot
+    status:               str                    # confident|undecided|contested|insufficient
+    rationale:            str                    # orchestrator's "why" text
+    next_action:          str
+    key_conflicts:        list[str]
+    missing_critical:     list[str]
+    alternatives:         list[OrchestratorAlternative]
+    # Diff context
+    previous_hypothesis:  Optional[str] = None  # what led before (None for initial entry)
+    previous_score:       Optional[float] = None
+    previous_status:      Optional[str] = None
+    score_delta:          Optional[float] = None  # signed: positive = score improved
