@@ -114,8 +114,6 @@ class Neo4jClient:
             auth=(user, password),
             # How many connections the pool may open simultaneously.
             max_connection_pool_size=_env_int("NEO4J_POOL_SIZE", 20),
-            # Seconds to wait for a free connection before raising.
-            connection_acquire_timeout=_env_float("NEO4J_ACQUIRE_TIMEOUT", 30.0),
             # Retire a connection after this many seconds (avoids stale TCP).
             max_connection_lifetime=_env_int("NEO4J_MAX_CONN_LIFETIME", 1800),
         )

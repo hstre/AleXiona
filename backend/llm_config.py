@@ -288,3 +288,42 @@ def _build() -> tuple[Any, Any, str]:
 # ── Module-level exports ──────────────────────────────────────────────────────
 
 sync_client, async_client, MODEL = _build()
+
+
+# ── Runtime-reconfiguration helpers ───────────────────────────────────────────
+
+def get_model() -> str:
+    """Return the currently active model name."""
+    return MODEL
+
+
+def get_provider_info() -> dict:
+    """Return provider/model info (never returns the API key)."""
+    preset = _PRESETS.get(PROVIDER, {})
+    return {
+        "provider":      PROVIDER,
+        "model":         MODEL or preset.get("default_model", ""),
+        "base_url":      BASE_URL or preset.get("base_url") or "",
+        "valid_providers": list(_PRESETS.keys()),
+    }
+
+
+def reconfigure(
+    provider:  str,
+    api_key:   str = "",
+    model:     str = "",
+    base_url:  str = "",
+) -> None:
+    """Rebuild the global LLM clients with new settings.
+
+    Takes effect immediately for all subsequent LLM calls.
+    Raises RuntimeError if the provider is unknown or build fails.
+    """
+    global sync_client, async_client, MODEL, PROVIDER, API_KEY, BASE_URL
+    PROVIDER = provider.lower()
+    if api_key:
+        API_KEY = api_key
+    MODEL    = model
+    BASE_URL = base_url
+    sync_client, async_client, MODEL = _build()
+    log.info("llm_reconfigured", provider=PROVIDER, model=MODEL)
