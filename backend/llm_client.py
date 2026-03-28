@@ -979,6 +979,41 @@ async def stream_answer_with_context(
             yield delta
 
 
+_REASONING_NARRATIVE_PROMPT = """\
+You are AleXiona, a clinical reasoning assistant (NOT a diagnosing physician).
+
+You will receive a structured clinical knowledge graph. Write a concise, flowing \
+clinical reasoning narrative (4–6 sentences) that:
+1. Names the leading hypothesis and the most important supporting evidence
+2. Mentions key conflicts or missing data that create uncertainty
+3. Suggests the single most important next diagnostic step
+
+Write in the same language as the input claims. Use plain clinical language — \
+no bullet points, no JSON, just coherent prose. \
+End every sentence with a full stop. Do not exceed 120 words.\
+"""
+
+
+async def stream_reasoning_narrative(claims: list[dict]) -> AsyncIterator[str]:
+    """Stream a short clinical reasoning narrative for the given claims."""
+    context = build_reasoning_context(claims)
+    stream = await async_client.chat.completions.create(
+        model=get_model(),
+        messages=[
+            {"role": "system", "content": _REASONING_NARRATIVE_PROMPT},
+            {"role": "user",   "content": f"Clinical knowledge graph:\n{context}"},
+        ],
+        stream=True,
+        max_tokens=200,
+        temperature=0.3,
+        timeout=45.0,
+    )
+    async for chunk in stream:
+        delta = chunk.choices[0].delta.content or ""
+        if delta:
+            yield delta
+
+
 # ── Clinical Report Generation ─────────────────────────────────────────────────
 
 async def generate_report(prompt: str) -> dict[str, str]:

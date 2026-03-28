@@ -539,3 +539,50 @@ export async function addManualClaim(sessionId: string, claim: ManualClaim): Pro
   })
   if (!res.ok) throw await parseError(res)
 }
+
+// ── Streaming reasoning narrative ─────────────────────────────────────────────
+
+export type ReasoningStreamEvent =
+  | { type: 'token'; content: string }
+  | { type: 'done' }
+  | { type: 'error'; message: string }
+
+export async function* streamReasoning(
+  sessionId: string
+): AsyncGenerator<ReasoningStreamEvent> {
+  const res = await apiFetch(`${API_URL}/api/graph/${sessionId}/reasoning/stream`)
+  if (!res.ok) throw await parseError(res)
+  if (!res.body) throw new Error('Streaming response body is null')
+
+  const reader  = res.body.getReader()
+  const decoder = new TextDecoder()
+  let   buf     = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += decoder.decode(value, { stream: true })
+    const lines = buf.split('\n')
+    buf = lines.pop() ?? ''
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue
+      const text = line.slice(6).trim()
+      if (!text) continue
+      try {
+        yield JSON.parse(text) as ReasoningStreamEvent
+      } catch {
+        // skip malformed SSE line
+      }
+    }
+  }
+}
+
+// ── Ollama model discovery ────────────────────────────────────────────────────
+
+export async function getOllamaModels(baseUrl: string): Promise<string[]> {
+  const url = `${API_URL}/api/config/ollama/models?base_url=${encodeURIComponent(baseUrl)}`
+  const res = await apiFetch(url)
+  if (!res.ok) return []
+  const data = await safeJson<{ models: string[] }>(res)
+  return data.models ?? []
+}

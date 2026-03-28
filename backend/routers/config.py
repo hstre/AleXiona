@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import time
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from auth import UserSession, require_clinician
@@ -74,3 +75,29 @@ def test_llm_config(_user: UserSession = Depends(require_clinician)):
         latency_ms = int((time.time() - t0) * 1000)
         log.warning("llm_test_failed", error=str(e))
         return {"ok": False, "error": str(e), "latency_ms": latency_ms}
+
+
+@router.get("/ollama/models")
+async def get_ollama_models(
+    base_url: str = Query(default="http://localhost:11434/v1"),
+    _user: UserSession = Depends(require_clinician),
+):
+    """Fetch available model names from a running Ollama instance.
+
+    Returns {"models": [...]} — empty list if Ollama is unreachable.
+    """
+    # Strip /v1 suffix to get the Ollama base (e.g. http://localhost:11434)
+    tags_base = base_url.rstrip("/")
+    if tags_base.endswith("/v1"):
+        tags_base = tags_base[:-3]
+    tags_url = f"{tags_base}/api/tags"
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(tags_url)
+            resp.raise_for_status()
+            data = resp.json()
+            models = [m["name"] for m in data.get("models", [])]
+            return {"models": models}
+    except Exception as exc:
+        log.info("ollama_models_unavailable", url=tags_url, error=str(exc))
+        return {"models": []}

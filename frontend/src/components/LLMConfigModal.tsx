@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
-import { getLLMConfig, saveLLMConfig, testLLMConfig } from '@/lib/api'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { getLLMConfig, saveLLMConfig, testLLMConfig, getOllamaModels } from '@/lib/api'
 import type { LLMTestResult } from '@/lib/api'
 
 interface Props {
@@ -44,6 +44,7 @@ export default function LLMConfigModal({ onClose }: Props) {
   const [testResult,  setTestResult]  = useState<LLMTestResult | null>(null)
   const [saveMsg,     setSaveMsg]     = useState<{ ok: boolean; text: string } | null>(null)
   const [validationError, setValidationError] = useState<string | null>(null)
+  const [ollamaModels,    setOllamaModels]    = useState<string[]>([])
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Load current config on open
@@ -53,11 +54,13 @@ export default function LLMConfigModal({ onClose }: Props) {
         setProvider(cfg.provider)
         setModel(cfg.model)
         setKeySet(cfg.api_key_set)
-        setBaseUrl(DEFAULT_BASE_URLS[cfg.provider] ?? '')
+        const base = DEFAULT_BASE_URLS[cfg.provider] ?? ''
+        setBaseUrl(base)
+        if (cfg.provider === 'ollama') fetchOllamaModels(base)
       })
       .catch(() => {})
       .finally(() => setLoading(false))
-  }, [])
+  }, [fetchOllamaModels])
 
   // Elapsed-time counter while test is running
   useEffect(() => {
@@ -70,13 +73,21 @@ export default function LLMConfigModal({ onClose }: Props) {
     return () => { if (timerRef.current) clearInterval(timerRef.current) }
   }, [testing])
 
+  const fetchOllamaModels = useCallback(async (url: string) => {
+    const models = await getOllamaModels(url || DEFAULT_BASE_URLS.ollama)
+    setOllamaModels(models)
+  }, [])
+
   const handleProviderChange = (p: string) => {
     setProvider(p)
     setModel('')
-    setBaseUrl(DEFAULT_BASE_URLS[p] ?? '')
+    const newBase = DEFAULT_BASE_URLS[p] ?? ''
+    setBaseUrl(newBase)
     setTestResult(null)
     setSaveMsg(null)
     setValidationError(null)
+    setOllamaModels([])
+    if (p === 'ollama') fetchOllamaModels(newBase)
   }
 
   const validate = (): string | null => {
@@ -215,14 +226,35 @@ export default function LLMConfigModal({ onClose }: Props) {
 
               {/* Model */}
               <div>
-                <label style={labelStyle}>Modell <span style={{ opacity: 0.5 }}>(optional)</span></label>
-                <input
-                  type="text"
-                  style={inputStyle}
-                  placeholder={modelHint || 'Modellname'}
-                  value={model}
-                  onChange={e => setModel(e.target.value)}
-                />
+                <label style={labelStyle}>
+                  Modell <span style={{ opacity: 0.5 }}>(optional)</span>
+                  {provider === 'ollama' && ollamaModels.length > 0 && (
+                    <span className="ml-2 px-1.5 py-0.5 rounded text-xs"
+                      style={{ background: '#eff6ff', color: '#1e40af' }}>
+                      {ollamaModels.length} verfügbar
+                    </span>
+                  )}
+                </label>
+                {provider === 'ollama' && ollamaModels.length > 0 ? (
+                  <select
+                    style={{ ...inputStyle, cursor: 'pointer' }}
+                    value={model}
+                    onChange={e => setModel(e.target.value)}
+                  >
+                    <option value="">Standard ({modelHint})</option>
+                    {ollamaModels.map(m => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    style={inputStyle}
+                    placeholder={modelHint || 'Modellname'}
+                    value={model}
+                    onChange={e => setModel(e.target.value)}
+                  />
+                )}
               </div>
 
               {/* Base URL — only for ollama / openai_compatible */}
@@ -244,6 +276,9 @@ export default function LLMConfigModal({ onClose }: Props) {
                     placeholder={DEFAULT_BASE_URLS[provider] || 'https://…/v1'}
                     value={baseUrl}
                     onChange={e => { setBaseUrl(e.target.value); setValidationError(null) }}
+                    onBlur={e => {
+                      if (provider === 'ollama') fetchOllamaModels(e.target.value)
+                    }}
                   />
                 </div>
               )}

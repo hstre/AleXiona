@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { streamReasoning } from '@/lib/api'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -75,9 +76,13 @@ interface Props {
 }
 
 export default function OrchestratorPanel({ sessionId }: Props) {
-  const [state,   setState]   = useState<OrchestratorState | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error,   setError]   = useState<string | null>(null)
+  const [state,          setState]          = useState<OrchestratorState | null>(null)
+  const [loading,        setLoading]        = useState(false)
+  const [error,          setError]          = useState<string | null>(null)
+  const [narrative,      setNarrative]      = useState<string>('')
+  const [narLoading,     setNarLoading]     = useState(false)
+  const [narError,       setNarError]       = useState<string | null>(null)
+  const abortNarRef = useRef(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -97,6 +102,26 @@ export default function OrchestratorPanel({ sessionId }: Props) {
   }, [sessionId])
 
   useEffect(() => { load() }, [load])
+
+  const startNarrative = useCallback(async () => {
+    abortNarRef.current = false
+    setNarLoading(true)
+    setNarrative('')
+    setNarError(null)
+    try {
+      for await (const event of streamReasoning(sessionId)) {
+        if (abortNarRef.current) break
+        if (event.type === 'token')  setNarrative(prev => prev + event.content)
+        if (event.type === 'error')  { setNarError(event.message); break }
+      }
+    } catch (e: unknown) {
+      setNarError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setNarLoading(false)
+    }
+  }, [sessionId])
+
+  useEffect(() => () => { abortNarRef.current = true }, [])
 
   // ── Empty / error states ──────────────────────────────────────────────────
 
@@ -318,9 +343,58 @@ export default function OrchestratorPanel({ sessionId }: Props) {
         </div>
       )}
 
+      {/* ── KI-Analyse (streaming narrative) ─────────────────────────────── */}
+      <div style={{
+        background: 'var(--surface)', border: '1px solid var(--border)',
+        borderRadius: 10, padding: '14px 16px',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: narrative || narLoading || narError ? 10 : 0 }}>
+          <div style={{ flex: 1, fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
+            letterSpacing: '0.06em', color: 'var(--text-muted)' }}>
+            ✦ KI-Analyse
+          </div>
+          <button
+            onClick={startNarrative}
+            disabled={narLoading}
+            style={{
+              padding: '3px 10px', borderRadius: 6, fontSize: 11, cursor: 'pointer',
+              border: '1px solid var(--border)', background: 'var(--surface-2)',
+              color: 'var(--text-muted)', opacity: narLoading ? 0.5 : 1,
+            }}
+          >
+            {narLoading ? '…' : narrative ? '⟳ Neu' : 'Starten'}
+          </button>
+        </div>
+
+        {narError && (
+          <div style={{ fontSize: 12, color: '#b91c1c', lineHeight: 1.5 }}>
+            {narError}
+          </div>
+        )}
+
+        {(narrative || narLoading) && (
+          <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
+            {narrative}
+            {narLoading && (
+              <span style={{ display: 'inline-block', width: 8, height: 12,
+                background: 'var(--brand)', marginLeft: 2, verticalAlign: 'middle',
+                animation: 'blink 1s step-start infinite',
+                borderRadius: 1,
+              }} />
+            )}
+          </div>
+        )}
+
+        {!narrative && !narLoading && !narError && (
+          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            Narrative klinische Einschätzung per LLM — auf Abruf.
+          </div>
+        )}
+      </div>
+
       {/* ── Footer disclaimer ─────────────────────────────────────────────── */}
       <div style={{ fontSize: 10, color: '#9ca3af', lineHeight: 1.5, paddingBottom: 8 }}>
-        Dieser Zustand wird deterministisch aus dem Evidenzgraphen berechnet — kein LLM-Aufruf.
+        Orchestrator-Zustand: deterministisch. KI-Analyse: LLM-generiert, nicht validiert.
         Alle klinischen Entscheidungen obliegen dem behandelnden Arzt.
       </div>
     </div>

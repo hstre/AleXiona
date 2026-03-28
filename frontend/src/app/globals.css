@@ -240,3 +240,8 @@ code, pre, .font-mono {
   border-color: var(--brand);
   box-shadow: 0 0 0 3px var(--brand-glow);
 }
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}

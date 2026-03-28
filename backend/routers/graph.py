@@ -1,4 +1,6 @@
+import json as _json
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from rate_limit import limiter
 from auth import UserSession, require_clinician, require_user
 from models import GraphData, NodeUpdate, CounterfactualResult, HypothesisCounterfactualResult, Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend, _normalize_time_offset, _parse_offset_hours, AuditActor, MEDResult, ReasoningExplanation, HypothesisExplanation, ClaimContribution, GuidelineEvaluation, RiskScoreResponse, RiskScoreItem, ClinicalRoleView, RoleAlert, RoleViewSection, ClinicalReport, ReportSection, GenerateReportRequest, ReportTypeDef, ReportSectionDef, PriorityExplanation, PriorityFactor, OrchestratorState, OrchestratorScoreBreakdown, OrchestratorAlternative
@@ -6,7 +8,7 @@ from clinical_orchestrator import orchestrate
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 from neo4j_client import get_db
-from llm_client import run_counterfactual, run_hypothesis_counterfactual, analyze_reasoning, explain_conflict as _explain_conflict
+from llm_client import run_counterfactual, run_hypothesis_counterfactual, analyze_reasoning, explain_conflict as _explain_conflict, stream_reasoning_narrative
 from conflict_engine import detect_conflicts
 from api_errors import internal_error, validation_error, not_found
 from audit_log import log_created_batch, log_updated, log_deleted
@@ -343,6 +345,42 @@ async def get_reasoning_explanation(session_id: str, request: Request, _user: Us
         raise
     except Exception as e:
         raise internal_error(e)
+
+
+@router.get("/{session_id}/reasoning/stream")
+@limiter.limit("10/minute")
+async def stream_reasoning(
+    session_id: str, request: Request, _user: UserSession = Depends(require_clinician)
+):
+    """Stream a short clinical reasoning narrative as SSE text tokens.
+
+    Events:
+      data: {"type": "token",  "content": "..."}  — one LLM token
+      data: {"type": "done"}                       — stream complete
+      data: {"type": "error",  "message": "..."}  — failure (terminates stream)
+    """
+    db     = get_db()
+    claims = db.get_all_claims_for_session(session_id)
+
+    async def generate():
+        if not claims:
+            yield f"data: {_json.dumps({'type': 'error', 'message': 'Keine Befunde verfügbar.'})}\n\n"
+            return
+        try:
+            async for tok in stream_reasoning_narrative(claims):
+                yield f"data: {_json.dumps({'type': 'token', 'content': tok})}\n\n"
+            yield f"data: {_json.dumps({'type': 'done'})}\n\n"
+        except Exception as exc:
+            yield f"data: {_json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control":  "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/{session_id}/orchestrate", response_model=OrchestratorState)
