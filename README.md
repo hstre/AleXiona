@@ -32,6 +32,8 @@ contradicts a hypothesis, and can be challenged by counterfactual analysis.
 |---|---|
 | ![Expanded "What would refute this?" panel showing required changes and decisive evidence](docs/screenshots/08_hypothesis_counterfactual.png) | ![Timeline view showing claims distributed by time offset t+0h to t+5h](docs/screenshots/06_timeline.png) |
 
+*Screenshots for Decision Ledger, Epistemic Replay, and Action/Management Graph pending.*
+
 ---
 
 ## What it Does
@@ -66,7 +68,12 @@ handover document.
 | **Evidence-Impact Matrix** | Claim × hypothesis table annotating which evidence supports or contradicts each hypothesis |
 | **MED engine** | Minimal Evidence to Decision — simulates which test result would most change the current ranking |
 | **Clinical Arztbrief** | LLM-generated formal physician letter (Arztbrief, Entlassbrief, Konsiliarbrief, Befundbericht) from the evidence graph — editable, PDF export with letterhead |
+| **Revision-Aware Report** | Epistemic tags injected into LLM prompt: `[GESICHERT]` (confirmed/high-trust), `[VERDACHT]` (inferred/LLM), `[REVIDIERT]` (refuted/withdrawn), `[AUSSTEHEND]` (missing evidence with urgency labels) |
 | **Clinical handover** | Auto-populated, editable handover form (Leitdiagnose, Differentialdiagnose, Schlüsselbefunde, Offene Diagnostik) with PDF and clipboard export |
+| **Decision Ledger** | Chronological log of every clinically significant state change (hypothesis switch, status change, score shift ≥ 8 pp) — computed from consecutive OrchestratorSnapshots |
+| **Epistemic Time Machine** | Replay all persisted OrchestratorSnapshots with ← → navigation and ⊿ Diff-View: score delta, hypothesis/status changes, new/resolved conflicts, alternative score shifts ≥ 4 pp |
+| **Action/Management Graph** | `action` ClaimType with kanban board (Empfohlen / Beauftragt / Abgeschlossen / Storniert); status transitions via PATCH — reuses existing `ClaimStatus` lifecycle |
+| **Evidence Gap Taxonomy** | Structured `EvidenceGap` alongside `missing_critical`: `gap_type` (missing_required \| ordered_pending \| unobtainable \| low_trust \| contested) × `urgency` (critical \| relevant \| optional) — surfaced in OrchestratorPanel and Arztbrief prompt |
 | **Conflict explanation** | On-demand LLM explanation for each detected conflict |
 
 ---
@@ -125,8 +132,12 @@ FINAL_SCORE = evidence_score × 40 %
 | `undecided` | everything else |
 
 Returns: `leading_hypothesis`, `orchestrated_score`, `status`, `why` (German verdict),
-`key_conflicts` (top 3), `missing_critical` (top 3), `next_action` (one concrete step),
+`key_conflicts` (top 3), `missing_critical` (top 3, plain text), `evidence_gaps` (structured
+`EvidenceGap[]` with `gap_type` + `urgency`), `next_action` (one concrete step),
 `score_breakdown` (per-factor), `alternatives` (runner-up hypotheses).
+
+Every call auto-persists an `OrchestratorSnapshot` in Neo4j (deduped: skipped when
+hypothesis, status, and score are within 2 pp of the previous snapshot).
 
 ---
 
@@ -169,6 +180,9 @@ Clinician / Import
   Next.js 14 UI
   ├── ◉ Start Screen  ← new/resume/demo entry point
   ├── ◎ Clinical Orchestrator Panel  ← default view: ONE unified state
+  ├── 📖 Decision Ledger   ← chronological log of every significant state change
+  ├── ⏮ Epistemic Replay   ← scrub through OrchestratorSnapshots, diff consecutive states
+  ├── ✅ Action/Management  ← kanban tracker for action claims (Empfohlen → Abgeschlossen)
   ├── ◈ Evidence Graph (Cytoscape.js)
   ├── ⏱ Timeline Panel
   ├── ⊞ Evidence-Impact Matrix
@@ -184,7 +198,16 @@ Clinician / Import
   │     │    / temporal 10% / conflict −10%)
   │     ├── Status determination (confident / undecided / contested / insufficient)
   │     ├── German verdict + next_action
+  │     ├── Evidence Gap Taxonomy — structured EvidenceGap with gap_type + urgency
+  │     ├── OrchestratorSnapshot auto-persisted after every call (deduped)
   │     └── GET /{session_id}/orchestrate
+  ├── Decision Ledger  ← computed from consecutive OrchestratorSnapshots
+  │     ├── Entries on: hypothesis change, status change, score shift ≥ 8 pp
+  │     └── GET /{session_id}/decisions
+  ├── Epistemic Time Machine  ← Replay + Diff-View for all persisted states
+  │     ├── Timeline scrubber with status-coloured dots
+  │     ├── SnapshotDiff: score delta, hypothesis/status changes, new/resolved conflicts
+  │     └── GET /{session_id}/snapshots · GET /{session_id}/replay
   ├── LLM Client (OpenAI GPT-4o, structured JSON)
   │     ├── Claim extraction (5-stage: LLM → normalise → Pydantic → SPL → persist)
   │     ├── Clinical reasoning summary
@@ -233,11 +256,15 @@ Clinician / Import
 | `POST /api/auth/session` | Issue a signed session token (`{"role":"clinician"\|"demo"}`) |
 | `GET  /api/auth/session` | Introspect current token |
 | `GET  /health` | Health check (public, no auth required) |
-| `GET  /{session_id}/orchestrate` | **Single authoritative state** — score, status, verdict, next action |
+| `GET  /{session_id}/orchestrate` | **Single authoritative state** — score, status, verdict, next action, evidence_gaps; auto-persists OrchestratorSnapshot |
+| `GET  /{session_id}/snapshots` | All persisted OrchestratorSnapshots, oldest first |
+| `GET  /{session_id}/decisions` | Decision Ledger — all significant state changes computed from snapshots |
+| `GET  /{session_id}/replay` | Epistemic Time Machine — single snapshot at index `?idx=` with `total_snapshots` count |
 | `GET  /{session_id}/priority` | Priority decomposition — why is this hypothesis leading? |
-| `POST /{session_id}/report` | Generate Arztbrief / Entlassbrief / Konsiliarbrief / Befundbericht |
+| `POST /{session_id}/report` | Generate Arztbrief / Entlassbrief / Konsiliarbrief / Befundbericht (revision-aware: epistemic tags + structured evidence gaps) |
 | `GET  /report-types` | List all supported report types with section definitions |
 | `POST /{session_id}/claims` | Add one or more claims |
+| `PATCH /claim/{claim_id}` | Patch a claim (status, text, ESS, etc.) |
 | `GET  /{session_id}` | Full graph (nodes + edges) |
 | `GET  /{session_id}/reasoning/explain` | Per-claim contribution breakdown for all hypotheses |
 | `GET  /{session_id}/risk-scores` | All 6 validated bedside risk scores |
@@ -259,7 +286,7 @@ Full interactive docs: `http://localhost:8000/docs`
 (:Claim {
   id, text, session_id,
   claim_type,              // symptom | finding | lab | imaging | hypothesis |
-                           // diagnosis | therapy | risk_factor | guideline
+                           // diagnosis | therapy | risk_factor | guideline | action
   source_type,             // clinician | llm | guideline | imaging_model |
                            //   lab_system | imported_document | wearable |
                            //   home_device | caregiver_report | patient_report
@@ -359,13 +386,109 @@ AleXiona is designed for use in clinical environments. The following hardening m
 | Concern | Implementation |
 |---|---|
 | **Authentication** | All API endpoints (except `/health` and `POST /api/auth/session`) require a valid HMAC-signed session token in the `X-Session-Token` header. Tokens are issued by the backend and stored in `sessionStorage` for the browser tab lifetime. |
+| **Clinician bootstrap secret** | Setting `CLINICIAN_BOOTSTRAP_SECRET` in `.env` gates `POST /api/auth/session?role=clinician` behind an `X-Bootstrap-Secret` header check — prevents unauthenticated escalation to clinician role. |
+| **SSRF prevention** | Ollama `base_url` validated against an allowlist (`localhost`, `127.0.0.1`, `::1`, `host.docker.internal`) — arbitrary URLs blocked with HTTP 422 before any outbound request. |
 | **Rate limiting** | General endpoints: 100 req/min per IP. LLM endpoints (`/chat`, `/stream`, `/intake/*`): 10 req/min per IP. Enforced by slowapi. |
 | **Input validation** | Pydantic v2 field constraints on all inbound payloads: message max 10 000 chars, intake text max 50 000 chars, history max 100 entries, manual claim max 5 000 chars. |
 | **LLM timeouts** | All `completions.create()` calls have explicit timeouts (30–90 s depending on operation) to prevent indefinite hangs. |
+| **Blocking I/O isolation** | `store_claims()` and `get_graph()` run in FastAPI's thread-pool executor so Neo4j round-trips never block the async event loop. |
 | **Structured logging** | structlog with JSON output in production (`LOG_FORMAT=json`). Coloured text in dev. Request context (user_id, role) is bound per-request. |
 | **Error monitoring** | Sentry SDK with `traces_sample_rate=0.0` and `send_default_pii=False`. Errors only — no performance tracing, GDPR-safe. Enable by setting `SENTRY_DSN`. |
 | **Atomic DB writes** | `store_claims()` uses a single Neo4j transaction (`s.begin_transaction()`) so partial graph writes cannot leave orphaned nodes. |
 | **React Error Boundary** | All frontend components are wrapped in an `ErrorBoundary` that catches render errors and shows a German-language fallback screen with a retry button. |
+
+---
+
+## Decision Ledger + Epistemic Time Machine
+
+### OrchestratorSnapshot Persistence
+
+Every `/orchestrate` call auto-persists a snapshot to Neo4j (deduped: only saved when
+hypothesis, status, or score changes beyond a 2 pp threshold).
+
+```json
+{
+  "id": "uuid",
+  "session_id": "...",
+  "recorded_at": "2024-01-15T09:23:11Z",
+  "trigger": "chat_input",
+  "trigger_claim_ids": ["abc123"],
+  "leading_hypothesis": "pulmonary embolism suspected",
+  "orchestrated_score": 0.72,
+  "status": "confident",
+  "why": "...",
+  "key_conflicts": [...],
+  "missing_critical": [...],
+  "evidence_gaps": [
+    { "text": "D-Dimer result", "gap_type": "missing_required", "urgency": "critical" }
+  ],
+  "next_action": "...",
+  "score_breakdown": {...},
+  "alternatives": [...]
+}
+```
+
+### Decision Ledger
+
+`GET /api/graph/{session_id}/decisions` — chronological log of significant state changes.
+
+| `change_type` | Trigger condition |
+|---|---|
+| `initial` | First snapshot ever for this session |
+| `hypothesis_change` | Leading hypothesis text changes |
+| `status_change` | Status transitions (e.g. undecided → confident) |
+| `score_shift` | Score moves by ≥ 8 pp between consecutive snapshots |
+
+### Epistemic Time Machine (Replay)
+
+`GET /api/graph/{session_id}/snapshots` — all snapshots, oldest first
+`GET /api/graph/{session_id}/replay?idx=N` — snapshot at position N
+
+The **⊿ Diff** view (available when `selectedIdx > 0`) shows:
+- Score delta with coloured bar
+- Hypothesis / status changes (old → new with strikethrough)
+- New vs. resolved conflicts
+- New vs. resolved missing evidence
+- Alternative score shifts ≥ 4 pp
+
+---
+
+## Evidence Gap Taxonomy
+
+Structured evidence gaps accompany `missing_critical` in the orchestrator output.
+
+| `gap_type` | Meaning |
+|---|---|
+| `missing_required` | Required guideline criterion not present in the graph |
+| `ordered_pending` | Test ordered but result not yet available |
+| `unobtainable` | Patient refused or technically impossible |
+| `low_trust` | Only low-confidence (LLM) evidence available |
+| `contested` | Conflicting claims about presence / absence |
+
+| `urgency` | Meaning |
+|---|---|
+| `critical` | Blocks diagnostic confidence — must resolve |
+| `relevant` | Would meaningfully improve certainty |
+| `optional` | Nice to have, low impact |
+
+The OrchestratorPanel renders urgency-coloured cards when structured gaps are present,
+and the Arztbrief prompt includes `[AUSSTEHEND] [CRITICAL] (missing required) …` annotations.
+
+---
+
+## Action/Management Graph
+
+Claims with `claim_type = action` appear in the **✅ Maßnahmen** kanban board.
+Status lifecycle reuses the existing `ClaimStatus` enum:
+
+| Kanban column | ClaimStatus values |
+|---|---|
+| 💡 Empfohlen | `active`, `observed`, `tentative` |
+| ⏳ Beauftragt | `inferred`, `contested` |
+| ✅ Abgeschlossen | `confirmed`, `resolved` |
+| 🚫 Storniert | `refuted`, `withdrawn`, `superseded` |
+
+Status transitions are persisted via `PATCH /api/graph/claim/{id}`.
 
 ---
 
