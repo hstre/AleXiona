@@ -48,6 +48,7 @@ class ClaimType(str, Enum):
     therapy     = "therapy"
     risk_factor = "risk_factor"
     guideline   = "guideline"
+    action      = "action"
 
 
 class SourceType(str, Enum):
@@ -535,6 +536,29 @@ class OrchestratorAlternative(BaseModel):
     composite_score_contribution: float
 
 
+# ── Evidence Gap Taxonomy ─────────────────────────────────────────────────────
+
+class GapType(str, Enum):
+    missing_required = "missing_required"  # required guideline criterion absent
+    ordered_pending  = "ordered_pending"   # test ordered but result not yet available
+    unobtainable     = "unobtainable"      # patient refused or technically impossible
+    low_trust        = "low_trust"         # only low-confidence evidence available
+    contested        = "contested"         # conflicting claims about presence/absence
+
+
+class GapUrgency(str, Enum):
+    critical = "critical"  # blocks diagnostic confidence — must resolve
+    relevant = "relevant"  # would meaningfully improve certainty
+    optional = "optional"  # nice to have, low impact
+
+
+class EvidenceGap(BaseModel):
+    text:      str
+    gap_type:  GapType   = GapType.missing_required
+    urgency:   GapUrgency = GapUrgency.relevant
+    rationale: Optional[str] = None
+
+
 class OrchestratorState(BaseModel):
     """
     Single authoritative clinical state produced by the orchestrator.
@@ -547,7 +571,8 @@ class OrchestratorState(BaseModel):
     status:             str                      # "confident" | "undecided" | "contested" | "insufficient"
     why:                str                      # German 2-4 sentence verdict
     key_conflicts:      list[str]                # top 3 conflict messages
-    missing_critical:   list[str]                # top 3 missing tests/criteria
+    missing_critical:   list[str]                # top 3 missing tests/criteria (plain text)
+    evidence_gaps:      list[EvidenceGap] = []   # structured gap taxonomy (parallel to missing_critical)
     next_action:        str                      # single most important next step
     score_breakdown:    OrchestratorScoreBreakdown
     alternatives:       list[OrchestratorAlternative]
@@ -771,6 +796,7 @@ class OrchestratorSnapshot(BaseModel):
     why:                str
     key_conflicts:      list[str]
     missing_critical:   list[str]
+    evidence_gaps:      list[EvidenceGap] = []
     next_action:        str
     score_breakdown:    OrchestratorScoreBreakdown
     alternatives:       list[OrchestratorAlternative]

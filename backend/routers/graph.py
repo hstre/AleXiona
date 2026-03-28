@@ -390,6 +390,7 @@ async def get_orchestrator_state(
             why=state["why"],
             key_conflicts=state["key_conflicts"],
             missing_critical=state["missing_critical"],
+            evidence_gaps=state.get("evidence_gaps", []),
             next_action=state["next_action"],
             score_breakdown=OrchestratorScoreBreakdown(**state["score_breakdown"]),
             alternatives=[OrchestratorAlternative(**a) for a in state["alternatives"]],
@@ -422,6 +423,7 @@ async def get_orchestrator_state(
                 why=orch_state.why,
                 key_conflicts=orch_state.key_conflicts,
                 missing_critical=orch_state.missing_critical,
+                evidence_gaps=orch_state.evidence_gaps,
                 next_action=orch_state.next_action,
                 score_breakdown=orch_state.score_breakdown,
                 alternatives=orch_state.alternatives,
@@ -670,11 +672,13 @@ async def create_report(session_id: str, body: GenerateReportRequest, request: R
     db = get_db()
     try:
         claims  = db.get_all_claims_for_session(session_id)
-        # Pull missing_critical from orchestrator for revision-aware report context
+        # Pull missing_critical + evidence_gaps from orchestrator for revision-aware report context
         orch_state    = orchestrate(session_id, claims)
         missing_crit  = orch_state.get("missing_critical", [])
+        evidence_gaps = orch_state.get("evidence_gaps", [])
         prompt  = build_report_prompt(body.report_type, claims, body.patient_context,
-                                      missing_critical=missing_crit)
+                                      missing_critical=missing_crit,
+                                      evidence_gaps=evidence_gaps if evidence_gaps else None)
         raw     = await _generate_report(prompt)
 
         sections = []

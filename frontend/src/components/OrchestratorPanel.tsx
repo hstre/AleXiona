@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { getOrchestratorState } from '@/lib/api'
-import type { OrchestratorState, OrchestratorScoreBreakdown } from '@/lib/api'
+import type { OrchestratorState, OrchestratorScoreBreakdown, EvidenceGap } from '@/lib/api'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -35,6 +35,60 @@ function ScoreBar({ value, max = 0.4, isNeg = false }: { value: number; max?: nu
         transition: 'width 0.4s ease',
       }} />
     </div>
+  )
+}
+
+// ── Evidence Gap display ──────────────────────────────────────────────────────
+
+const GAP_TYPE_META: Record<string, { label: string; icon: string }> = {
+  missing_required: { label: 'Fehlend',     icon: '⬜' },
+  ordered_pending:  { label: 'Ausstehend',  icon: '⏳' },
+  unobtainable:     { label: 'Nicht mögl.', icon: '🚫' },
+  low_trust:        { label: 'Unsicher',    icon: '⚠' },
+  contested:        { label: 'Umstritten',  icon: '⚡' },
+}
+
+const GAP_URGENCY_META: Record<string, { color: string; bg: string; label: string }> = {
+  critical: { color: '#b91c1c', bg: '#fef2f2', label: 'Kritisch' },
+  relevant: { color: '#92400e', bg: '#fffbeb', label: 'Relevant' },
+  optional: { color: '#374151', bg: '#f9fafb', label: 'Optional' },
+}
+
+function EvidenceGapList({ gaps }: { gaps: EvidenceGap[] }) {
+  return (
+    <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex',
+      flexDirection: 'column', gap: 6 }}>
+      {gaps.map((g, i) => {
+        const typeMeta    = GAP_TYPE_META[g.gap_type]    ?? { label: g.gap_type, icon: '−' }
+        const urgencyMeta = GAP_URGENCY_META[g.urgency]  ?? GAP_URGENCY_META.relevant
+        return (
+          <li key={i} style={{
+            fontSize: 12, lineHeight: 1.4,
+            padding: '5px 8px', borderRadius: 6,
+            background: urgencyMeta.bg,
+            border: `1px solid ${urgencyMeta.color}22`,
+          }}>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span style={{ fontWeight: 600, color: urgencyMeta.color }}>
+                {typeMeta.icon} {typeMeta.label}
+              </span>
+              <span style={{
+                fontSize: 10, padding: '1px 5px', borderRadius: 8,
+                background: urgencyMeta.color + '22', color: urgencyMeta.color,
+              }}>
+                {urgencyMeta.label}
+              </span>
+            </div>
+            <div style={{ color: '#1e40af', marginTop: 2 }}>{g.text}</div>
+            {g.rationale && (
+              <div style={{ color: 'var(--text-muted)', fontSize: 11, marginTop: 2 }}>
+                {g.rationale}
+              </div>
+            )}
+          </li>
+        )
+      })}
+    </ul>
   )
 }
 
@@ -249,6 +303,8 @@ export default function OrchestratorPanel({ sessionId, externalRefreshTrigger = 
           </div>
           {state.missing_critical.length === 0 ? (
             <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Nichts kritisch fehlend.</div>
+          ) : state.evidence_gaps?.length > 0 ? (
+            <EvidenceGapList gaps={state.evidence_gaps} />
           ) : (
             <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex',
               flexDirection: 'column', gap: 6 }}>

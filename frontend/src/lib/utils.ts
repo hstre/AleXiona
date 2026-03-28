@@ -39,6 +39,7 @@ export const CLAIM_TYPE_META: Record<ClaimType, TypeMeta> = {
   therapy:     { label: 'Therapy',     icon: '💊', color: '#22c55e', bg: '#f0fdf4', text: '#14532d', border: '#22c55e' },
   risk_factor: { label: 'Risk Factor', icon: '⚠',  color: '#ef4444', bg: '#fef2f2', text: '#7f1d1d', border: '#ef4444' },
   guideline:   { label: 'Guideline',   icon: '📖', color: '#6b7280', bg: '#f9fafb', text: '#374151', border: '#6b7280' },
+  action:      { label: 'Action',      icon: '✅', color: '#0ea5e9', bg: '#f0f9ff', text: '#0c4a6e', border: '#0ea5e9' },
 }
 
 export const getTypeMeta = (t?: ClaimType | string): TypeMeta =>

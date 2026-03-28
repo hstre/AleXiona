@@ -92,7 +92,11 @@ def _epistemic_tag(claim: dict) -> str:
     return "[VERDACHT]"
 
 
-def _build_epistemic_section(all_claims: list[dict], missing_critical: list[str]) -> str:
+def _build_epistemic_section(
+    all_claims: list[dict],
+    missing_critical: list[str],
+    evidence_gaps: list[dict] | None = None,
+) -> str:
     """
     Build a compact epistemic status table for all claims + missing items.
     Injected into the LLM prompt so the report can carry provenance tags.
@@ -128,7 +132,16 @@ def _build_epistemic_section(all_claims: list[dict], missing_critical: list[str]
         lines.append("Revidierte / widerrufene Befunde:")
         lines.extend(revidiert)
         lines.append("")
-    if missing_critical:
+    # Prefer structured evidence_gaps if available; fall back to flat missing_critical
+    if evidence_gaps:
+        lines.append("Ausstehende / fehlende Untersuchungen (strukturiert):")
+        _urgency_order = {"critical": 0, "relevant": 1, "optional": 2}
+        for g in sorted(evidence_gaps, key=lambda x: _urgency_order.get(x.get("urgency", "relevant"), 1)):
+            urgency = g.get("urgency", "relevant").upper()
+            gtype   = g.get("gap_type", "missing_required").replace("_", " ")
+            lines.append(f"  [AUSSTEHEND] [{urgency}] ({gtype}) {g['text']}")
+        lines.append("")
+    elif missing_critical:
         lines.append("Ausstehende / fehlende kritische Untersuchungen:")
         for m in missing_critical:
             lines.append(f"  [AUSSTEHEND] {m}")
@@ -230,6 +243,7 @@ def build_report_prompt(
     all_claims: list[dict],
     patient_context: PatientContext | None = None,
     missing_critical: list[str] | None = None,
+    evidence_gaps: list[dict] | None = None,
 ) -> str:
     """
     Build a complete LLM prompt for clinical report generation.
@@ -252,7 +266,7 @@ def build_report_prompt(
         for s in rt["sections"]
     )
     claim_context    = _build_claim_context(all_claims)
-    epistemic_block  = _build_epistemic_section(all_claims, missing_critical or [])
+    epistemic_block  = _build_epistemic_section(all_claims, missing_critical or [], evidence_gaps)
 
     patient_block = ""
     if patient_context:

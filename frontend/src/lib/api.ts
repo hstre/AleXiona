@@ -97,6 +97,7 @@ async function parseError(res: Response): Promise<Error> {
 export type ClaimType =
   | 'symptom' | 'finding' | 'lab' | 'imaging'
   | 'hypothesis' | 'diagnosis' | 'therapy' | 'risk_factor' | 'guideline'
+  | 'action'
 
 export type SourceType =
   | 'clinician' | 'llm' | 'guideline'
@@ -500,6 +501,18 @@ export async function addManualClaim(sessionId: string, claim: ManualClaim): Pro
   if (!res.ok) throw await parseError(res)
 }
 
+// ── Evidence Gap Taxonomy ─────────────────────────────────────────────────────
+
+export type GapType    = 'missing_required' | 'ordered_pending' | 'unobtainable' | 'low_trust' | 'contested'
+export type GapUrgency = 'critical' | 'relevant' | 'optional'
+
+export interface EvidenceGap {
+  text:      string
+  gap_type:  GapType
+  urgency:   GapUrgency
+  rationale: string | null
+}
+
 // ── Orchestrator — OrchestratorPanel types (re-exported for other consumers) ──
 
 export interface OrchestratorScoreBreakdown {
@@ -524,6 +537,7 @@ export interface OrchestratorState {
   why:                string
   key_conflicts:      string[]
   missing_critical:   string[]
+  evidence_gaps:      EvidenceGap[]
   next_action:        string
   score_breakdown:    OrchestratorScoreBreakdown
   alternatives:       OrchestratorAlternative[]

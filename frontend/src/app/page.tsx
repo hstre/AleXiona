@@ -19,6 +19,7 @@ import ReportPanel         from '@/components/ReportPanel'
 import OrchestratorPanel  from '@/components/OrchestratorPanel'
 import DecisionLedger     from '@/components/DecisionLedger'
 import ReplayPanel        from '@/components/ReplayPanel'
+import ActionPanel        from '@/components/ActionPanel'
 import { getGraph, seedDemo, exportSession, explainConflict } from '@/lib/api'
 import type { GraphData, Claim, ClaimType, ReasoningResult, Conflict, GraphNode, DemoScenario } from '@/lib/api'
 import { SESSION_KEY, shortId, confPct, essLabel, CONFLICT_SEVERITY_META, CLAIM_TYPE_META } from '@/lib/utils'
@@ -48,7 +49,7 @@ export default function Home() {
   const [seeding,            setSeeding]            = useState(false)
   const [typeFilter,         setTypeFilter]         = useState<Set<ClaimType>>(new Set())
   const [focusClaimIds,      setFocusClaimIds]      = useState<string[]>([])
-  const [centerView,         setCenterView]         = useState<'orchestrator' | 'graph' | 'timeline' | 'matrix' | 'counterfactual' | 'handover' | 'report' | 'ledger' | 'replay'>('orchestrator')
+  const [centerView,         setCenterView]         = useState<'orchestrator' | 'graph' | 'timeline' | 'matrix' | 'counterfactual' | 'handover' | 'report' | 'ledger' | 'replay' | 'actions'>('orchestrator')
   const [graphLayout,        setGraphLayout]        = useState<GraphLayout>('cose')
   const [orchRefreshTrigger, setOrchRefreshTrigger] = useState(0)
   const [fitTrigger,         setFitTrigger]         = useState(0)
@@ -833,6 +834,7 @@ export default function Home() {
                   ['report',          '📝 Bericht'],
                   ['ledger',          '📖 Ledger'],
                   ['replay',          '⏮ Replay'],
+                  ['actions',         '✅ Maßnahmen'],
                 ] as [typeof centerView, string][]).map(([v, label]) => (
                   <button key={v} onClick={() => setCenterView(v)}
                     className="px-2.5 py-1 rounded-md transition-all"
@@ -1030,6 +1032,13 @@ export default function Home() {
           {centerView === 'replay' && sessionId && (
             <div className="flex-1 overflow-hidden">
               <ReplayPanel sessionId={sessionId} />
+            </div>
+          )}
+
+          {/* Action / Management Tracker */}
+          {centerView === 'actions' && (
+            <div className="flex-1 overflow-hidden">
+              <ActionPanel claims={allClaims} onRefresh={refreshGraph} />
             </div>
           )}
         </div>

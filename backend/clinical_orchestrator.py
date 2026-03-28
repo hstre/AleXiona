@@ -215,6 +215,7 @@ def orchestrate(
             "why":                "Keine aktiven Hypothesen im Evidenzgraphen vorhanden.",
             "key_conflicts":      [],
             "missing_critical":   [],
+            "evidence_gaps":      [],
             "next_action":        _next_action(st, [], [], None, med_top_test),
             "score_breakdown":    _zero_breakdown(),
             "alternatives":       [],
@@ -261,6 +262,17 @@ def orchestrate(
 
     # ── Missing critical: required guideline criteria first, then supporting ──
     missing_critical = req_missing[:3] or g.get("supporting_missing", [])[:3]
+
+    # ── Structured evidence gaps (parallel to missing_critical) ───────────────
+    _critical_texts = req_missing[:3]
+    _relevant_texts = [] if _critical_texts else g.get("supporting_missing", [])[:3]
+    evidence_gaps = [
+        {"text": t, "gap_type": "missing_required", "urgency": "critical"}
+        for t in _critical_texts
+    ] + [
+        {"text": t, "gap_type": "missing_required", "urgency": "relevant"}
+        for t in _relevant_texts
+    ]
 
     # ── Composite score triggers for the leading hypothesis ───────────────────
     _, triggered_scores = _composite_boost_for_hypothesis(top["text"], comp_all)
@@ -326,6 +338,7 @@ def orchestrate(
         "why":                " ".join(why_parts),
         "key_conflicts":      key_conflicts,
         "missing_critical":   missing_critical,
+        "evidence_gaps":      evidence_gaps,
         "next_action":        _next_action(st, key_conflicts, missing_critical, leading_out, med_top_test),
         "score_breakdown":    breakdown,
         "alternatives":       alternatives,

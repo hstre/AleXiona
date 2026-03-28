@@ -404,6 +404,7 @@ class Neo4jClient:
             "why":                snapshot.why,
             "key_conflicts":      _json.dumps(snapshot.key_conflicts),
             "missing_critical":   _json.dumps(snapshot.missing_critical),
+            "evidence_gaps":      _json.dumps([g.model_dump() for g in snapshot.evidence_gaps]),
             "next_action":        snapshot.next_action,
             "score_breakdown":    _json.dumps(snapshot.score_breakdown.model_dump()),
             "alternatives":       _json.dumps([a.model_dump() for a in snapshot.alternatives]),
@@ -435,7 +436,7 @@ class Neo4jClient:
                 return None
             d = dict(row["sn"])
             for field in ("trigger_claim_ids", "key_conflicts", "missing_critical",
-                          "score_breakdown", "alternatives"):
+                          "evidence_gaps", "score_breakdown", "alternatives"):
                 if isinstance(d.get(field), str):
                     try:
                         d[field] = _json.loads(d[field])
