@@ -29,6 +29,7 @@ export default function Home() {
   const [dismissedConflicts, setDismissedConflicts] = useState<Set<string>>(new Set())
   const [conflictIdx,        setConflictIdx]        = useState(0)
   const [graphLoading,       setGraphLoading]       = useState(false)
+  const [graphError,         setGraphError]         = useState<string | null>(null)
   const [activePanel,        setActivePanel]        = useState<'data' | 'graph' | 'review'>('graph')
   const [showConflictBanner, setShowConflictBanner] = useState(true)
   const [conflictExplanation,  setConflictExplanation]  = useState('')
@@ -67,8 +68,9 @@ export default function Home() {
     try {
       const data = await getGraph(sessionId)
       setGraphData(data)
-    } catch (err) {
-      console.error(err)
+      setGraphError(null)
+    } catch (err: unknown) {
+      setGraphError(err instanceof Error ? err.message : 'Graph konnte nicht geladen werden')
     } finally {
       setGraphLoading(false)
     }
@@ -551,6 +553,16 @@ export default function Home() {
           </div>
         )
       })()}
+
+      {/* ── Graph error banner ────────────────────────────────────────────── */}
+      {graphError && (
+        <div className="flex items-center gap-2 px-3 py-1.5 shrink-0 text-xs"
+          style={{ background: '#fef2f2', borderBottom: '1px solid #fecaca', color: '#991b1b' }}>
+          <span className="shrink-0">⚠</span>
+          <span className="flex-1">{graphError} — Retry läuft in Kürze …</span>
+          <button onClick={() => setGraphError(null)} style={{ opacity: 0.6 }}>✕</button>
+        </div>
+      )}
 
       {/* ── Top Nav ───────────────────────────────────────────────────────── */}
       <nav className="top-nav flex items-center justify-between px-4 py-2.5 shrink-0">
