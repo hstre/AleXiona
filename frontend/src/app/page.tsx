@@ -76,6 +76,13 @@ export default function Home() {
 
   useEffect(() => { if (sessionId) refreshGraph() }, [sessionId, refreshGraph])
 
+  // Retry once after 12 s to recover from Render Free Tier cold start
+  useEffect(() => {
+    if (!sessionId) return
+    const id = setTimeout(() => refreshGraph(), 12_000)
+    return () => clearTimeout(id)
+  }, [sessionId, refreshGraph])
+
   // ── Debounce search query ─────────────────────────────────────────────────
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(searchQuery), 300)
