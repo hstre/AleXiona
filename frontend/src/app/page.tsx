@@ -919,31 +919,36 @@ export default function Home() {
             )}
           </div>
 
-          {/* Graph canvas */}
+          {/* Graph canvas — only mount GraphView when visible to avoid Cytoscape
+               initialising into a zero-dimension hidden container (iOS Safari crash) */}
           <div className={`flex-1 overflow-hidden ${centerView === 'graph' ? 'flex' : 'hidden'} flex-col`}>
-            <div className="flex-1 overflow-hidden">
-              <ClientErrorBoundary label="Graph">
-                <GraphView
-                  data={filteredGraph}
-                  onRefresh={refreshGraph}
-                  conflictNodeIds={conflictNodeIds}
-                  sessionId={sessionId}
-                  focusClaimIds={focusClaimIds}
-                  layout={graphLayout}
-                  fitTrigger={fitTrigger}
-                />
-              </ClientErrorBoundary>
-            </div>
-            {/* Time slider — inside graph mode only */}
-            {maxTimeOffset > 0 && (
-              <div className="px-4 py-2 border-t shrink-0"
-                style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border-light)' }}>
-                <TimeSlider
-                  claimNodes={claimNodes}
-                  currentHours={Math.min(timeHours, maxTimeOffset)}
-                  onChange={setTimeHours}
-                />
-              </div>
+            {centerView === 'graph' && (
+              <>
+                <div className="flex-1 overflow-hidden">
+                  <ClientErrorBoundary label="Graph">
+                    <GraphView
+                      data={filteredGraph}
+                      onRefresh={refreshGraph}
+                      conflictNodeIds={conflictNodeIds}
+                      sessionId={sessionId}
+                      focusClaimIds={focusClaimIds}
+                      layout={graphLayout}
+                      fitTrigger={fitTrigger}
+                    />
+                  </ClientErrorBoundary>
+                </div>
+                {/* Time slider — inside graph mode only */}
+                {maxTimeOffset > 0 && (
+                  <div className="px-4 py-2 border-t shrink-0"
+                    style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border-light)' }}>
+                    <TimeSlider
+                      claimNodes={claimNodes}
+                      currentHours={Math.min(timeHours, maxTimeOffset)}
+                      onChange={setTimeHours}
+                    />
+                  </div>
+                )}
+              </>
             )}
           </div>
 
