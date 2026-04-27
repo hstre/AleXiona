@@ -31,6 +31,7 @@ export default function Home() {
   const [conflictIdx,        setConflictIdx]        = useState(0)
   const [graphLoading,       setGraphLoading]       = useState(false)
   const [graphError,         setGraphError]         = useState<string | null>(null)
+  const [lastCrashInfo,      setLastCrashInfo]      = useState<string | null>(null)
   const [activePanel,        setActivePanel]        = useState<'data' | 'graph' | 'review'>('graph')
   const [showConflictBanner, setShowConflictBanner] = useState(true)
   const [conflictExplanation,  setConflictExplanation]  = useState('')
@@ -60,6 +61,12 @@ export default function Home() {
     const id     = stored || uuidv4()
     if (!stored) localStorage.setItem(SESSION_KEY, id)
     setSessionId(id)
+    // Show diagnostic info if a previous crash was recorded
+    const crash = localStorage.getItem('_alexiona_last_error')
+    if (crash) {
+      try { setLastCrashInfo(JSON.parse(crash).message ?? crash) } catch { setLastCrashInfo(crash) }
+      localStorage.removeItem('_alexiona_last_error')
+    }
   }, [])
 
   // ── Graph ─────────────────────────────────────────────────────────────────
@@ -562,6 +569,16 @@ export default function Home() {
           <span className="shrink-0">⚠</span>
           <span className="flex-1">{graphError} — Retry läuft in Kürze …</span>
           <button onClick={() => setGraphError(null)} style={{ opacity: 0.6 }}>✕</button>
+        </div>
+      )}
+
+      {/* ── Crash diagnostic banner (shown once after a recovered crash) ──── */}
+      {lastCrashInfo && (
+        <div className="flex items-center gap-2 px-3 py-1.5 shrink-0 text-xs"
+          style={{ background: '#fff7ed', borderBottom: '1px solid #fed7aa', color: '#9a3412' }}>
+          <span className="shrink-0">🔍</span>
+          <span className="flex-1">Letzter Fehler: {lastCrashInfo}</span>
+          <button onClick={() => setLastCrashInfo(null)} style={{ opacity: 0.6 }}>✕</button>
         </div>
       )}
 

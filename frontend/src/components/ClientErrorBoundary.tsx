@@ -1,6 +1,6 @@
 'use client'
 
-import { Component, type ReactNode } from 'react'
+import { Component, type ErrorInfo, type ReactNode } from 'react'
 
 interface Props {
   children:  ReactNode
@@ -20,6 +20,18 @@ export default class ClientErrorBoundary extends Component<Props, State> {
     return { hasError: true, message }
   }
 
+  componentDidCatch(err: Error, info: ErrorInfo) {
+    try {
+      localStorage.setItem('_alexiona_last_error', JSON.stringify({
+        label:   this.props.label ?? 'unknown',
+        message: err.message,
+        stack:   err.stack?.slice(0, 800),
+        component: info.componentStack?.slice(0, 400),
+        time:    new Date().toISOString(),
+      }))
+    } catch {}
+  }
+
   reset = () => this.setState({ hasError: false, message: '' })
 
   render() {
@@ -32,10 +44,11 @@ export default class ClientErrorBoundary extends Component<Props, State> {
       }}>
         <div style={{
           background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8,
-          padding: '12px 16px', color: '#991b1b', fontSize: 13, maxWidth: 340, textAlign: 'center',
+          padding: '12px 16px', color: '#991b1b', fontSize: 13, maxWidth: 360, textAlign: 'center',
+          wordBreak: 'break-word',
         }}>
-          {label} konnte nicht geladen werden.
-          <div style={{ fontSize: 11, opacity: 0.7, marginTop: 4 }}>{this.state.message}</div>
+          <strong>{label}</strong> konnte nicht geladen werden.
+          <div style={{ fontSize: 11, opacity: 0.8, marginTop: 6 }}>{this.state.message}</div>
         </div>
         <button onClick={this.reset} style={{
           fontSize: 12, padding: '6px 14px', borderRadius: 6,
