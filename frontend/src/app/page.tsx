@@ -93,11 +93,6 @@ export default function Home() {
 
   useEffect(() => { if (sessionId) refreshGraph() }, [sessionId, refreshGraph])
 
-  // Auto-reload graph when backend comes online (after cold start)
-  useEffect(() => {
-    if (backendOnline && sessionId) refreshGraph()
-  }, [backendOnline, sessionId, refreshGraph])
-
   // ── Debounce search query ─────────────────────────────────────────────────
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(searchQuery), 300)
