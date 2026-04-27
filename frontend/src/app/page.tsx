@@ -57,8 +57,7 @@ export default function Home() {
 
   // ── Session ───────────────────────────────────────────────────────────────
   useEffect(() => {
-    // Global error handler — captures uncaught errors (incl. from useEffects)
-    // that React error boundaries can't catch, saves full stack to localStorage
+    // Duplicate in-page handler (layout.tsx sets one earlier; this supplements it)
     const onError = (event: ErrorEvent) => {
       try {
         localStorage.setItem('_alexiona_last_error', JSON.stringify({
@@ -71,20 +70,30 @@ export default function Home() {
     }
     window.addEventListener('error', onError)
 
-    const stored = localStorage.getItem(SESSION_KEY)
-    const id     = stored || uuidv4()
-    if (!stored) localStorage.setItem(SESSION_KEY, id)
-    setSessionId(id)
-    // Show diagnostic info if a previous crash was recorded
-    const crash = localStorage.getItem('_alexiona_last_error')
-    if (crash) {
-      try {
-        const parsed = JSON.parse(crash)
-        const detail = [parsed.message, parsed.source].filter(Boolean).join(' @ ')
-        setLastCrashInfo(detail ?? crash)
-      } catch { setLastCrashInfo(crash) }
-      localStorage.removeItem('_alexiona_last_error')
+    // Wrap every localStorage call — iOS Safari private browsing can throw
+    try {
+      const stored = localStorage.getItem(SESSION_KEY)
+      const id     = stored || uuidv4()
+      try { if (!stored) localStorage.setItem(SESSION_KEY, id) } catch {}
+      setSessionId(id)
+      // Show diagnostic info if a previous crash was recorded
+      const crash = localStorage.getItem('_alexiona_last_error')
+      if (crash) {
+        try {
+          const parsed = JSON.parse(crash)
+          const parts: string[] = []
+          if (parsed.message) parts.push(parsed.message)
+          if (parsed.source)  parts.push('@ ' + parsed.source)
+          if (parsed.stack)   parts.push('\n' + parsed.stack)
+          setLastCrashInfo(parts.join(' ') || crash)
+        } catch { setLastCrashInfo(crash) }
+        try { localStorage.removeItem('_alexiona_last_error') } catch {}
+      }
+    } catch {
+      // localStorage unavailable (private mode / storage blocked) — still assign a session id
+      setSessionId(uuidv4())
     }
+
     return () => window.removeEventListener('error', onError)
   }, [])
 
@@ -593,11 +602,19 @@ export default function Home() {
 
       {/* ── Crash diagnostic banner (shown once after a recovered crash) ──── */}
       {lastCrashInfo && (
-        <div className="flex items-center gap-2 px-3 py-1.5 shrink-0 text-xs"
-          style={{ background: '#fff7ed', borderBottom: '1px solid #fed7aa', color: '#9a3412' }}>
-          <span className="shrink-0">🔍</span>
-          <span className="flex-1">Letzter Fehler: {lastCrashInfo}</span>
-          <button onClick={() => setLastCrashInfo(null)} style={{ opacity: 0.6 }}>✕</button>
+        <div className="px-3 py-2 shrink-0 text-xs"
+          style={{ background: '#fff7ed', borderBottom: '2px solid #fb923c', color: '#9a3412' }}>
+          <div className="flex items-start gap-2">
+            <span className="shrink-0 mt-0.5">🔍</span>
+            <div className="flex-1 min-w-0">
+              <div className="font-semibold mb-0.5">Letzter Absturz (Diagnose)</div>
+              <pre className="whitespace-pre-wrap break-all font-mono text-[10px] opacity-90"
+                style={{ maxHeight: 120, overflowY: 'auto' }}>
+                {lastCrashInfo}
+              </pre>
+            </div>
+            <button onClick={() => setLastCrashInfo(null)} style={{ opacity: 0.6, flexShrink: 0 }}>✕</button>
+          </div>
         </div>
       )}
 
