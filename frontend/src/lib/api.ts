@@ -3,13 +3,14 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 /** Extract a human-readable message from a structured or plain-text error response. */
 async function parseError(res: Response): Promise<Error> {
   try {
-    const data = await res.json()
+    const text = await res.text()
+    const data = JSON.parse(text)
     const detail = data?.detail
     if (typeof detail === 'string') return new Error(detail)
     if (typeof detail?.message === 'string') return new Error(detail.message)
     return new Error(JSON.stringify(detail ?? data))
   } catch {
-    return new Error((await res.text()) || `HTTP ${res.status}`)
+    return new Error(`HTTP ${res.status}`)
   }
 }
 
