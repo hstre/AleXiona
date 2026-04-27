@@ -20,9 +20,21 @@ from lab_parser import parse_lab_value
 
 log = logging.getLogger(__name__)
 
-client       = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-async_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-MODEL = "gpt-4o"
+# DeepSeek has an OpenAI-compatible API — prefer it when DEEPSEEK_API_KEY is set.
+_DEEPSEEK_KEY = os.getenv("DEEPSEEK_API_KEY")
+_OPENAI_KEY   = os.getenv("OPENAI_API_KEY")
+
+if _DEEPSEEK_KEY:
+    _client_kwargs = {"api_key": _DEEPSEEK_KEY, "base_url": "https://api.deepseek.com"}
+    MODEL = "deepseek-chat"
+    log.info("LLM backend: DeepSeek (deepseek-chat)")
+else:
+    _client_kwargs = {"api_key": _OPENAI_KEY}
+    MODEL = "gpt-4o"
+    log.info("LLM backend: OpenAI (gpt-4o)")
+
+client       = OpenAI(**_client_kwargs)
+async_client = AsyncOpenAI(**_client_kwargs)
 
 # ── Claim Extraction ─────────────────────────────────────────────────────────
 
