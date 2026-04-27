@@ -17,7 +17,7 @@ import CounterfactualPanel from '@/components/CounterfactualPanel'
 import HandoverPanel     from '@/components/HandoverPanel'
 import ReportPanel         from '@/components/ReportPanel'
 import OrchestratorPanel  from '@/components/OrchestratorPanel'
-import { getGraph, seedDemo, exportSession, explainConflict, checkHealth } from '@/lib/api'
+import { getGraph, seedDemo, exportSession, explainConflict } from '@/lib/api'
 import type { GraphData, Claim, ClaimType, ReasoningResult, Conflict, GraphNode, DemoScenario } from '@/lib/api'
 import { SESSION_KEY, shortId, confPct, essLabel, CONFLICT_SEVERITY_META, CLAIM_TYPE_META } from '@/lib/utils'
 
@@ -50,24 +50,7 @@ export default function Home() {
   const [showStats,          setShowStats]          = useState(false)
   const [demoLang,           setDemoLang]           = useState<'en' | 'de'>('en')
   const [demoScenario,       setDemoScenario]       = useState<'cap' | 'pe' | 'ards' | 'nstemi'>('cap')
-  const [backendOnline,      setBackendOnline]      = useState<boolean | null>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
-
-  // ── Backend health check ──────────────────────────────────────────────────
-  useEffect(() => {
-    let cancelled = false
-    async function poll() {
-      while (!cancelled) {
-        const ok = await checkHealth()
-        if (cancelled) break
-        setBackendOnline(ok)
-        if (ok) break
-        await new Promise(r => setTimeout(r, 8_000))
-      }
-    }
-    poll()
-    return () => { cancelled = true }
-  }, [])
 
   // ── Session ───────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -412,16 +395,6 @@ export default function Home() {
 
   return (
     <div className="flex flex-col h-screen" style={{ background: 'var(--bg)' }}>
-
-      {/* ── Backend wakeup banner ─────────────────────────────────────────── */}
-      {backendOnline === false && (
-        <div style={{ background: '#fffbeb', borderBottom: '1px solid #fcd34d',
-          padding: '6px 16px', fontSize: 12, color: '#92400e',
-          display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span>⏳</span>
-          <span>Backend startet (Render Free Tier) — bitte ca. 30–60 s warten. Demo-Daten werden danach geladen.</span>
-        </div>
-      )}
 
       {/* ── Add Node Modal ────────────────────────────────────────────────── */}
       {showAddNode && (
