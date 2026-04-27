@@ -1,19 +1,56 @@
+
+from datetime import UTC
+
 from fastapi import APIRouter, HTTPException
-from models import GraphData, NodeUpdate, CounterfactualResult, HypothesisCounterfactualResult, Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend, _normalize_time_offset, _parse_offset_hours, AuditActor, MEDResult, ReasoningExplanation, HypothesisExplanation, ClaimContribution, GuidelineEvaluation, RiskScoreResponse, RiskScoreItem, ClinicalRoleView, RoleAlert, RoleViewSection, ClinicalReport, ReportSection, GenerateReportRequest, ReportTypeDef, ReportSectionDef, PriorityExplanation, PriorityFactor, OrchestratorState, OrchestratorScoreBreakdown, OrchestratorAlternative
-from clinical_orchestrator import orchestrate
 from pydantic import BaseModel, field_validator
-from typing import Optional
-from neo4j_client import get_db
-from llm_client import run_counterfactual, run_hypothesis_counterfactual, analyze_reasoning, explain_conflict as _explain_conflict
-from conflict_engine import detect_conflicts
-from api_errors import internal_error, validation_error, not_found
-from audit_log import log_created_batch, log_updated, log_deleted
-from med_engine import compute_med
-from reasoning_engine import explain_hypothesis_scores, build_priority_explanation
+
+from api_errors import internal_error, not_found, validation_error
+from audit_log import log_created_batch, log_deleted, log_updated
+from clinical_orchestrator import orchestrate
 from composite_scores import compute_all_scores
-from role_views import build_role_view
-from report_engine import build_report_prompt, REPORT_TYPES
+from conflict_engine import detect_conflicts
+from llm_client import analyze_reasoning, run_counterfactual, run_hypothesis_counterfactual
+from llm_client import explain_conflict as _explain_conflict
 from llm_client import generate_report as _generate_report
+from med_engine import compute_med
+from models import (
+    AuditActor,
+    Claim,
+    ClaimContribution,
+    ClaimStatus,
+    ClaimTrend,
+    ClaimType,
+    ClinicalReport,
+    ClinicalRoleView,
+    CounterfactualResult,
+    GenerateReportRequest,
+    GraphData,
+    GuidelineEvaluation,
+    HypothesisCounterfactualResult,
+    HypothesisExplanation,
+    MEDResult,
+    NodeUpdate,
+    OrchestratorAlternative,
+    OrchestratorScoreBreakdown,
+    OrchestratorState,
+    PriorityExplanation,
+    PriorityFactor,
+    ReasoningExplanation,
+    ReportSection,
+    ReportSectionDef,
+    ReportTypeDef,
+    RiskScoreItem,
+    RiskScoreResponse,
+    RoleAlert,
+    RoleViewSection,
+    SourceType,
+    _normalize_time_offset,
+    _parse_offset_hours,
+)
+from neo4j_client import get_db
+from reasoning_engine import build_priority_explanation, explain_hypothesis_scores
+from report_engine import REPORT_TYPES, build_report_prompt
+from role_views import build_role_view
 
 
 class ManualClaimPayload(BaseModel):
@@ -22,7 +59,7 @@ class ManualClaimPayload(BaseModel):
     source_type:            SourceType  = SourceType.clinician
     source_ref:             str         = ""
     evidence_support_score: float       = 0.8
-    time_offset:            Optional[str] = None
+    time_offset:            str | None = None
     trend:                  ClaimTrend  = ClaimTrend.unknown
     status:                 ClaimStatus = ClaimStatus.active
     derived_from:           list[str]   = []   # explicit claimIds chosen by the user
@@ -285,7 +322,7 @@ async def get_reasoning_explanation(session_id: str):
     - total_support / total_conflict: raw sums before score clamping
     - guideline: required/supporting/missing evidence per guideline rule
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
     db = get_db()
     try:
         claims = db.get_all_claims_for_session(session_id)
@@ -319,7 +356,7 @@ async def get_reasoning_explanation(session_id: str):
         return ReasoningExplanation(
             session_id=session_id,
             hypotheses=hypotheses,
-            generated_at=datetime.now(timezone.utc).isoformat(),
+            generated_at=datetime.now(UTC).isoformat(),
         )
     except HTTPException:
         raise
@@ -440,7 +477,7 @@ async def create_report(session_id: str, body: GenerateReportRequest):
     the rule-based hypothesis scores, parsed lab values, and all active claims.
     Optional patient_context (name, DOB, ward, etc.) is woven into the letter.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
     rt = REPORT_TYPES.get(body.report_type)
     if not rt:
         raise validation_error(
@@ -465,7 +502,7 @@ async def create_report(session_id: str, body: GenerateReportRequest):
             report_type=body.report_type,
             title=rt["title"],
             sections=sections,
-            generated_at=datetime.now(timezone.utc).isoformat(),
+            generated_at=datetime.now(UTC).isoformat(),
         )
     except ValueError as e:
         raise validation_error(str(e))
@@ -479,7 +516,7 @@ async def create_report(session_id: str, body: GenerateReportRequest):
 async def get_role_view(
     session_id: str,
     role: str,
-    specialty: Optional[str] = None,
+    specialty: str | None = None,
 ):
     """
     Role-filtered clinical view — each role sees exactly what they need.
@@ -494,7 +531,7 @@ async def get_role_view(
     Optional ?specialty= for the specialist role:
       cardiology | pulmonology | infectiology | neurology | nephrology | gastroenterology
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
     db = get_db()
     try:
         claims  = db.get_all_claims_for_session(session_id)
@@ -510,7 +547,7 @@ async def get_role_view(
             specialty=specialty,
             alerts=alerts,
             sections=[RoleViewSection(**s) for s in raw["sections"]],
-            generated_at=datetime.now(timezone.utc).isoformat(),
+            generated_at=datetime.now(UTC).isoformat(),
         )
     except ValueError as e:
         raise validation_error(str(e))
@@ -531,7 +568,7 @@ async def get_risk_scores(session_id: str):
     whether the score applies to the active differential diagnoses.
     Results are sorted: relevant + highest-risk first.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
     db = get_db()
     try:
         claims = db.get_all_claims_for_session(session_id)
@@ -539,7 +576,7 @@ async def get_risk_scores(session_id: str):
         return RiskScoreResponse(
             session_id=session_id,
             scores=[RiskScoreItem(**r) for r in raw],
-            generated_at=datetime.now(timezone.utc).isoformat(),
+            generated_at=datetime.now(UTC).isoformat(),
         )
     except HTTPException:
         raise

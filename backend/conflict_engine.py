@@ -3,8 +3,9 @@ Rule-based conflict detection for AleXiona V0.
 Operates on claim dicts returned from Neo4j.
 """
 import re
-from datetime import datetime, timezone, timedelta
-from models import Conflict, ConflictType, ConflictSeverity, _parse_offset_hours
+from datetime import UTC, datetime
+
+from models import Conflict, ConflictSeverity, ConflictType, _parse_offset_hours
 
 _NEGATION_RE = re.compile(
     r'\b(kein[e]?|nicht|nein|ohne|fehlt|negativ|absent|no\b|not\b|without|negative|ruled out)\b',
@@ -39,11 +40,11 @@ def _parse_event_time(claim: dict) -> datetime | None:
     if et is None:
         return None
     if isinstance(et, datetime):
-        return et.replace(tzinfo=timezone.utc) if et.tzinfo is None else et
+        return et.replace(tzinfo=UTC) if et.tzinfo is None else et
     if isinstance(et, str):
         try:
             dt = datetime.fromisoformat(et.replace("Z", "+00:00"))
-            return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+            return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
         except ValueError:
             return None
     return None
@@ -245,7 +246,7 @@ def detect_conflicts(claims: list[dict]) -> list[Conflict]:
     # A lab claim with event_time older than STALE_LAB_HOURS that is the only
     # matching evidence for an active hypothesis — the clinician should re-test.
     # Applies only when event_time (absolute) is available.
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     lab_claims = [
         c for c in active
         if c.get("claim_type") in _LAB_TYPES
@@ -287,11 +288,11 @@ def detect_conflicts(claims: list[dict]) -> list[Conflict]:
         if isinstance(at_raw, str):
             try:
                 at = datetime.fromisoformat(at_raw.replace("Z", "+00:00"))
-                at = at.replace(tzinfo=timezone.utc) if at.tzinfo is None else at
+                at = at.replace(tzinfo=UTC) if at.tzinfo is None else at
             except ValueError:
                 continue
         elif isinstance(at_raw, datetime):
-            at = at_raw.replace(tzinfo=timezone.utc) if at_raw.tzinfo is None else at_raw
+            at = at_raw.replace(tzinfo=UTC) if at_raw.tzinfo is None else at_raw
         else:
             continue
         if at < et:

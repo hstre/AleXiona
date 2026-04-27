@@ -23,17 +23,19 @@ Weighting rationale
   Conflict  -10 % — integrity: how contested is this hypothesis?
 """
 from __future__ import annotations
-from datetime import datetime, timezone
+
+from datetime import UTC, datetime
+
+from composite_scores import compute_all_scores
+from conflict_engine import detect_conflicts
 from reasoning_engine import (
-    rank_hypotheses,
+    _COMPOSITE_BOOST_CAP,
+    _composite_boost_for_hypothesis,
+    _temporal_weight,  # internal — same package
     evaluate_all_guidelines,
     guideline_score,
-    _temporal_weight,                       # internal — same package
-    _composite_boost_for_hypothesis,
-    _COMPOSITE_BOOST_CAP,
+    rank_hypotheses,
 )
-from conflict_engine import detect_conflicts
-from composite_scores import compute_all_scores
 
 # ── Weights ────────────────────────────────────────────────────────────────────
 
@@ -147,7 +149,7 @@ def orchestrate(session_id: str, all_claims: list[dict]) -> dict:
             "next_action":       "Klinische Befunde dokumentieren um Hypothesen zu generieren.",
             "score_breakdown":   _zero_breakdown(),
             "alternatives":      [],
-            "generated_at":      datetime.now(timezone.utc).isoformat(),
+            "generated_at":      datetime.now(UTC).isoformat(),
         }
 
     top            = ranked[0]
@@ -241,7 +243,7 @@ def orchestrate(session_id: str, all_claims: list[dict]) -> dict:
         "next_action":        _next_action(st, key_conflicts, missing_critical, top["text"]),
         "score_breakdown":    breakdown,
         "alternatives":       alternatives,
-        "generated_at":       datetime.now(timezone.utc).isoformat(),
+        "generated_at":       datetime.now(UTC).isoformat(),
     }
 
 

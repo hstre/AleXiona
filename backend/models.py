@@ -1,8 +1,9 @@
 from __future__ import annotations
+
 import re
 from datetime import datetime
-from enum import Enum
-from typing import Optional
+from enum import StrEnum
+
 from pydantic import BaseModel, field_validator
 
 _TIME_RE = re.compile(r'^(?:t\+)?(\d+(?:\.\d+)?)h?$', re.IGNORECASE)
@@ -35,7 +36,7 @@ def _parse_offset_hours(v: str | None) -> float | None:
     return None
 
 
-class ClaimType(str, Enum):
+class ClaimType(StrEnum):
     symptom     = "symptom"
     finding     = "finding"
     lab         = "lab"
@@ -47,7 +48,7 @@ class ClaimType(str, Enum):
     guideline   = "guideline"
 
 
-class SourceType(str, Enum):
+class SourceType(StrEnum):
     # ── Clinical / institutional sources ─────────────────────────────────────
     clinician          = "clinician"
     llm                = "llm"
@@ -62,7 +63,7 @@ class SourceType(str, Enum):
     caregiver_report   = "caregiver_report"  # family member or informal carer
 
 
-class EvidenceTier(str, Enum):
+class EvidenceTier(StrEnum):
     """Epistemic quality tier — derived from source_type but can be set explicitly.
 
     Drives differential weighting in scoring and prevents patient-generated data
@@ -92,7 +93,7 @@ def source_to_evidence_tier(source_type: str) -> EvidenceTier:
     return mapping.get(source_type, EvidenceTier.clinician_observed)
 
 
-class ClaimStatus(str, Enum):
+class ClaimStatus(StrEnum):
     # ── Epistemic lifecycle (fine-grained) ───────────────────────────────────
     observed   = "observed"    # directly observed/measured — highest epistemic warrant
     inferred   = "inferred"    # derived or interpreted from other observations
@@ -108,7 +109,7 @@ class ClaimStatus(str, Enum):
     active     = "active"      # generic active — treated as "observed" in scoring
 
 
-class ClaimTrend(str, Enum):
+class ClaimTrend(StrEnum):
     improving = "improving"
     worsening = "worsening"
     stable    = "stable"
@@ -147,34 +148,34 @@ class Claim(BaseModel):
     status:                 ClaimStatus          = ClaimStatus.active
 
     # ── Legacy relative time (retained for backward compat) ──────────────────
-    time_offset:            Optional[str]        = None   # e.g. "t+6h"
+    time_offset:            str | None        = None   # e.g. "t+6h"
     trend:                  ClaimTrend           = ClaimTrend.unknown
 
     # ── Absolute temporal anchoring (Alexandria principle) ───────────────────
-    event_time:             Optional[datetime]   = None   # when the medical event occurred
-    assertion_time:         Optional[datetime]   = None   # when this claim was entered
-    valid_from:             Optional[datetime]   = None   # claim active from this moment
-    valid_until:            Optional[datetime]   = None   # claim expires / no longer applicable
+    event_time:             datetime | None   = None   # when the medical event occurred
+    assertion_time:         datetime | None   = None   # when this claim was entered
+    valid_from:             datetime | None   = None   # claim active from this moment
+    valid_until:            datetime | None   = None   # claim expires / no longer applicable
 
     # ── Epistemic provenance ─────────────────────────────────────────────────
-    supersedes_claim_id:    Optional[str]        = None   # claim ID this replaces
+    supersedes_claim_id:    str | None        = None   # claim ID this replaces
     uncertainty_flag:       bool                 = False  # LLM/clinician flagged uncertainty
     assumptions:            list[str]            = []     # stated assumptions behind this claim
-    normalized_token:       Optional[str]        = None   # canonical lab token (e.g. "crp")
+    normalized_token:       str | None        = None   # canonical lab token (e.g. "crp")
 
     # ── Patient data layer ───────────────────────────────────────────────────
-    evidence_tier:          Optional[str]        = None   # EvidenceTier value; None = derive from source_type
-    patient_data_ref:       Optional[str]        = None   # ID of originating PatientObservation or PGM
+    evidence_tier:          str | None        = None   # EvidenceTier value; None = derive from source_type
+    patient_data_ref:       str | None        = None   # ID of originating PatientObservation or PGM
 
     # ── Projection metadata (Alexandria: every claim carries its projection origin) ──
-    projection_confidence:  Optional[float]      = None   # confidence at projection time (0.0–1.0)
-    projection_method:      Optional[str]        = None   # "llm_extraction" | "rule_based_measurement" | "rule_based_observation" | "demo_seed"
+    projection_confidence:  float | None      = None   # confidence at projection time (0.0–1.0)
+    projection_method:      str | None        = None   # "llm_extraction" | "rule_based_measurement" | "rule_based_observation" | "demo_seed"
 
     # ── SPL provenance (Semantic Projection Layer — WP2) ─────────────────────
-    spl_unit_id:            Optional[str]        = None   # SemanticUnit.unit_id
-    spl_projection_id:      Optional[str]        = None   # SemanticProjection.projection_id
-    spl_emission_rule:      Optional[str]        = None   # "E1" | "E2" | "E3" | "E0"
-    spl_h_norm:             Optional[float]      = None   # normalised Shannon entropy ∈ [0,1]
+    spl_unit_id:            str | None        = None   # SemanticUnit.unit_id
+    spl_projection_id:      str | None        = None   # SemanticProjection.projection_id
+    spl_emission_rule:      str | None        = None   # "E1" | "E2" | "E3" | "E0"
+    spl_h_norm:             float | None      = None   # normalised Shannon entropy ∈ [0,1]
 
 
 class ClaimExtractionResult(BaseModel):
@@ -193,7 +194,7 @@ class ExtractedObservation(BaseModel):
     raw_text:         str
     observation:      str                # extracted observation statement
     observation_type: str                # broad type: symptom | lab | finding | imaging | ...
-    temporal_hint:    Optional[str] = None  # raw time reference: "3 days ago", "at 14:20"
+    temporal_hint:    str | None = None  # raw time reference: "3 days ago", "at 14:20"
     negation_hint:    bool          = False  # "no fever", "ruled out", "absent"
     uncertainty_hint: bool          = False  # "possibly", "suspected", "cannot exclude"
     source_ref:       str           = ""
@@ -209,11 +210,11 @@ class ClaimCandidate(BaseModel):
     observation:       ExtractedObservation
     candidate_text:    str
     candidate_type:    str                # normalized claim_type
-    normalized_token:  Optional[str]   = None  # canonical lab token ("crp", "troponin", ...)
-    parsed_value:      Optional[float] = None  # numeric lab value
-    parsed_unit:       Optional[str]   = None  # unit string
-    qualitative:       Optional[str]   = None  # "high" | "low" | "normal"
-    event_time_iso:    Optional[str]   = None  # ISO 8601 datetime if resolved
+    normalized_token:  str | None   = None  # canonical lab token ("crp", "troponin", ...)
+    parsed_value:      float | None = None  # numeric lab value
+    parsed_unit:       str | None   = None  # unit string
+    qualitative:       str | None   = None  # "high" | "low" | "normal"
+    event_time_iso:    str | None   = None  # ISO 8601 datetime if resolved
     confidence:        float           = 0.5
 
 
@@ -230,11 +231,11 @@ class PatientObservation(BaseModel):
     id:              str
     raw_text:        str
     source_type:     str                  = "patient_report"  # patient_report | caregiver_report
-    event_time:      Optional[datetime]   = None
-    assertion_time:  Optional[datetime]   = None
-    body_location:   Optional[str]        = None   # "chest", "left arm", ...
-    onset_hint:      Optional[str]        = None   # "since 3 days", "yesterday morning"
-    severity_hint:   Optional[str]        = None   # "mild", "severe", "10/10"
+    event_time:      datetime | None   = None
+    assertion_time:  datetime | None   = None
+    body_location:   str | None        = None   # "chest", "left arm", ...
+    onset_hint:      str | None        = None   # "since 3 days", "yesterday morning"
+    severity_hint:   str | None        = None   # "mild", "severe", "10/10"
     negation_hint:   bool                 = False   # "no pain", "no fever"
     uncertainty_hint: bool                = False   # "I think", "maybe"
     # Derived after normalization
@@ -248,18 +249,18 @@ class PatientGeneratedMeasurement(BaseModel):
     """
     id:              str
     device_type:     str               # "wearable" | "home_device"
-    device_name:     Optional[str]  = None   # "Apple Watch Series 9", "Omron BP cuff"
+    device_name:     str | None  = None   # "Apple Watch Series 9", "Omron BP cuff"
     token:           str               # canonical lab token: "spo2", "heart_rate", "systolic_bp"
     value:           float
     unit:            str
-    qualitative:     Optional[str]  = None   # "high" | "low" | "normal" (derived from thresholds)
-    event_time:      Optional[datetime]  = None
-    assertion_time:  Optional[datetime]  = None
+    qualitative:     str | None  = None   # "high" | "low" | "normal" (derived from thresholds)
+    event_time:      datetime | None  = None
+    assertion_time:  datetime | None  = None
     # Quality metadata
-    measurement_quality: Optional[str]  = None   # "good" | "medium" | "poor" | "unknown"
-    session_duration_s:  Optional[int]  = None   # for wearables: how long was this measured
+    measurement_quality: str | None  = None   # "good" | "medium" | "poor" | "unknown"
+    session_duration_s:  int | None  = None   # for wearables: how long was this measured
     # Derived
-    candidate_id:    Optional[str]   = None   # ClaimCandidate ID produced from this
+    candidate_id:    str | None   = None   # ClaimCandidate ID produced from this
 
 
 class TrendPoint(BaseModel):
@@ -281,9 +282,9 @@ class TrendSignal(BaseModel):
     start_value:   float
     end_value:     float
     n_points:      int               # number of measurements in window
-    clinical_flag: Optional[str]  = None  # "tachycardia_trend", "hypoxia_trend", ...
+    clinical_flag: str | None  = None  # "tachycardia_trend", "hypoxia_trend", ...
     # Derived
-    candidate_id:  Optional[str]  = None
+    candidate_id:  str | None  = None
 
 
 # ── Analysis / Reasoning ─────────────────────────────────────────────────────
@@ -312,7 +313,7 @@ class CounterfactualResult(BaseModel):
     changed_evidence:    list[str]
     shifts:              list[CounterfactualShift]
     reasoning_trace:     str
-    guideline_shift:     Optional[dict] = None
+    guideline_shift:     dict | None = None
 
 
 class HypothesisCounterfactualResult(BaseModel):
@@ -336,13 +337,13 @@ class ReasoningResult(BaseModel):
 
 # ── Conflicts ─────────────────────────────────────────────────────────────────
 
-class ConflictSeverity(str, Enum):
+class ConflictSeverity(StrEnum):
     error   = "error"
     warning = "warning"
     info    = "info"
 
 
-class ConflictType(str, Enum):
+class ConflictType(StrEnum):
     # Original 8 rules
     competing_hypothesis       = "competing_hypothesis"
     negation                   = "negation"
@@ -382,24 +383,24 @@ class ChatResponse(BaseModel):
     reply:      str
     claims:     list[Claim]
     session_id: str
-    reasoning:  Optional[ReasoningResult] = None
+    reasoning:  ReasoningResult | None = None
     conflicts:  list[Conflict]            = []
 
 
 class NodeUpdate(BaseModel):
-    text:                   Optional[str]         = None
-    evidence_support_score: Optional[float]       = None
-    claim_type:             Optional[ClaimType]   = None
-    status:                 Optional[ClaimStatus] = None
-    trend:                  Optional[ClaimTrend]  = None
-    time_offset:            Optional[str]         = None
-    source_ref:             Optional[str]         = None
-    notes:                  Optional[str]         = None
+    text:                   str | None         = None
+    evidence_support_score: float | None       = None
+    claim_type:             ClaimType | None   = None
+    status:                 ClaimStatus | None = None
+    trend:                  ClaimTrend | None  = None
+    time_offset:            str | None         = None
+    source_ref:             str | None         = None
+    notes:                  str | None         = None
     # Epistemic fields patchable by clinician
-    uncertainty_flag:       Optional[bool]        = None
-    supersedes_claim_id:    Optional[str]         = None
-    valid_until:            Optional[datetime]    = None
-    evidence_tier:          Optional[str]         = None
+    uncertainty_flag:       bool | None        = None
+    supersedes_claim_id:    str | None         = None
+    valid_until:            datetime | None    = None
+    evidence_tier:          str | None         = None
 
     @field_validator('evidence_support_score', mode='before')
     @classmethod
@@ -445,7 +446,7 @@ class IntakeMeasurementsResponse(BaseModel):
     session_id:    str
 
 
-class ClinicalInputType(str, Enum):
+class ClinicalInputType(StrEnum):
     lab        = "lab"        # → source_type=lab_system,   evidence_tier=lab_confirmed
     medication = "medication" # → source_type=clinician,    evidence_tier=clinician_observed
     document   = "document"   # → source_type=imported_document, tier=clinician_observed
@@ -456,7 +457,7 @@ class ClinicalInput(BaseModel):
     text:        str
     input_type:  ClinicalInputType
     source_ref:  str               = ""       # e.g. "Synlab-Befund 2024-03-21"
-    event_time:  Optional[datetime] = None
+    event_time:  datetime | None = None
 
 
 class IntakeClinicalRequest(BaseModel):
@@ -472,14 +473,14 @@ class IntakeClinicalResponse(BaseModel):
 
 # ── Audit Layer ───────────────────────────────────────────────────────────────
 
-class AuditEventType(str, Enum):
+class AuditEventType(StrEnum):
     claim_created    = "claim_created"
     claim_updated    = "claim_updated"
     claim_deleted    = "claim_deleted"
     claim_superseded = "claim_superseded"
 
 
-class AuditActor(str, Enum):
+class AuditActor(StrEnum):
     """Which layer / endpoint triggered the mutation."""
     chat                = "chat"
     intake_conversation = "intake_conversation"
@@ -497,14 +498,14 @@ class AuditEvent(BaseModel):
     actor:          str          # AuditActor value
     pipeline_stage: str          # human-readable: "Stage 1: LLM extraction", "Manual edit", …
     timestamp:      datetime
-    before:         Optional[dict] = None   # claim state before mutation (None for create)
-    after:          Optional[dict] = None   # claim state after mutation  (None for delete)
+    before:         dict | None = None   # claim state before mutation (None for create)
+    after:          dict | None = None   # claim state after mutation  (None for delete)
     meta:           dict          = {}      # extra context, e.g. {input_type: "lab"}
 
 
 class AuditTrailResponse(BaseModel):
-    claim_id:  Optional[str] = None
-    session_id: Optional[str] = None
+    claim_id:  str | None = None
+    session_id: str | None = None
     events:    list[AuditEvent]
 
 
@@ -532,7 +533,7 @@ class OrchestratorState(BaseModel):
     into one transparent output with a German verdict and concrete next action.
     """
     session_id:         str
-    leading_hypothesis: Optional[str]
+    leading_hypothesis: str | None
     orchestrated_score: float                    # weighted combined score [0,1]
     status:             str                      # "confident" | "undecided" | "contested" | "insufficient"
     why:                str                      # German 2-4 sentence verdict
@@ -562,7 +563,7 @@ class PriorityExplanation(BaseModel):
     conflict load, and evidence gaps into a single traceable breakdown.
     """
     session_id:        str
-    hypothesis_text:   Optional[str]
+    hypothesis_text:   str | None
     final_score:       float
     factors:           list[PriorityFactor]
     confidence_status: str   # "confident" | "insufficient"
@@ -593,7 +594,7 @@ class ReportSection(BaseModel):
 
 class GenerateReportRequest(BaseModel):
     report_type:     str                    # "arztbrief" | "entlassbrief" | "konsilbrief" | "befundbericht"
-    patient_context: Optional[dict] = None  # e.g. {"name": "Max M.", "geburtsdatum": "1958-04-12"}
+    patient_context: dict | None = None  # e.g. {"name": "Max M.", "geburtsdatum": "1958-04-12"}
 
 
 class ClinicalReport(BaseModel):
@@ -620,7 +621,7 @@ class RoleViewSection(BaseModel):
 class ClinicalRoleView(BaseModel):
     session_id:   str
     role:         str                    # nurse | resident | specialist | lab | chief
-    specialty:    Optional[str] = None
+    specialty:    str | None = None
     alerts:       list[RoleAlert]        # critical first
     sections:     list[RoleViewSection]
     generated_at: str
@@ -652,8 +653,8 @@ class ClaimContribution(BaseModel):
     claim_text:        str
     claim_type:        str
     source_type:       str
-    evidence_tier:     Optional[str]   = None
-    spl_emission_rule: Optional[str]   = None   # "E1"|"E2"|"E3"|"E4" — epistemic quality
+    evidence_tier:     str | None   = None
+    spl_emission_rule: str | None   = None   # "E1"|"E2"|"E3"|"E4" — epistemic quality
     direction:         str             # "supporting" | "conflicting"
     contribution:      float           # magnitude (always ≥ 0); direction carries sign
     ess:               float           # evidence_support_score of this claim

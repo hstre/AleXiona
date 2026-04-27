@@ -18,8 +18,8 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
-from typing import Sequence
+from collections.abc import Sequence
+from datetime import UTC, datetime
 
 from models import AuditActor, AuditEvent, AuditEventType, Claim
 
@@ -27,7 +27,7 @@ log = logging.getLogger(__name__)
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _claim_snapshot(claim: Claim) -> dict:
@@ -69,7 +69,7 @@ def log_created_batch(
 ) -> list[AuditEvent]:
     """Log a claim_created event for each (claim_id, claim) pair."""
     events: list[AuditEvent] = []
-    for cid, claim in zip(claim_ids, claims):
+    for cid, claim in zip(claim_ids, claims, strict=False):
         event = AuditEvent(
             id=str(uuid.uuid4()),
             event_type=AuditEventType.claim_created,

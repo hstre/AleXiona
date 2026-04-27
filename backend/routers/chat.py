@@ -1,18 +1,21 @@
 import asyncio
 import json
 from concurrent.futures import ThreadPoolExecutor
+
 from fastapi import APIRouter, HTTPException
-from api_errors import internal_error
 from fastapi.responses import StreamingResponse
-from models import ChatRequest, ChatResponse
+
+from api_errors import internal_error
+from audit_log import log_created_batch
+from conflict_engine import detect_conflicts
 from llm_client import (
-    extract_claims, answer_with_context, analyze_reasoning,
+    analyze_reasoning,
+    answer_with_context,
+    extract_claims,
     stream_answer_with_context,
 )
+from models import AuditActor, ChatRequest, ChatResponse
 from neo4j_client import get_db
-from conflict_engine import detect_conflicts
-from audit_log import log_created_batch
-from models import AuditActor
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 _executor = ThreadPoolExecutor()

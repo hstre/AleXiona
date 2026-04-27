@@ -30,8 +30,6 @@ key-term overlap with existing hypothesis texts (the currency of score_hypothesi
 from __future__ import annotations
 
 import uuid
-from copy import deepcopy
-from typing import Optional
 
 from models import MEDOutcome, MEDResult, MEDTestResult
 
@@ -318,7 +316,7 @@ def _select_candidate_tests(claims: list[dict]) -> list[str]:
     1. Tests explicitly listed in guideline missing_priority for active hypotheses
     2. All remaining catalog entries not yet evidenced
     """
-    from reasoning_engine import rank_hypotheses, evaluate_guideline
+    from reasoning_engine import evaluate_guideline, rank_hypotheses
 
     ranked = rank_hypotheses(claims)
     guideline_tests: list[str] = []

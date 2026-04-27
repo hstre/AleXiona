@@ -12,10 +12,11 @@ Only `derived_from` carries epistemic weight for conflict rules.
 `related_to` is semantic proximity and does NOT influence scoring.
 """
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TypedDict
-from lab_parser import parse_lab_value, lab_summary, LAB_THRESHOLDS
-from composite_scores import compute_relevant_scores, compute_all_scores, score_keywords_for
+
+from composite_scores import compute_all_scores, compute_relevant_scores, score_keywords_for
+from lab_parser import LAB_THRESHOLDS, lab_summary, parse_lab_value
 
 _KEY_TERM_RE = re.compile(r'\b[a-zA-ZäöüÄÖÜß]{4,}\b')
 _NEGATION_RE = re.compile(
@@ -225,7 +226,7 @@ def _hours_since_event(claim: dict) -> float | None:
     # 1. Absolute event_time (Alexandria principle — preferred)
     event_time = claim.get("event_time")
     if event_time is not None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if isinstance(event_time, str):
             try:
                 from datetime import datetime as _dt
@@ -234,7 +235,7 @@ def _hours_since_event(claim: dict) -> float | None:
                 event_time = None
         if event_time is not None:
             if event_time.tzinfo is None:
-                event_time = event_time.replace(tzinfo=timezone.utc)
+                event_time = event_time.replace(tzinfo=UTC)
             delta_h = (now - event_time).total_seconds() / 3600
             return max(0.0, delta_h)
 
@@ -271,9 +272,7 @@ def _is_contradicting(evidence_text: str, hypothesis_text: str) -> bool:
     e_low  = bool(_LOW_RE.search(evidence_text))
     h_high = bool(_HIGH_RE.search(hypothesis_text))
     h_low  = bool(_LOW_RE.search(hypothesis_text))
-    if (e_high and h_low) or (e_low and h_high):
-        return True
-    return False
+    return bool(e_high and h_low or e_low and h_high)
 
 
 def _conflict_penalty(evidence_text: str) -> float:
@@ -794,7 +793,7 @@ def _term_present_in_claims(term: str, claims: list[dict]) -> bool:
 
     # Check if the term maps to a known lab token with a quantitative threshold.
     # This lets "CRP 145 mg/L" match the guideline term "crp" or "crp elevated".
-    lab_token: Optional[str] = None
+    lab_token: str | None = None
     for token, spec in LAB_THRESHOLDS.items():
         if t_lower in spec["aliases"] or token == t_lower:
             lab_token = token
@@ -832,7 +831,6 @@ def _term_present_in_claims(term: str, claims: list[dict]) -> bool:
 
 
 # Type alias for Optional used in _term_present_in_claims above
-from typing import Optional  # noqa: E402 (already imported implicitly via TypedDict)
 
 
 def evaluate_guideline(hypothesis_text: str, all_claims: list[dict]) -> dict:
@@ -988,7 +986,7 @@ def build_case_snapshot(all_claims: list[dict]) -> dict:
     confidence = get_confident_leading(ranked)
 
     return {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "leading_hypothesis": leading["text"] if leading else None,
         "leading_score":      leading["rule_based_score"] if leading else None,
         "confidence_status":  confidence["status"],
@@ -1109,7 +1107,7 @@ def build_priority_explanation(session_id: str, all_claims: list[dict]) -> dict:
             "factors":           [],
             "confidence_status": "insufficient",
             "verdict":           "Keine aktiven Hypothesen vorhanden.",
-            "generated_at":      datetime.now(timezone.utc).isoformat(),
+            "generated_at":      datetime.now(UTC).isoformat(),
         }
 
     top      = ranked[0]
@@ -1215,5 +1213,5 @@ def build_priority_explanation(session_id: str, all_claims: list[dict]) -> dict:
         "factors":           factors,
         "confidence_status": confidence["status"],
         "verdict":           " ".join(verdict_parts),
-        "generated_at":      datetime.now(timezone.utc).isoformat(),
+        "generated_at":      datetime.now(UTC).isoformat(),
     }

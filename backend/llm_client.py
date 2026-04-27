@@ -1,22 +1,28 @@
-import os
 import json
 import logging
+import os
 import time
-from typing import AsyncIterator
-from openai import OpenAI, AsyncOpenAI
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime
+
+from openai import AsyncOpenAI, OpenAI
 from pydantic import ValidationError
-from datetime import datetime, timezone
-from clinical_spl import run_spl_pipeline, run_dual_spl_pipeline
+
+from clinical_spl import run_dual_spl_pipeline, run_spl_pipeline
+from lab_parser import parse_lab_value
 from models import (
-    Claim, ClaimExtractionResult, ChatMessage,
-    ReasoningResult, Alternative, MissingEvidence,
-    CounterfactualResult, CounterfactualShift,
+    Alternative,
+    ChatMessage,
+    Claim,
+    ClaimExtractionResult,
+    CounterfactualResult,
+    CounterfactualShift,
     HypothesisCounterfactualResult,
-    Relation, ClaimType, SourceType, ClaimStatus, ClaimTrend,
-    ExtractedObservation, ClaimCandidate,
+    MissingEvidence,
+    ReasoningResult,
+    Relation,
 )
 from reasoning_engine import build_reasoning_context, evaluate_all_guidelines
-from lab_parser import parse_lab_value
 
 log = logging.getLogger(__name__)
 
@@ -233,7 +239,7 @@ def _normalize_candidate(raw: dict) -> dict:
 
     # Stamp assertion_time at ingestion time (when the claim enters the graph)
     if not enriched.get("assertion_time"):
-        enriched["assertion_time"] = datetime.now(timezone.utc).isoformat()
+        enriched["assertion_time"] = datetime.now(UTC).isoformat()
 
     # Quantitative lab enrichment (Stage 2 normalization)
     lab = parse_lab_value(enriched.get("text", ""))

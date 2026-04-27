@@ -14,13 +14,11 @@ import math
 import time
 import uuid
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Optional
-
+from enum import StrEnum
 
 # ── Emission Status (WP2 §7.2, Appendix I.1) ─────────────────────────────────
 
-class EmissionStatus(str, Enum):
+class EmissionStatus(StrEnum):
     """
     Status of a SemanticProjection after emission rule evaluation.
 
@@ -38,7 +36,7 @@ class EmissionStatus(str, Enum):
     STRUCTURAL_VIOLATION  = "structural_violation"
 
 
-class EmissionRule(str, Enum):
+class EmissionRule(StrEnum):
     """Which emission rule produced this result. WP2 §7.2."""
     E0 = "E0"   # Structural rejection
     E1 = "E1"   # Singular emission (argmax)
@@ -99,7 +97,7 @@ class SemanticUnit:
     @classmethod
     def new(cls, source_text: str, source_ref: str,
             offset_start: int = 0, offset_end: int = 0,
-            fragmentation_signal: str = "") -> "SemanticUnit":
+            fragmentation_signal: str = "") -> SemanticUnit:
         return cls(
             unit_id=str(uuid.uuid4()),
             source_text=source_text,
@@ -144,7 +142,7 @@ class SemanticProjection:
 
     h_norm:             float = 0.0
     status:             EmissionStatus = EmissionStatus.PROJECTED
-    emission_rule:      Optional[EmissionRule] = None
+    emission_rule:      EmissionRule | None = None
     p_illegal:          float = 0.0
 
     matrix_seal_hash:   str = ""
@@ -209,7 +207,7 @@ class ClaimCandidate:
         relation_score: float,
         rank: int = 1,
         emission_rule: EmissionRule = EmissionRule.E1,
-    ) -> "ClaimCandidate":
+    ) -> ClaimCandidate:
         return cls(
             candidate_id=str(uuid.uuid4()),
             projection_id=projection.projection_id,

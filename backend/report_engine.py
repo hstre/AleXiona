@@ -12,9 +12,10 @@ Supported report types:
   befundbericht — Befundbericht (Labor / Bildgebung / EKG)
 """
 from __future__ import annotations
-from lab_parser import lab_summary
-from reasoning_engine import rank_hypotheses, evaluate_all_guidelines
+
 from composite_scores import compute_all_scores
+from lab_parser import lab_summary
+from reasoning_engine import evaluate_all_guidelines, rank_hypotheses
 
 # ── Report type definitions ────────────────────────────────────────────────────
 

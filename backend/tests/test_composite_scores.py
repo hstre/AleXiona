@@ -1,11 +1,10 @@
 """Unit tests for composite_scores.py."""
-import pytest
 from composite_scores import (
-    compute_qsofa,
-    compute_wells_pe,
-    compute_grace_acs,
-    compute_relevant_scores,
     CompositeScore,
+    compute_grace_acs,
+    compute_qsofa,
+    compute_relevant_scores,
+    compute_wells_pe,
 )
 
 

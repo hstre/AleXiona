@@ -2,24 +2,21 @@
 
 All tests use in-memory claim dicts — no Neo4j or LLM required.
 """
-import pytest
 from reasoning_engine import (
-    score_hypothesis,
-    rank_hypotheses,
-    get_missing_evidence_for_differential,
-    explain_leading,
-    required_evidence_for,
-    get_confident_leading,
-    build_case_snapshot,
-    build_reasoning_context,
-    GUIDELINES,
-    _source_weight,
-    _conflict_penalty,
+    _DEFAULT_PENALTY,
     _NEGATION_PENALTY,
     _QUANTITATIVE_PENALTY,
-    _DEFAULT_PENALTY,
+    GUIDELINES,
+    _conflict_penalty,
+    _source_weight,
+    build_case_snapshot,
+    build_reasoning_context,
+    explain_leading,
+    get_confident_leading,
+    rank_hypotheses,
+    required_evidence_for,
+    score_hypothesis,
 )
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -174,7 +171,7 @@ class TestScoreHypothesisConflictPenalties:
 
     def test_score_clamped_to_zero_on_heavy_conflict(self):
         conflicts = [
-            make_claim(f"e{i}", f"No fever cough infection found",
+            make_claim(f"e{i}", "No fever cough infection found",
                        claim_type="finding")
             for i in range(5)
         ]
@@ -327,7 +324,7 @@ class TestGetConfidentLeading:
 
     def test_too_many_conflicts_returns_insufficient(self):
         conflicts = [
-            make_claim(f"e{i}", f"No fever cough infection found",
+            make_claim(f"e{i}", "No fever cough infection found",
                        claim_type="finding")
             for i in range(4)  # 4 conflicting claims >= MAX_CONFLICT_IDS (3)
         ]

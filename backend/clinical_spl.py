@@ -40,19 +40,16 @@ With 13 clinical relations these produce empirical breakpoints:
 from __future__ import annotations
 
 import uuid
-from typing import Optional
 
 from spl import (
-    SemanticUnit,
-    SemanticProjection,
     ClaimCandidate,
     EmissionEngine,
     EmissionRule,
     EmissionStatus,
+    SemanticProjection,
+    SemanticUnit,
     SPLThresholds,
-    compute_h_norm,
 )
-
 
 # ── Clinical relation space ℛ ─────────────────────────────────────────────────
 
@@ -197,7 +194,7 @@ class SPLEmissionResult:
         self,
         unit: SemanticUnit,
         projection: SemanticProjection,
-        candidate: Optional[ClaimCandidate],
+        candidate: ClaimCandidate | None,
     ):
         self.unit_id       = unit.unit_id
         self.projection_id = projection.projection_id
@@ -247,7 +244,7 @@ def run_spl_pipeline(
         return SPLEmissionResult(unit, projection, top)
     except Exception:
         # Fail-safe: never let SPL errors break the extraction pipeline
-        import traceback, logging
+        import logging
         logging.getLogger(__name__).warning(
             "SPL pipeline error for %r — falling back to uncertainty",
             claim_text[:60], exc_info=True,

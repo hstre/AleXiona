@@ -2,10 +2,10 @@
 
 All tests use in-memory claim dicts — no Neo4j or LLM required.
 """
-import pytest
-from conflict_engine import detect_conflicts
-from models import ConflictType, ConflictSeverity, _parse_offset_hours
+from datetime import UTC
 
+from conflict_engine import detect_conflicts
+from models import ConflictSeverity, ConflictType, _parse_offset_hours
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -593,8 +593,8 @@ class TestParseOffsetHours:
 
 class TestStaleLabEvidence:
     def _old_lab(self, id: str, text: str, hyp_text: str = "") -> tuple:
-        from datetime import datetime, timezone, timedelta
-        old_time = (datetime.now(timezone.utc) - timedelta(hours=72)).isoformat()
+        from datetime import datetime, timedelta
+        old_time = (datetime.now(UTC) - timedelta(hours=72)).isoformat()
         lab = {
             "id": id, "text": text, "claim_type": "lab",
             "status": "active", "evidence_support_score": 0.9,
@@ -614,8 +614,8 @@ class TestStaleLabEvidence:
         assert any(c.type == ConflictType.stale_lab_evidence for c in conflicts)
 
     def test_recent_lab_no_stale_conflict(self):
-        from datetime import datetime, timezone, timedelta
-        recent = (datetime.now(timezone.utc) - timedelta(hours=6)).isoformat()
+        from datetime import datetime, timedelta
+        recent = (datetime.now(UTC) - timedelta(hours=6)).isoformat()
         lab = {
             "id": "l1", "text": "CRP elevated sepsis",
             "claim_type": "lab", "status": "active",
@@ -657,8 +657,8 @@ class TestStaleLabEvidence:
 
 class TestTimeparadox:
     def test_assertion_before_event_triggers_paradox(self):
-        from datetime import datetime, timezone, timedelta
-        event     = datetime.now(timezone.utc)
+        from datetime import datetime, timedelta
+        event     = datetime.now(UTC)
         assertion = (event - timedelta(hours=2)).isoformat()  # asserted BEFORE event
         claim = {
             "id": "c1", "text": "Fever measured",
@@ -671,9 +671,9 @@ class TestTimeparadox:
         assert any(c.type == ConflictType.time_paradox for c in conflicts)
 
     def test_normal_order_no_paradox(self):
-        from datetime import datetime, timezone, timedelta
-        event     = (datetime.now(timezone.utc) - timedelta(hours=4)).isoformat()
-        assertion = datetime.now(timezone.utc).isoformat()  # asserted AFTER event
+        from datetime import datetime, timedelta
+        event     = (datetime.now(UTC) - timedelta(hours=4)).isoformat()
+        assertion = datetime.now(UTC).isoformat()  # asserted AFTER event
         claim = {
             "id": "c1", "text": "Fever measured",
             "claim_type": "finding", "status": "active",
@@ -685,20 +685,20 @@ class TestTimeparadox:
         assert not any(c.type == ConflictType.time_paradox for c in conflicts)
 
     def test_missing_assertion_time_no_paradox(self):
-        from datetime import datetime, timezone
+        from datetime import datetime
         claim = {
             "id": "c1", "text": "Finding noted",
             "claim_type": "finding", "status": "active",
             "evidence_support_score": 0.8, "derived_from": [], "time_offset": None,
-            "event_time": datetime.now(timezone.utc).isoformat(),
+            "event_time": datetime.now(UTC).isoformat(),
             # no assertion_time
         }
         conflicts = detect_conflicts([claim])
         assert not any(c.type == ConflictType.time_paradox for c in conflicts)
 
     def test_paradox_is_error_severity(self):
-        from datetime import datetime, timezone, timedelta
-        event     = datetime.now(timezone.utc)
+        from datetime import datetime, timedelta
+        event     = datetime.now(UTC)
         assertion = (event - timedelta(hours=1)).isoformat()
         claim = {
             "id": "c1", "text": "Some finding",

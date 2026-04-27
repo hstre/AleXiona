@@ -1,9 +1,11 @@
-import os
 import json
-import uuid
+import os
 import re
-from datetime import datetime, timezone
+import uuid
+from datetime import UTC, datetime
+
 from neo4j import GraphDatabase
+
 from models import Claim, GraphData
 
 
@@ -73,7 +75,7 @@ class Neo4jClient:
             for claim in claims:
                 cid = str(uuid.uuid4())
                 claim_ids.append(cid)
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
 
                 # Resolve optional datetime fields to ISO strings
                 event_time_iso = (
@@ -236,7 +238,6 @@ class Neo4jClient:
 
     def store_audit_event(self, event: "AuditEvent") -> None:  # type: ignore[name-defined]
         """Persist an AuditEvent node and link it to its Claim (if it exists)."""
-        from models import AuditEvent as _AuditEvent  # avoid circular at module level
         with self.driver.session() as s:
             s.run(
                 """
@@ -536,7 +537,7 @@ class Neo4jClient:
         return {
             "version":     "1",
             "session_id":  session_id,
-            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "exported_at": datetime.now(UTC).isoformat(),
             "claims":      claims,
         }
 
@@ -545,7 +546,7 @@ class Neo4jClient:
         Old IDs are remapped to new UUIDs; derived_from edges are re-created.
         Returns a summary with old→new id mapping.
         """
-        from models import Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend, Relation
+        from models import Claim, ClaimStatus, ClaimTrend, ClaimType, Relation, SourceType
 
         id_map: dict[str, str] = {}
 

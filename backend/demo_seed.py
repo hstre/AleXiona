@@ -6,10 +6,6 @@ All seeding now goes through neo4j_client.store_claims() so every Claim
 receives full provenance fields (evidence_tier, uncertainty_flag, etc.)
 and an AuditEvent is generated for each seeded claim.
 """
-import uuid
-from datetime import datetime, timezone
-import os
-import json
 
 # ── evidence_tier derivation (mirrors intake layer logic) ────────────────────
 
@@ -743,9 +739,9 @@ def seed_demo(session_id: str, lang: str = "en", scenario: str = "cap"):
     Uses neo4j_client.store_claims() so all provenance fields are persisted
     and an AuditEvent (actor=system) is generated for every seeded Claim.
     """
-    from neo4j_client import get_db
     from audit_log import log_created_batch
     from models import AuditActor
+    from neo4j_client import get_db
 
     db = get_db()
 

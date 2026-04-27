@@ -21,21 +21,21 @@ Architecture:
 
 from __future__ import annotations
 
+import contextlib
 import re
 import uuid
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
+from lab_parser import LAB_THRESHOLDS, parse_lab_value
 from models import (
     ClaimCandidate,
-    ExtractedObservation,
     EvidenceTier,
+    ExtractedObservation,
     PatientGeneratedMeasurement,
     PatientObservation,
     TrendPoint,
     TrendSignal,
 )
-from lab_parser import LAB_THRESHOLDS, qualitative_for_token, parse_lab_value
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -97,10 +97,10 @@ def ingest_patient_observation(obs: PatientObservation) -> ClaimCandidate:
     # Attempt numeric lab extraction
     lab = parse_lab_value(obs.raw_text)
     candidate_type = "finding"
-    normalized_token: Optional[str] = None
-    parsed_value: Optional[float] = None
-    parsed_unit: Optional[str] = None
-    qualitative: Optional[str] = None
+    normalized_token: str | None = None
+    parsed_value: float | None = None
+    parsed_unit: str | None = None
+    qualitative: str | None = None
 
     if lab:
         candidate_type = "lab"
@@ -120,7 +120,7 @@ def ingest_patient_observation(obs: PatientObservation) -> ClaimCandidate:
         source_ref=f"patient_observation:{obs.id}",
     )
 
-    event_time_iso: Optional[str] = None
+    event_time_iso: str | None = None
     if obs.event_time:
         event_time_iso = obs.event_time.isoformat()
 
@@ -197,7 +197,7 @@ def ingest_measurement(pgm: PatientGeneratedMeasurement) -> ClaimCandidate:
         source_ref=f"measurement:{pgm.id}",
     )
 
-    event_time_iso: Optional[str] = None
+    event_time_iso: str | None = None
     if pgm.event_time:
         event_time_iso = pgm.event_time.isoformat()
 
@@ -231,7 +231,7 @@ def _linear_regression_slope(points: list[TrendPoint]) -> float:
     x_mean = sum(xs) / n
     y_mean = sum(ys) / n
 
-    numerator   = sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, ys))
+    numerator   = sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, ys, strict=False))
     denominator = sum((x - x_mean) ** 2 for x in xs)
 
     if abs(denominator) < 1e-9:
@@ -241,7 +241,7 @@ def _linear_regression_slope(points: list[TrendPoint]) -> float:
 
 def extract_trend_signal(
     measurements: list[PatientGeneratedMeasurement],
-) -> Optional[TrendSignal]:
+) -> TrendSignal | None:
     """Derive a TrendSignal from a time-ordered list of PatientGeneratedMeasurements.
 
     Requirements:
@@ -309,7 +309,7 @@ def extract_trend_signal(
             direction = "volatile"
 
     # Clinical flag
-    clinical_flag: Optional[str] = None
+    clinical_flag: str | None = None
     for flag_name, flag_dir, threshold in _CLINICAL_FLAGS.get(token, []):
         if flag_dir == "rising" and direction == "rising" and end_value >= threshold:
             clinical_flag = flag_name
@@ -359,7 +359,7 @@ def normalize_to_candidates(
         candidates.append(ingest_patient_observation(obs))
 
     # Ingest measurements + attempt trend detection
-    for token, pgms in measurements_by_token.items():
+    for _token, pgms in measurements_by_token.items():
         for pgm in pgms:
             c = ingest_measurement(pgm)
             candidates.append(c)
@@ -377,16 +377,15 @@ def candidate_to_claim(
     source_type: str,
     evidence_tier: str = EvidenceTier.patient_generated,
     patient_data_ref: str = "",
-) -> "Claim":
+) -> Claim:
     """Convert a validated ClaimCandidate into a Claim.
 
     Used by the measurements intake path (no LLM needed for structured data).
     The evidence_tier and source_type are always enforced from the API boundary.
     """
-    from datetime import timezone
-    from models import Claim, ClaimType, ClaimStatus, ClaimTrend  # local import avoids circular
+    from models import Claim, ClaimStatus, ClaimTrend, ClaimType  # local import avoids circular
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     ct_map = {
         "lab":     ClaimType.lab,
@@ -399,10 +398,8 @@ def candidate_to_claim(
 
     event_time = None
     if candidate.event_time_iso:
-        try:
+        with contextlib.suppress(ValueError):
             event_time = datetime.fromisoformat(candidate.event_time_iso)
-        except ValueError:
-            pass
 
     return Claim(
         text=candidate.candidate_text,

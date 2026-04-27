@@ -13,19 +13,17 @@ Roles (German aliases accepted):
   chefarzt  / chief       — executive summary, risks, decisions pending
 """
 from __future__ import annotations
-import re
-from typing import Optional
 
-from lab_parser import parse_lab_value, lab_summary, LAB_THRESHOLDS
-from reasoning_engine import (
-    rank_hypotheses,
-    explain_hypothesis_scores,
-    evaluate_all_guidelines,
-    get_confident_leading,
-    _TREND_FLAG_RE,
-    _ACTIVE_STATUSES,
-)
 from composite_scores import compute_all_scores
+from lab_parser import LAB_THRESHOLDS, lab_summary, parse_lab_value
+from reasoning_engine import (
+    _ACTIVE_STATUSES,
+    _TREND_FLAG_RE,
+    evaluate_all_guidelines,
+    explain_hypothesis_scores,
+    get_confident_leading,
+    rank_hypotheses,
+)
 
 # ── Role alias map ─────────────────────────────────────────────────────────────
 ROLE_ALIASES: dict[str, str] = {

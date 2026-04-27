@@ -1,12 +1,12 @@
 """Unit tests for lab_parser.py."""
 import pytest
+
 from lab_parser import (
+    LAB_THRESHOLDS,
+    lab_summary,
     parse_lab_value,
     parse_lab_values,
     qualitative_for_token,
-    lab_summary,
-    LAB_THRESHOLDS,
-    LabResult,
 )
 
 

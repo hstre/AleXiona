@@ -1,13 +1,27 @@
 """Unit tests for Pydantic models and enums in models.py."""
 import pytest
 from pydantic import ValidationError
-from models import (
-    Claim, ClaimType, SourceType, ClaimStatus, ClaimTrend,
-    Relation, MissingEvidence, Alternative, CounterfactualShift,
-    CounterfactualResult, ReasoningResult, Conflict, ConflictType, ConflictSeverity,
-    GraphData, ChatMessage, ChatRequest, ChatResponse,
-)
 
+from models import (
+    Alternative,
+    ChatMessage,
+    ChatRequest,
+    ChatResponse,
+    Claim,
+    ClaimStatus,
+    ClaimTrend,
+    ClaimType,
+    Conflict,
+    ConflictSeverity,
+    ConflictType,
+    CounterfactualResult,
+    CounterfactualShift,
+    GraphData,
+    MissingEvidence,
+    ReasoningResult,
+    Relation,
+    SourceType,
+)
 
 # ── Enum completeness ─────────────────────────────────────────────────────────
 

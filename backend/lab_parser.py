@@ -11,8 +11,6 @@ Typical usage in reasoning_engine:
 """
 import re
 from dataclasses import dataclass
-from typing import Optional
-
 
 # ── Reference thresholds ──────────────────────────────────────────────────────
 # All values are in the listed canonical unit.
@@ -141,7 +139,7 @@ def _normalize_number(s: str) -> float:
     return float(s.replace(",", "."))
 
 
-def _match_token(text: str) -> Optional[tuple[str, dict]]:
+def _match_token(text: str) -> tuple[str, dict] | None:
     """Find the first LAB_THRESHOLDS entry whose alias appears in *text*."""
     t = text.lower()
     for token, spec in LAB_THRESHOLDS.items():
@@ -151,7 +149,7 @@ def _match_token(text: str) -> Optional[tuple[str, dict]]:
     return None
 
 
-def parse_lab_value(text: str) -> Optional[LabResult]:
+def parse_lab_value(text: str) -> LabResult | None:
     """Parse a single lab claim text and return a LabResult, or None if no match.
 
     Examples:
@@ -209,7 +207,7 @@ def parse_lab_values(texts: list[str]) -> list[LabResult]:
     return results
 
 
-def qualitative_for_token(token: str, all_claims: list[dict]) -> Optional[str]:
+def qualitative_for_token(token: str, all_claims: list[dict]) -> str | None:
     """Return the most recent qualitative assessment ("high"/"low"/"normal") for
     a given lab token across all active claims, or None if not found.
 

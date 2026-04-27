@@ -1,6 +1,7 @@
 from fastapi import APIRouter
-from neo4j_client import get_db
+
 from api_errors import internal_error
+from neo4j_client import get_db
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 

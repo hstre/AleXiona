@@ -4,7 +4,15 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
-ignore = ["E501"]  # line length handled above
+ignore = [
+  "E501",   # line length handled above
+  "B904",   # raise-without-from-inside-except — existing codebase pattern
+  "E741",   # ambiguous variable name — l used in list comprehensions
+  "E402",   # module-level import not at top — load_dotenv() must run first
+  "SIM102", # collapsible-if — readability preference
+  "SIM105", # suppressible-exception — contextlib.suppress style preference
+  "F821",   # undefined-name — false positives from string annotations / TYPE_CHECKING
+]
 
 [tool.mypy]
 python_version = "3.11"

@@ -6,12 +6,9 @@ Tests cover:
 - Neo4jClient.update_claim() field mapping
 - link_possible_related() key-term overlap logic
 """
-import json
-from unittest.mock import MagicMock, patch, call
-import pytest
+from unittest.mock import MagicMock, patch
 
 # ── _key_terms ────────────────────────────────────────────────────────────────
-
 from neo4j_client import _key_terms
 
 

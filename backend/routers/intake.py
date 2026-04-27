@@ -22,29 +22,30 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC
 
 from fastapi import APIRouter, HTTPException
 
 from api_errors import internal_error
-from llm_client import extract_claims_conversation, extract_claims_clinical
+from audit_log import log_created_batch
+from llm_client import extract_claims_clinical, extract_claims_conversation
 from models import (
+    AuditActor,
+    Claim,
+    IntakeClinicalRequest,
+    IntakeClinicalResponse,
     IntakeConversationRequest,
     IntakeConversationResponse,
     IntakeMeasurementsRequest,
     IntakeMeasurementsResponse,
-    IntakeClinicalRequest,
-    IntakeClinicalResponse,
-    Claim,
     TrendSignal,
 )
 from neo4j_client import get_db
-from audit_log import log_created_batch
-from models import AuditActor
 from patient_data import (
+    candidate_to_claim,
+    extract_trend_signal,
     ingest_measurement,
     ingest_patient_observation,
-    extract_trend_signal,
-    candidate_to_claim,
 )
 
 log = logging.getLogger(__name__)
@@ -152,8 +153,9 @@ async def intake_measurements(request: IntakeMeasurementsRequest):
                 f"{abs(trend.magnitude_pct):.1f}% over {trend.window_hours:.1f}h"
                 + (f" [{trend.clinical_flag}]" if trend.clinical_flag else "")
             )
-            from models import ClaimType, ClaimStatus, ClaimTrend
-            from datetime import datetime, timezone
+            from datetime import datetime
+
+            from models import ClaimStatus, ClaimTrend, ClaimType
             trend_claim = Claim(
                 text=trend_text,
                 entities=[trend.token],
@@ -170,7 +172,7 @@ async def intake_measurements(request: IntakeMeasurementsRequest):
                 ),
                 normalized_token=trend.token,
                 uncertainty_flag=(trend.direction == "volatile"),
-                assertion_time=datetime.now(timezone.utc),
+                assertion_time=datetime.now(UTC),
             )
             claims.append(trend_claim)
 

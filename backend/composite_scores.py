@@ -15,7 +15,9 @@ Each scorer returns a CompositeScore containing:
                    source_type="guideline", claim_type="finding" claim
 """
 from __future__ import annotations
+
 from dataclasses import dataclass, field
+
 from lab_parser import qualitative_for_token
 
 

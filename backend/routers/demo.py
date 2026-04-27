@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Query
-from demo_seed import seed_demo
+
 from api_errors import internal_error
+from demo_seed import seed_demo
 
 router = APIRouter(prefix="/api/demo", tags=["demo"])
 

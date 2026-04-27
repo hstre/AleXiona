@@ -1,28 +1,24 @@
 """Unit tests for patient_data.py — Patient Data Layer."""
+from datetime import UTC, datetime, timedelta
+
 import pytest
-from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
 
 from models import (
-    PatientObservation,
     PatientGeneratedMeasurement,
-    TrendSignal,
+    PatientObservation,
 )
 from patient_data import (
-    ingest_patient_observation,
-    ingest_measurement,
-    extract_trend_signal,
-    normalize_to_candidates,
     _safeguard_candidate,
-    _MIN_TREND_POINTS,
-    _TREND_MAGNITUDE_THRESHOLD_PCT,
+    extract_trend_signal,
+    ingest_measurement,
+    ingest_patient_observation,
+    normalize_to_candidates,
 )
-
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _obs(
@@ -87,7 +83,6 @@ class TestSafeguardValidator:
         obs = _obs("Patient reports chest pain")
         candidate = ingest_patient_observation(obs)
         # Manually set type to diagnosis to test safeguard
-        from models import ClaimCandidate
         diag_candidate = candidate.model_copy(update={"candidate_type": "diagnosis"})
         result = _safeguard_candidate(diag_candidate)
         assert result.candidate_type == "finding"
@@ -148,7 +143,7 @@ class TestIngestPatientObservation:
         assert "[uncertain]" in candidate.candidate_text
 
     def test_event_time_propagated(self):
-        t = datetime(2024, 1, 15, 10, 30, tzinfo=timezone.utc)
+        t = datetime(2024, 1, 15, 10, 30, tzinfo=UTC)
         obs = _obs("Shortness of breath", event_time=t)
         candidate = ingest_patient_observation(obs)
         assert candidate.event_time_iso is not None
@@ -220,7 +215,7 @@ class TestIngestMeasurement:
         assert candidate.parsed_value == pytest.approx(108.0)
 
     def test_event_time_iso_set(self):
-        t = datetime(2024, 3, 1, 8, 0, tzinfo=timezone.utc)
+        t = datetime(2024, 3, 1, 8, 0, tzinfo=UTC)
         pgm = _pgm("heart_rate", 100.0, "bpm", event_time=t)
         candidate = ingest_measurement(pgm)
         assert candidate.event_time_iso is not None
@@ -417,33 +412,33 @@ class TestNormalizeToCandidates:
 
 class TestEvidenceTierDerivation:
     def test_source_to_evidence_tier_patient_report(self):
-        from models import source_to_evidence_tier, EvidenceTier
+        from models import EvidenceTier, source_to_evidence_tier
         assert source_to_evidence_tier("patient_report") == EvidenceTier.patient_generated
 
     def test_source_to_evidence_tier_wearable(self):
-        from models import source_to_evidence_tier, EvidenceTier
+        from models import EvidenceTier, source_to_evidence_tier
         assert source_to_evidence_tier("wearable") == EvidenceTier.patient_generated
 
     def test_source_to_evidence_tier_home_device(self):
-        from models import source_to_evidence_tier, EvidenceTier
+        from models import EvidenceTier, source_to_evidence_tier
         assert source_to_evidence_tier("home_device") == EvidenceTier.patient_generated
 
     def test_source_to_evidence_tier_caregiver(self):
-        from models import source_to_evidence_tier, EvidenceTier
+        from models import EvidenceTier, source_to_evidence_tier
         assert source_to_evidence_tier("caregiver_report") == EvidenceTier.patient_generated
 
     def test_source_to_evidence_tier_clinician(self):
-        from models import source_to_evidence_tier, EvidenceTier
+        from models import EvidenceTier, source_to_evidence_tier
         assert source_to_evidence_tier("clinician") == EvidenceTier.clinician_observed
 
     def test_source_to_evidence_tier_lab_system(self):
-        from models import source_to_evidence_tier, EvidenceTier
+        from models import EvidenceTier, source_to_evidence_tier
         assert source_to_evidence_tier("lab_system") == EvidenceTier.lab_confirmed
 
     def test_source_to_evidence_tier_guideline(self):
-        from models import source_to_evidence_tier, EvidenceTier
+        from models import EvidenceTier, source_to_evidence_tier
         assert source_to_evidence_tier("guideline") == EvidenceTier.guideline_structured
 
     def test_source_to_evidence_tier_unknown_defaults_clinician(self):
-        from models import source_to_evidence_tier, EvidenceTier
+        from models import EvidenceTier, source_to_evidence_tier
         assert source_to_evidence_tier("unknown_source") == EvidenceTier.clinician_observed
