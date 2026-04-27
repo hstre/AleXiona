@@ -160,7 +160,9 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
 
   useEffect(() => {
     if (typeof window === 'undefined' || !containerRef.current) return
+    let cancelled = false
     import('cytoscape').then(({ default: cytoscape }) => {
+      if (cancelled || !containerRef.current) return
       if (cyRef.current) cyRef.current.destroy()
 
       const elements = [
@@ -255,8 +257,11 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
         }
       })
       cyRef.current = cy
-    })
-    return () => { if (cyRef.current) { cyRef.current.destroy(); cyRef.current = null } }
+    }).catch(() => { /* ignore errors from cancelled/unmounted init */ })
+    return () => {
+      cancelled = true
+      if (cyRef.current) { cyRef.current.destroy(); cyRef.current = null }
+    }
   }, [data, conflictNodeIds, layout])
 
   // Fit graph when parent requests it (keyboard shortcut 'f')

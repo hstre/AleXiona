@@ -17,6 +17,7 @@ import CounterfactualPanel from '@/components/CounterfactualPanel'
 import HandoverPanel     from '@/components/HandoverPanel'
 import ReportPanel         from '@/components/ReportPanel'
 import OrchestratorPanel  from '@/components/OrchestratorPanel'
+import ClientErrorBoundary from '@/components/ClientErrorBoundary'
 import { getGraph, seedDemo, exportSession, explainConflict } from '@/lib/api'
 import type { GraphData, Claim, ClaimType, ReasoningResult, Conflict, GraphNode, DemoScenario } from '@/lib/api'
 import { SESSION_KEY, shortId, confPct, essLabel, CONFLICT_SEVERITY_META, CLAIM_TYPE_META } from '@/lib/utils'
@@ -902,15 +903,17 @@ export default function Home() {
           {/* Graph canvas */}
           <div className={`flex-1 overflow-hidden ${centerView === 'graph' ? 'flex' : 'hidden'} flex-col`}>
             <div className="flex-1 overflow-hidden">
-              <GraphView
-                data={filteredGraph}
-                onRefresh={refreshGraph}
-                conflictNodeIds={conflictNodeIds}
-                sessionId={sessionId}
-                focusClaimIds={focusClaimIds}
-                layout={graphLayout}
-                fitTrigger={fitTrigger}
-              />
+              <ClientErrorBoundary label="Graph">
+                <GraphView
+                  data={filteredGraph}
+                  onRefresh={refreshGraph}
+                  conflictNodeIds={conflictNodeIds}
+                  sessionId={sessionId}
+                  focusClaimIds={focusClaimIds}
+                  layout={graphLayout}
+                  fitTrigger={fitTrigger}
+                />
+              </ClientErrorBoundary>
             </div>
             {/* Time slider — inside graph mode only */}
             {maxTimeOffset > 0 && (
@@ -982,7 +985,9 @@ export default function Home() {
           {/* Clinical Orchestrator — single unified clinical state */}
           {centerView === 'orchestrator' && sessionId && (
             <div className="flex-1 overflow-hidden">
-              <OrchestratorPanel sessionId={sessionId} />
+              <ClientErrorBoundary label="Orchestrator">
+                <OrchestratorPanel sessionId={sessionId} />
+              </ClientErrorBoundary>
             </div>
           )}
         </div>
