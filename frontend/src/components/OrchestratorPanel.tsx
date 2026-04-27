@@ -1,8 +1,9 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { checkHealth } from '@/lib/api'
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '')
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -78,40 +79,67 @@ export default function OrchestratorPanel({ sessionId }: Props) {
   const [state,   setState]   = useState<OrchestratorState | null>(null)
   const [loading, setLoading] = useState(false)
   const [error,   setError]   = useState<string | null>(null)
+  const [waking,  setWaking]  = useState(false)
+  const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
+    setWaking(false)
     try {
-      const res = await fetch(`${API_URL}/api/graph/${sessionId}/orchestrate`)
+      const ctrl = new AbortController()
+      const tid  = setTimeout(() => ctrl.abort(), 25_000)
+      let res: Response
+      try {
+        res = await fetch(`${API_URL}/api/graph/${sessionId}/orchestrate`, { signal: ctrl.signal })
+      } finally {
+        clearTimeout(tid)
+      }
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
         throw new Error(data?.detail?.message ?? data?.detail ?? `Fehler ${res.status}`)
       }
       setState(await res.json())
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e))
+      const msg = e instanceof Error ? e.message : String(e)
+      const isTimeout = msg.includes('AbortError') || (e instanceof DOMException && e.name === 'AbortError')
+      if (isTimeout || msg.includes('fetch') || msg.includes('network')) {
+        setWaking(true)
+        retryRef.current = setTimeout(() => load(), 10_000)
+      } else {
+        setError(msg)
+      }
     } finally {
       setLoading(false)
     }
   }, [sessionId])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    load()
+    return () => { if (retryRef.current) clearTimeout(retryRef.current) }
+  }, [load])
 
   // ── Empty / error states ──────────────────────────────────────────────────
 
-  if (loading) return (
+  if (loading || waking) return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center',
       justifyContent: 'center', height: '100%', gap: 12, color: 'var(--text-muted)' }}>
       <div style={{ fontSize: 32 }}>✦</div>
-      <div style={{ fontSize: 14 }}>Orchestrator läuft …</div>
+      <div style={{ fontSize: 14 }}>{waking ? 'Backend startet … (bis 60 s)' : 'Orchestrator läuft …'}</div>
+      {waking && <div style={{ fontSize: 11, maxWidth: 220, textAlign: 'center', opacity: 0.7 }}>
+        Render Free Tier schläft ein. Wird automatisch neu versucht.
+      </div>}
     </div>
   )
 
   if (error) return (
     <div style={{ padding: 24 }}>
       <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8,
-        padding: '12px 16px', color: '#991b1b', fontSize: 13 }}>{error}</div>
+        padding: '12px 16px', color: '#991b1b', fontSize: 13, marginBottom: 8 }}>{error}</div>
+      <button onClick={load} style={{ fontSize: 12, padding: '6px 12px', borderRadius: 6,
+        background: 'var(--brand)', color: 'white', border: 'none', cursor: 'pointer' }}>
+        Erneut versuchen
+      </button>
     </div>
   )
 
