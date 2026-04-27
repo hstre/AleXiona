@@ -313,8 +313,8 @@ export default function DataPanel({
           const meta      = getTypeMeta(claim.claim_type)
           const level     = essLabel(claim.evidence_support_score)
           const essMeta   = ESS_LABEL_META[level]
-          const trend     = TREND_META[claim.trend ?? 'unknown']
-          const status    = STATUS_META[claim.status ?? 'active']
+          const trend     = TREND_META[claim.trend  || 'unknown'] ?? TREND_META.unknown
+          const status    = STATUS_META[claim.status || 'active']  ?? STATUS_META.active
           const dimmed    = claim.status === 'superseded' || claim.status === 'resolved'
           const isSelected = claim.claimId ? selected.has(claim.claimId) : false
 
