@@ -78,7 +78,7 @@ export default function Home() {
   }, [])
 
   // ── Graph ─────────────────────────────────────────────────────────────────
-  const refreshGraph = useCallback(async (retryOnFail = false) => {
+  const refreshGraph = useCallback(async () => {
     if (!sessionId) return
     setGraphLoading(true)
     try {
@@ -86,15 +86,17 @@ export default function Home() {
       setGraphData(data)
     } catch (err) {
       console.error(err)
-      if (retryOnFail) {
-        setTimeout(() => refreshGraph(true), 10_000)
-      }
     } finally {
       setGraphLoading(false)
     }
   }, [sessionId])
 
-  useEffect(() => { if (sessionId) refreshGraph(true) }, [sessionId, refreshGraph])
+  useEffect(() => { if (sessionId) refreshGraph() }, [sessionId, refreshGraph])
+
+  // Auto-reload graph when backend comes online (after cold start)
+  useEffect(() => {
+    if (backendOnline && sessionId) refreshGraph()
+  }, [backendOnline, sessionId, refreshGraph])
 
   // ── Debounce search query ─────────────────────────────────────────────────
   useEffect(() => {
