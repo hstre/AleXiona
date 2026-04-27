@@ -104,7 +104,7 @@ export default function Home() {
     graphData.nodes
       .filter(n => n.type === 'Claim')
       .map(n => ({
-        text:                   n.fullText || n.label,
+        text:                   n.fullText || n.label || '',
         evidence_support_score: n.evidence_support_score ?? 0.8,
         claim_type:             n.claim_type  ?? 'finding',
         source_type:            n.source_type ?? 'llm',
@@ -146,7 +146,7 @@ export default function Home() {
         const q = debouncedSearch.toLowerCase()
         const match =
           n.fullText?.toLowerCase().includes(q) ||
-          n.label.toLowerCase().includes(q) ||
+          (n.label ?? '').toLowerCase().includes(q) ||
           n.claim_type?.toLowerCase().includes(q) ||
           n.status?.toLowerCase().includes(q) ||
           n.source_ref?.toLowerCase().includes(q) ||
@@ -791,15 +791,17 @@ export default function Home() {
         <div className={`border-r shrink-0 md:flex flex-col overflow-hidden
             ${activePanel === 'data' ? 'flex flex-1' : 'hidden'} md:w-72`}
           style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-          <DataPanel
-            key={sessionId}
-            sessionId={sessionId}
-            onNewClaims={refreshGraph}
-            onReasoning={r => setReasoning(r)}
-            onConflicts={c => { setConflicts(c); setShowConflictBanner(true) }}
-            allClaims={allClaims}
-            searchQuery={debouncedSearch}
-          />
+          <ClientErrorBoundary label="DataPanel">
+            <DataPanel
+              key={sessionId}
+              sessionId={sessionId}
+              onNewClaims={refreshGraph}
+              onReasoning={r => setReasoning(r)}
+              onConflicts={c => { setConflicts(c); setShowConflictBanner(true) }}
+              allClaims={allClaims}
+              searchQuery={debouncedSearch}
+            />
+          </ClientErrorBoundary>
         </div>
 
         {/* CENTER: Graph */}
@@ -1013,13 +1015,15 @@ export default function Home() {
         <div className={`border-l shrink-0 md:flex flex-col overflow-hidden
             ${activePanel === 'review' ? 'flex flex-1' : 'hidden'} md:w-72`}
           style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-          <ReviewPanel
-            reasoning={reasoning}
-            loading={false}
-            sessionId={sessionId}
-            onGenerateReport={handleGenerateReport}
-            onClear={() => setReasoning(null)}
-          />
+          <ClientErrorBoundary label="ReviewPanel">
+            <ReviewPanel
+              reasoning={reasoning}
+              loading={false}
+              sessionId={sessionId}
+              onGenerateReport={handleGenerateReport}
+              onClear={() => setReasoning(null)}
+            />
+          </ClientErrorBoundary>
         </div>
 
       </div>
