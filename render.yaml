@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: alexiona-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: NEO4J_URI
+        sync: false          # set in Render dashboard → paste Aura connection string
+      - key: NEO4J_USER
+        sync: false
+      - key: NEO4J_PASSWORD
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false          # optional — only needed if not using DeepSeek

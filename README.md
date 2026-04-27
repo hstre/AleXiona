@@ -352,13 +352,13 @@ score(H) = Σ(ess_i × overlap_weight_i × source_weight_i × temporal_weight_i)
 
 ### Prerequisites
 - Docker + Docker Compose
-- OpenAI API key
+- DeepSeek or OpenAI API key
 
 ### Run
 
 ```bash
 cp .env.example .env
-# Add your OPENAI_API_KEY to .env
+# Set DEEPSEEK_API_KEY (or OPENAI_API_KEY) in .env
 
 docker compose up
 ```
@@ -373,15 +373,61 @@ docker compose up
 ```bash
 cd backend
 pip install -r requirements.txt
-NEO4J_URI=bolt://localhost:7687 OPENAI_API_KEY=sk-... uvicorn main:app --reload
+NEO4J_URI=bolt://localhost:7687 DEEPSEEK_API_KEY=sk-... uvicorn main:app --reload
 ```
 
 **Frontend:**
 ```bash
 cd frontend
 npm install
-npm run dev
+NEXT_PUBLIC_API_URL=http://localhost:8000 npm run dev
 ```
+
+---
+
+## Deploy (kostenlos, öffentlich erreichbar)
+
+Stack: **Neo4j Aura Free** + **Render** (Backend) + **Vercel** (Frontend)
+
+### Schritt 1 — GitHub
+
+1. GitHub-Account erstellen: https://github.com/signup
+2. Neues Repo anlegen (z. B. `alexiona`)
+3. Code pushen:
+   ```bash
+   git remote set-url origin https://github.com/DEIN_USER/alexiona.git
+   git push -u origin claude/alexiona-demo-v0-Wq3o1
+   ```
+
+### Schritt 2 — Datenbank (Neo4j Aura Free)
+
+1. https://console.neo4j.io → **Free Instance** erstellen
+2. Zugangsdaten notieren: `URI`, `Username`, `Password`
+
+### Schritt 3 — Backend (Render)
+
+1. https://render.com → mit GitHub anmelden
+2. **New → Blueprint** → Repo auswählen → `render.yaml` wird automatisch erkannt
+3. Umgebungsvariablen setzen:
+   ```
+   NEO4J_URI       = neo4j+s://xxxx.databases.neo4j.io
+   NEO4J_USER      = neo4j
+   NEO4J_PASSWORD  = (aus Aura-Dashboard)
+   DEEPSEEK_API_KEY = sk-...
+   ```
+4. **Apply** → Backend läuft auf `https://alexiona-backend.onrender.com`
+
+### Schritt 4 — Frontend (Vercel)
+
+1. https://vercel.com → mit GitHub anmelden
+2. **New Project** → Repo auswählen → **Root Directory: `frontend`**
+3. Umgebungsvariable setzen:
+   ```
+   NEXT_PUBLIC_API_URL = https://alexiona-backend.onrender.com
+   ```
+4. **Deploy** → Frontend läuft auf `https://alexiona.vercel.app`
+
+> **Hinweis:** Render schläft nach 15 min Inaktivität (Free Tier). Der erste Request nach einer Pause dauert ~30 s.
 
 ---
 
@@ -391,6 +437,6 @@ npm run dev
 |---|---|
 | Frontend | Next.js 14, React 18, Cytoscape.js, Tailwind CSS |
 | Backend | Python 3.11, FastAPI, Pydantic v2 |
-| LLM | OpenAI GPT-4o (structured JSON output) |
-| Graph DB | Neo4j 5 (Docker) |
+| LLM | DeepSeek Chat / OpenAI GPT-4o (OpenAI-compatible API) |
+| Graph DB | Neo4j 5 (Docker lokal / Aura Free cloud) |
 | PDF export | jsPDF |

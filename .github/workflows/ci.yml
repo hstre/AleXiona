@@ -4,18 +4,15 @@ on:
   push:
     branches: ["**"]
   pull_request:
-    branches: ["**"]
 
 jobs:
   backend:
-    name: Backend tests
+    name: Backend
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
@@ -27,18 +24,16 @@ jobs:
       - name: Lint (ruff)
         run: cd backend && python -m ruff check .
 
-      - name: Run tests
+      - name: Tests
         run: cd backend && python -m pytest --tb=short -q
 
   frontend:
-    name: Frontend tests + typecheck
+    name: Frontend
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: npm
@@ -50,5 +45,11 @@ jobs:
       - name: Type check
         run: cd frontend && npx tsc --noEmit
 
-      - name: Run tests
+      - name: Tests
         run: cd frontend && npm run test
+
+      - name: Build
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+        run: npm run build
