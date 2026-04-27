@@ -57,6 +57,20 @@ export default function Home() {
 
   // ── Session ───────────────────────────────────────────────────────────────
   useEffect(() => {
+    // Global error handler — captures uncaught errors (incl. from useEffects)
+    // that React error boundaries can't catch, saves full stack to localStorage
+    const onError = (event: ErrorEvent) => {
+      try {
+        localStorage.setItem('_alexiona_last_error', JSON.stringify({
+          message: event.message ?? 'unknown',
+          stack:   event.error?.stack?.slice(0, 1200) ?? '',
+          source:  `${event.filename ?? ''}:${event.lineno ?? 0}:${event.colno ?? 0}`,
+          time:    new Date().toISOString(),
+        }))
+      } catch {}
+    }
+    window.addEventListener('error', onError)
+
     const stored = localStorage.getItem(SESSION_KEY)
     const id     = stored || uuidv4()
     if (!stored) localStorage.setItem(SESSION_KEY, id)
@@ -64,9 +78,14 @@ export default function Home() {
     // Show diagnostic info if a previous crash was recorded
     const crash = localStorage.getItem('_alexiona_last_error')
     if (crash) {
-      try { setLastCrashInfo(JSON.parse(crash).message ?? crash) } catch { setLastCrashInfo(crash) }
+      try {
+        const parsed = JSON.parse(crash)
+        const detail = [parsed.message, parsed.source].filter(Boolean).join(' @ ')
+        setLastCrashInfo(detail ?? crash)
+      } catch { setLastCrashInfo(crash) }
       localStorage.removeItem('_alexiona_last_error')
     }
+    return () => window.removeEventListener('error', onError)
   }, [])
 
   // ── Graph ─────────────────────────────────────────────────────────────────
