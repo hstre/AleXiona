@@ -24,18 +24,12 @@ describe('buildLayout', () => {
 
 
   // ── Animation ───────────────────────────────────────────────────────────────
+  // animate: false prevents requestAnimationFrame callbacks that crash on iOS Safari
 
-  it('all layouts have animate: true', () => {
+  it('all layouts have animate: false', () => {
     const layouts: GraphLayout[] = ['cose', 'breadthfirst', 'concentric', 'grid']
     for (const l of layouts) {
-      expect(buildLayout(l).animate).toBe(true)
-    }
-  })
-
-  it('all layouts have a positive animationDuration', () => {
-    const layouts: GraphLayout[] = ['cose', 'breadthfirst', 'concentric', 'grid']
-    for (const l of layouts) {
-      expect(buildLayout(l).animationDuration).toBeGreaterThan(0)
+      expect(buildLayout(l).animate).toBe(false)
     }
   })
 
