@@ -161,6 +161,9 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
   useEffect(() => {
     if (typeof window === 'undefined' || !containerRef.current) return
     let cancelled = false
+    let rafId: number
+
+    rafId = requestAnimationFrame(() => {
     import('cytoscape').then(({ default: cytoscape }) => {
       try {
       if (cancelled || !containerRef.current) return
@@ -266,8 +269,10 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
     }).catch((err) => {
       console.error('[GraphView] Cytoscape import failed:', err)
     })
+    }) // end requestAnimationFrame
     return () => {
       cancelled = true
+      cancelAnimationFrame(rafId)
       if (cyRef.current) { cyRef.current.destroy(); cyRef.current = null }
     }
   }, [data, conflictNodeIds, layout])
