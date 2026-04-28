@@ -36,7 +36,7 @@ export default function DataPanel({
   const [loading,        setLoading]        = useState(false)
   const [streamingReply, setStreamingReply] = useState('')
   const [history,        setHistory]        = useState<ChatMessage[]>([])
-  const [filter,         setFilter]         = useState<'all' | 'active' | 'superseded'>('all')
+  const [filter,         setFilter]         = useState<'all' | ClaimStatus>('all')
 
   // ── Bulk selection ────────────────────────────────────────────────────────
   const [selected,      setSelected]      = useState<Set<string>>(new Set())
@@ -190,7 +190,7 @@ export default function DataPanel({
           </span>
         </div>
         <div className="flex gap-1">
-          {(['all', 'active', 'superseded'] as const).map(f => (
+          {(['all', 'active', 'observed', 'resolved', 'superseded'] as const).map(f => (
             <button key={f} onClick={() => setFilter(f)}
               className="text-xs px-2 py-0.5 rounded-md capitalize transition-colors"
               style={{
@@ -251,7 +251,7 @@ export default function DataPanel({
               <select value={bulkStatus} onChange={e => setBulkStatus(e.target.value as ClaimStatus)}
                 className="text-xs rounded-md px-1.5 py-1 outline-none"
                 style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)' }}>
-                {(['active', 'resolved', 'superseded'] as ClaimStatus[]).map(s => (
+                {(['active', 'observed', 'resolved', 'superseded'] as ClaimStatus[]).map(s => (
                   <option key={s} value={s}>{STATUS_META[s].label}</option>
                 ))}
               </select>

@@ -504,7 +504,7 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
                       <select value={editStatus} onChange={e => setEditStatus(e.target.value as ClaimStatus)}
                         className="w-full text-xs rounded-md px-1.5 py-1 outline-none"
                         style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)' }}>
-                        {(['active', 'resolved', 'superseded'] as const).map(s => (
+                        {(['active', 'observed', 'resolved', 'superseded'] as const).map(s => (
                           <option key={s} value={s}>{STATUS_META[s].label}</option>
                         ))}
                       </select>

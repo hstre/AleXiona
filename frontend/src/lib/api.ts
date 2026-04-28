@@ -23,8 +23,9 @@ export type ClaimType =
 export type SourceType =
   | 'clinician' | 'llm' | 'guideline'
   | 'imaging_model' | 'lab_system' | 'imported_document'
+  | 'patient_report' | 'home_device' | 'wearable' | 'caregiver_report'
 
-export type ClaimStatus = 'active' | 'resolved' | 'superseded'
+export type ClaimStatus = 'active' | 'resolved' | 'superseded' | 'observed'
 export type ClaimTrend  = 'improving' | 'worsening' | 'stable' | 'unknown'
 
 export type ConflictType     = 'competing_hypothesis' | 'negation' | 'evidence_mismatch' | 'timeline_gap' | 'therapy_without_indication' | 'stale_hypothesis' | 'contradictory_values' | 'temporal_inconsistency'

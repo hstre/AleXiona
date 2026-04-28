@@ -163,7 +163,7 @@ describe('getTypeMeta', () => {
 // ── STATUS_META ───────────────────────────────────────────────────────────────
 
 describe('STATUS_META', () => {
-  const statuses: ClaimStatus[] = ['active', 'resolved', 'superseded']
+  const statuses: ClaimStatus[] = ['active', 'observed', 'resolved', 'superseded']
 
   it('has entries for all statuses', () => {
     for (const s of statuses) {

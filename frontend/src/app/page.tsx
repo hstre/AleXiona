@@ -991,54 +991,64 @@ export default function Home() {
           {/* Timeline view */}
           {centerView === 'timeline' && (
             <div className="flex-1 overflow-hidden">
-              <TimelinePanel
-                claimNodes={claimNodes}
-                onFocusClaim={id => {
-                  setFocusClaimIds([id])
-                  setCenterView('graph')
-                }}
-              />
+              <ClientErrorBoundary label="Timeline">
+                <TimelinePanel
+                  claimNodes={claimNodes}
+                  onFocusClaim={id => {
+                    setFocusClaimIds([id])
+                    setCenterView('graph')
+                  }}
+                />
+              </ClientErrorBoundary>
             </div>
           )}
 
           {/* Evidence-Impact-Matrix */}
           {centerView === 'matrix' && (
             <div className="flex-1 overflow-auto">
-              {reasoning ? (
-                <EvidenceMatrix reasoning={reasoning} claims={allClaims} />
-              ) : (
-                <div className="flex flex-col items-center justify-center h-full gap-2"
-                  style={{ color: 'var(--text-muted)' }}>
-                  <span className="text-3xl">⊞</span>
-                  <p className="text-sm">Sende zuerst eine Nachricht, um die Reasoning-Daten zu laden.</p>
-                </div>
-              )}
+              <ClientErrorBoundary label="Matrix">
+                {reasoning ? (
+                  <EvidenceMatrix reasoning={reasoning} claims={allClaims} />
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-full gap-2"
+                    style={{ color: 'var(--text-muted)' }}>
+                    <span className="text-3xl">⊞</span>
+                    <p className="text-sm">Sende zuerst eine Nachricht, um die Reasoning-Daten zu laden.</p>
+                  </div>
+                )}
+              </ClientErrorBoundary>
             </div>
           )}
 
           {/* Counterfactual Panel */}
           {centerView === 'counterfactual' && sessionId && (
             <div className="flex-1 overflow-hidden">
-              <CounterfactualPanel claims={allClaims} sessionId={sessionId} />
+              <ClientErrorBoundary label="Counterfactual">
+                <CounterfactualPanel claims={allClaims} sessionId={sessionId} />
+              </ClientErrorBoundary>
             </div>
           )}
 
           {/* Clinical Handover / Übergabe */}
           {centerView === 'handover' && sessionId && (
             <div className="flex-1 overflow-hidden">
-              <HandoverPanel
-                reasoning={reasoning}
-                claims={allClaims}
-                conflicts={conflicts}
-                sessionId={sessionId}
-              />
+              <ClientErrorBoundary label="Handover">
+                <HandoverPanel
+                  reasoning={reasoning}
+                  claims={allClaims}
+                  conflicts={conflicts}
+                  sessionId={sessionId}
+                />
+              </ClientErrorBoundary>
             </div>
           )}
 
           {/* Clinical Reports — Arztbrief, Entlassbrief, Konsilbrief, Befundbericht */}
           {centerView === 'report' && sessionId && (
             <div className="flex-1 overflow-hidden">
-              <ReportPanel sessionId={sessionId} />
+              <ClientErrorBoundary label="Report">
+                <ReportPanel sessionId={sessionId} />
+              </ClientErrorBoundary>
             </div>
           )}
 

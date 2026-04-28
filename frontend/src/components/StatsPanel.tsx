@@ -93,7 +93,7 @@ export default function StatsPanel({ data }: Props) {
       <div className="space-y-2">
         <div>
           <p className="font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>Status</p>
-          {(['active', 'resolved', 'superseded'] as ClaimStatus[]).map(s => {
+          {(['active', 'observed', 'resolved', 'superseded'] as ClaimStatus[]).map(s => {
             const n = byStatus.get(s) ?? 0
             if (n === 0) return null
             return (
