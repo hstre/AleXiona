@@ -10,17 +10,17 @@ export type GraphLayout = 'cose' | 'breadthfirst' | 'concentric' | 'grid'
 export function buildLayout(name: GraphLayout): any {
   switch (name) {
     case 'breadthfirst':
-      return { name: 'breadthfirst', animate: true, animationDuration: 500, directed: true, padding: 50, spacingFactor: 1.6 }
+      return { name: 'breadthfirst', animate: false, directed: true, padding: 50, spacingFactor: 1.6 }
     case 'concentric':
       return {
-        name: 'concentric', animate: true, animationDuration: 500, padding: 50,
+        name: 'concentric', animate: false, padding: 50,
         concentric: (node: any) => node.data('type') === 'Claim' ? (node.data('evidence_support_score') ?? 0.5) : 0,
         levelWidth: () => 0.25,
       }
     case 'grid':
-      return { name: 'grid', animate: true, animationDuration: 400, padding: 40, avoidOverlap: true }
+      return { name: 'grid', animate: false, padding: 40, avoidOverlap: true }
     default:
-      return { name: 'cose', animate: true, animationDuration: 600, nodeRepulsion: 12000, idealEdgeLength: 170, padding: 50, randomize: false }
+      return { name: 'cose', animate: false, nodeRepulsion: 12000, idealEdgeLength: 170, padding: 50, randomize: false }
   }
 }
 
@@ -162,7 +162,10 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
     if (typeof window === 'undefined' || !containerRef.current) return
     let cancelled = false
     import('cytoscape').then(({ default: cytoscape }) => {
+      try {
       if (cancelled || !containerRef.current) return
+      const rect = containerRef.current.getBoundingClientRect()
+      if (rect.width === 0 || rect.height === 0) return
       if (cyRef.current) cyRef.current.destroy()
 
       const elements = [
@@ -257,7 +260,12 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
         }
       })
       cyRef.current = cy
-    }).catch(() => { /* ignore errors from cancelled/unmounted init */ })
+      } catch (err) {
+        console.error('[GraphView] Cytoscape init failed:', err)
+      }
+    }).catch((err) => {
+      console.error('[GraphView] Cytoscape import failed:', err)
+    })
     return () => {
       cancelled = true
       if (cyRef.current) { cyRef.current.destroy(); cyRef.current = null }
