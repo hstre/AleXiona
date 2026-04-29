@@ -5,6 +5,9 @@ AleXiona turns unstructured clinical input into a versioned, revisable knowledge
 structure — an **evidence graph** where every claim carries provenance, supports or
 contradicts a hypothesis, and can be challenged by counterfactual analysis.
 
+Collaborators welcome.
+Looking for contributors interested in epistemic reasoning, graph systems and explainable AI.
+
 > **Not a diagnostic system.** AleXiona is a reasoning *aid*. All conclusions require
 > verification by a qualified clinician.
 
