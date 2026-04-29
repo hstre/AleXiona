@@ -17,7 +17,8 @@ import CounterfactualPanel from '@/components/CounterfactualPanel'
 import HandoverPanel     from '@/components/HandoverPanel'
 import ReportPanel         from '@/components/ReportPanel'
 import OrchestratorPanel  from '@/components/OrchestratorPanel'
-import { getGraph, seedDemo, exportSession, explainConflict, checkHealth } from '@/lib/api'
+import ClientErrorBoundary from '@/components/ClientErrorBoundary'
+import { getGraph, seedDemo, exportSession, explainConflict } from '@/lib/api'
 import type { GraphData, Claim, ClaimType, ReasoningResult, Conflict, GraphNode, DemoScenario } from '@/lib/api'
 import { SESSION_KEY, shortId, confPct, essLabel, CONFLICT_SEVERITY_META, CLAIM_TYPE_META } from '@/lib/utils'
 
@@ -29,6 +30,8 @@ export default function Home() {
   const [dismissedConflicts, setDismissedConflicts] = useState<Set<string>>(new Set())
   const [conflictIdx,        setConflictIdx]        = useState(0)
   const [graphLoading,       setGraphLoading]       = useState(false)
+  const [graphError,         setGraphError]         = useState<string | null>(null)
+  const [lastCrashInfo,      setLastCrashInfo]      = useState<string | null>(null)
   const [activePanel,        setActivePanel]        = useState<'data' | 'graph' | 'review'>('graph')
   const [showConflictBanner, setShowConflictBanner] = useState(true)
   const [conflictExplanation,  setConflictExplanation]  = useState('')
@@ -50,31 +53,48 @@ export default function Home() {
   const [showStats,          setShowStats]          = useState(false)
   const [demoLang,           setDemoLang]           = useState<'en' | 'de'>('en')
   const [demoScenario,       setDemoScenario]       = useState<'cap' | 'pe' | 'ards' | 'nstemi'>('cap')
-  const [backendOnline,      setBackendOnline]      = useState<boolean | null>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
-
-  // ── Backend health check ──────────────────────────────────────────────────
-  useEffect(() => {
-    let cancelled = false
-    async function poll() {
-      while (!cancelled) {
-        const ok = await checkHealth()
-        if (cancelled) break
-        setBackendOnline(ok)
-        if (ok) break
-        await new Promise(r => setTimeout(r, 8_000))
-      }
-    }
-    poll()
-    return () => { cancelled = true }
-  }, [])
 
   // ── Session ───────────────────────────────────────────────────────────────
   useEffect(() => {
-    const stored = localStorage.getItem(SESSION_KEY)
-    const id     = stored || uuidv4()
-    if (!stored) localStorage.setItem(SESSION_KEY, id)
-    setSessionId(id)
+    // Duplicate in-page handler (layout.tsx sets one earlier; this supplements it)
+    const onError = (event: ErrorEvent) => {
+      try {
+        localStorage.setItem('_alexiona_last_error', JSON.stringify({
+          message: event.message ?? 'unknown',
+          stack:   event.error?.stack?.slice(0, 1200) ?? '',
+          source:  `${event.filename ?? ''}:${event.lineno ?? 0}:${event.colno ?? 0}`,
+          time:    new Date().toISOString(),
+        }))
+      } catch {}
+    }
+    window.addEventListener('error', onError)
+
+    // Wrap every localStorage call — iOS Safari private browsing can throw
+    try {
+      const stored = localStorage.getItem(SESSION_KEY)
+      const id     = stored || uuidv4()
+      try { if (!stored) localStorage.setItem(SESSION_KEY, id) } catch {}
+      setSessionId(id)
+      // Show diagnostic info if a previous crash was recorded
+      const crash = localStorage.getItem('_alexiona_last_error')
+      if (crash) {
+        try {
+          const parsed = JSON.parse(crash)
+          const parts: string[] = []
+          if (parsed.message) parts.push(parsed.message)
+          if (parsed.source)  parts.push('@ ' + parsed.source)
+          if (parsed.stack)   parts.push('\n' + parsed.stack)
+          setLastCrashInfo(parts.join(' ') || crash)
+        } catch { setLastCrashInfo(crash) }
+        try { localStorage.removeItem('_alexiona_last_error') } catch {}
+      }
+    } catch {
+      // localStorage unavailable (private mode / storage blocked) — still assign a session id
+      setSessionId(uuidv4())
+    }
+
+    return () => window.removeEventListener('error', onError)
   }, [])
 
   // ── Graph ─────────────────────────────────────────────────────────────────
@@ -84,14 +104,22 @@ export default function Home() {
     try {
       const data = await getGraph(sessionId)
       setGraphData(data)
-    } catch (err) {
-      console.error(err)
+      setGraphError(null)
+    } catch (err: unknown) {
+      setGraphError(err instanceof Error ? err.message : 'Graph konnte nicht geladen werden')
     } finally {
       setGraphLoading(false)
     }
   }, [sessionId])
 
   useEffect(() => { if (sessionId) refreshGraph() }, [sessionId, refreshGraph])
+
+  // Retry once after 12 s to recover from Render Free Tier cold start
+  useEffect(() => {
+    if (!sessionId) return
+    const id = setTimeout(() => refreshGraph(), 12_000)
+    return () => clearTimeout(id)
+  }, [sessionId, refreshGraph])
 
   // ── Debounce search query ─────────────────────────────────────────────────
   useEffect(() => {
@@ -104,16 +132,16 @@ export default function Home() {
     graphData.nodes
       .filter(n => n.type === 'Claim')
       .map(n => ({
-        text:                   n.fullText || n.label,
+        text:                   n.fullText || n.label || '',
         evidence_support_score: n.evidence_support_score ?? 0.8,
-        claim_type:             n.claim_type  ?? 'finding',
-        source_type:            n.source_type ?? 'llm',
+        claim_type:             n.claim_type  || 'finding',
+        source_type:            n.source_type || 'llm',
         source_ref:             n.source_ref  ?? '',
         derived_from:           n.derived_from ?? [],
         related_to:             n.related_to ?? [],
-        status:                 n.status      ?? 'active',
+        status:                 n.status      || 'active',
         time_offset:            n.time_offset ?? null,
-        trend:                  n.trend       ?? 'unknown',
+        trend:                  n.trend       || 'unknown',
         entities:               [],
         relations:              [],
         claimId:                n.claimId,
@@ -146,7 +174,7 @@ export default function Home() {
         const q = debouncedSearch.toLowerCase()
         const match =
           n.fullText?.toLowerCase().includes(q) ||
-          n.label.toLowerCase().includes(q) ||
+          (n.label ?? '').toLowerCase().includes(q) ||
           n.claim_type?.toLowerCase().includes(q) ||
           n.status?.toLowerCase().includes(q) ||
           n.source_ref?.toLowerCase().includes(q) ||
@@ -413,16 +441,6 @@ export default function Home() {
   return (
     <div className="flex flex-col h-screen" style={{ background: 'var(--bg)' }}>
 
-      {/* ── Backend wakeup banner ─────────────────────────────────────────── */}
-      {backendOnline === false && (
-        <div style={{ background: '#fffbeb', borderBottom: '1px solid #fcd34d',
-          padding: '6px 16px', fontSize: 12, color: '#92400e',
-          display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span>⏳</span>
-          <span>Backend startet (Render Free Tier) — bitte ca. 30–60 s warten. Demo-Daten werden danach geladen.</span>
-        </div>
-      )}
-
       {/* ── Add Node Modal ────────────────────────────────────────────────── */}
       {showAddNode && (
         <AddNodeModal
@@ -571,6 +589,34 @@ export default function Home() {
           </div>
         )
       })()}
+
+      {/* ── Graph error banner ────────────────────────────────────────────── */}
+      {graphError && (
+        <div className="flex items-center gap-2 px-3 py-1.5 shrink-0 text-xs"
+          style={{ background: '#fef2f2', borderBottom: '1px solid #fecaca', color: '#991b1b' }}>
+          <span className="shrink-0">⚠</span>
+          <span className="flex-1">{graphError} — Retry läuft in Kürze …</span>
+          <button onClick={() => setGraphError(null)} style={{ opacity: 0.6 }}>✕</button>
+        </div>
+      )}
+
+      {/* ── Crash diagnostic banner (shown once after a recovered crash) ──── */}
+      {lastCrashInfo && (
+        <div className="px-3 py-2 shrink-0 text-xs"
+          style={{ background: '#fff7ed', borderBottom: '2px solid #fb923c', color: '#9a3412' }}>
+          <div className="flex items-start gap-2">
+            <span className="shrink-0 mt-0.5">🔍</span>
+            <div className="flex-1 min-w-0">
+              <div className="font-semibold mb-0.5">Letzter Absturz (Diagnose)</div>
+              <pre className="whitespace-pre-wrap break-all font-mono text-[10px] opacity-90"
+                style={{ maxHeight: 120, overflowY: 'auto' }}>
+                {lastCrashInfo}
+              </pre>
+            </div>
+            <button onClick={() => setLastCrashInfo(null)} style={{ opacity: 0.6, flexShrink: 0 }}>✕</button>
+          </div>
+        </div>
+      )}
 
       {/* ── Top Nav ───────────────────────────────────────────────────────── */}
       <nav className="top-nav flex items-center justify-between px-4 py-2.5 shrink-0">
@@ -781,15 +827,17 @@ export default function Home() {
         <div className={`border-r shrink-0 md:flex flex-col overflow-hidden
             ${activePanel === 'data' ? 'flex flex-1' : 'hidden'} md:w-72`}
           style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-          <DataPanel
-            key={sessionId}
-            sessionId={sessionId}
-            onNewClaims={refreshGraph}
-            onReasoning={r => setReasoning(r)}
-            onConflicts={c => { setConflicts(c); setShowConflictBanner(true) }}
-            allClaims={allClaims}
-            searchQuery={debouncedSearch}
-          />
+          <ClientErrorBoundary label="DataPanel">
+            <DataPanel
+              key={sessionId}
+              sessionId={sessionId}
+              onNewClaims={refreshGraph}
+              onReasoning={r => setReasoning(r)}
+              onConflicts={c => { setConflicts(c); setShowConflictBanner(true) }}
+              allClaims={allClaims}
+              searchQuery={debouncedSearch}
+            />
+          </ClientErrorBoundary>
         </div>
 
         {/* CENTER: Graph */}
@@ -907,90 +955,109 @@ export default function Home() {
             )}
           </div>
 
-          {/* Graph canvas */}
+          {/* Graph canvas — only mount GraphView when visible to avoid Cytoscape
+               initialising into a zero-dimension hidden container (iOS Safari crash) */}
           <div className={`flex-1 overflow-hidden ${centerView === 'graph' ? 'flex' : 'hidden'} flex-col`}>
-            <div className="flex-1 overflow-hidden">
-              <GraphView
-                data={filteredGraph}
-                onRefresh={refreshGraph}
-                conflictNodeIds={conflictNodeIds}
-                sessionId={sessionId}
-                focusClaimIds={focusClaimIds}
-                layout={graphLayout}
-                fitTrigger={fitTrigger}
-              />
-            </div>
-            {/* Time slider — inside graph mode only */}
-            {maxTimeOffset > 0 && (
-              <div className="px-4 py-2 border-t shrink-0"
-                style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border-light)' }}>
-                <TimeSlider
-                  claimNodes={claimNodes}
-                  currentHours={Math.min(timeHours, maxTimeOffset)}
-                  onChange={setTimeHours}
-                />
-              </div>
+            {centerView === 'graph' && (
+              <>
+                <div className="flex-1 overflow-hidden">
+                  <ClientErrorBoundary label="Graph">
+                    <GraphView
+                      data={filteredGraph}
+                      onRefresh={refreshGraph}
+                      conflictNodeIds={conflictNodeIds}
+                      sessionId={sessionId}
+                      focusClaimIds={focusClaimIds}
+                      layout={graphLayout}
+                      fitTrigger={fitTrigger}
+                    />
+                  </ClientErrorBoundary>
+                </div>
+                {/* Time slider — inside graph mode only */}
+                {maxTimeOffset > 0 && (
+                  <div className="px-4 py-2 border-t shrink-0"
+                    style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border-light)' }}>
+                    <TimeSlider
+                      claimNodes={claimNodes}
+                      currentHours={Math.min(timeHours, maxTimeOffset)}
+                      onChange={setTimeHours}
+                    />
+                  </div>
+                )}
+              </>
             )}
           </div>
 
           {/* Timeline view */}
           {centerView === 'timeline' && (
             <div className="flex-1 overflow-hidden">
-              <TimelinePanel
-                claimNodes={claimNodes}
-                onFocusClaim={id => {
-                  setFocusClaimIds([id])
-                  setCenterView('graph')
-                }}
-              />
+              <ClientErrorBoundary label="Timeline">
+                <TimelinePanel
+                  claimNodes={claimNodes}
+                  onFocusClaim={id => {
+                    setFocusClaimIds([id])
+                    setCenterView('graph')
+                  }}
+                />
+              </ClientErrorBoundary>
             </div>
           )}
 
           {/* Evidence-Impact-Matrix */}
           {centerView === 'matrix' && (
             <div className="flex-1 overflow-auto">
-              {reasoning ? (
-                <EvidenceMatrix reasoning={reasoning} claims={allClaims} />
-              ) : (
-                <div className="flex flex-col items-center justify-center h-full gap-2"
-                  style={{ color: 'var(--text-muted)' }}>
-                  <span className="text-3xl">⊞</span>
-                  <p className="text-sm">Sende zuerst eine Nachricht, um die Reasoning-Daten zu laden.</p>
-                </div>
-              )}
+              <ClientErrorBoundary label="Matrix">
+                {reasoning ? (
+                  <EvidenceMatrix reasoning={reasoning} claims={allClaims} />
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-full gap-2"
+                    style={{ color: 'var(--text-muted)' }}>
+                    <span className="text-3xl">⊞</span>
+                    <p className="text-sm">Sende zuerst eine Nachricht, um die Reasoning-Daten zu laden.</p>
+                  </div>
+                )}
+              </ClientErrorBoundary>
             </div>
           )}
 
           {/* Counterfactual Panel */}
           {centerView === 'counterfactual' && sessionId && (
             <div className="flex-1 overflow-hidden">
-              <CounterfactualPanel claims={allClaims} sessionId={sessionId} />
+              <ClientErrorBoundary label="Counterfactual">
+                <CounterfactualPanel claims={allClaims} sessionId={sessionId} />
+              </ClientErrorBoundary>
             </div>
           )}
 
           {/* Clinical Handover / Übergabe */}
           {centerView === 'handover' && sessionId && (
             <div className="flex-1 overflow-hidden">
-              <HandoverPanel
-                reasoning={reasoning}
-                claims={allClaims}
-                conflicts={conflicts}
-                sessionId={sessionId}
-              />
+              <ClientErrorBoundary label="Handover">
+                <HandoverPanel
+                  reasoning={reasoning}
+                  claims={allClaims}
+                  conflicts={conflicts}
+                  sessionId={sessionId}
+                />
+              </ClientErrorBoundary>
             </div>
           )}
 
           {/* Clinical Reports — Arztbrief, Entlassbrief, Konsilbrief, Befundbericht */}
           {centerView === 'report' && sessionId && (
             <div className="flex-1 overflow-hidden">
-              <ReportPanel sessionId={sessionId} />
+              <ClientErrorBoundary label="Report">
+                <ReportPanel sessionId={sessionId} />
+              </ClientErrorBoundary>
             </div>
           )}
 
           {/* Clinical Orchestrator — single unified clinical state */}
           {centerView === 'orchestrator' && sessionId && (
             <div className="flex-1 overflow-hidden">
-              <OrchestratorPanel sessionId={sessionId} />
+              <ClientErrorBoundary label="Orchestrator">
+                <OrchestratorPanel sessionId={sessionId} />
+              </ClientErrorBoundary>
             </div>
           )}
         </div>
@@ -999,13 +1066,15 @@ export default function Home() {
         <div className={`border-l shrink-0 md:flex flex-col overflow-hidden
             ${activePanel === 'review' ? 'flex flex-1' : 'hidden'} md:w-72`}
           style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-          <ReviewPanel
-            reasoning={reasoning}
-            loading={false}
-            sessionId={sessionId}
-            onGenerateReport={handleGenerateReport}
-            onClear={() => setReasoning(null)}
-          />
+          <ClientErrorBoundary label="ReviewPanel">
+            <ReviewPanel
+              reasoning={reasoning}
+              loading={false}
+              sessionId={sessionId}
+              onGenerateReport={handleGenerateReport}
+              onClear={() => setReasoning(null)}
+            />
+          </ClientErrorBoundary>
         </div>
 
       </div>

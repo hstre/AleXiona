@@ -10,17 +10,17 @@ export type GraphLayout = 'cose' | 'breadthfirst' | 'concentric' | 'grid'
 export function buildLayout(name: GraphLayout): any {
   switch (name) {
     case 'breadthfirst':
-      return { name: 'breadthfirst', animate: true, animationDuration: 500, directed: true, padding: 50, spacingFactor: 1.6 }
+      return { name: 'breadthfirst', animate: false, directed: true, padding: 50, spacingFactor: 1.6 }
     case 'concentric':
       return {
-        name: 'concentric', animate: true, animationDuration: 500, padding: 50,
+        name: 'concentric', animate: false, padding: 50,
         concentric: (node: any) => node.data('type') === 'Claim' ? (node.data('evidence_support_score') ?? 0.5) : 0,
         levelWidth: () => 0.25,
       }
     case 'grid':
-      return { name: 'grid', animate: true, animationDuration: 400, padding: 40, avoidOverlap: true }
+      return { name: 'grid', animate: false, padding: 40, avoidOverlap: true }
     default:
-      return { name: 'cose', animate: true, animationDuration: 600, nodeRepulsion: 12000, idealEdgeLength: 170, padding: 50, randomize: false }
+      return { name: 'cose', animate: false, nodeRepulsion: 12000, idealEdgeLength: 170, padding: 50, randomize: false }
   }
 }
 
@@ -35,6 +35,14 @@ interface Props {
 }
 
 const NODE_STYLES = [
+  {
+    selector: '*',
+    style: {
+      'transition-property': 'none',
+      'transition-duration': '0s',
+      'transition-delay': '0s',
+    },
+  },
   {
     selector: 'node[type="Entity"]',
     style: {
@@ -160,7 +168,33 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
 
   useEffect(() => {
     if (typeof window === 'undefined' || !containerRef.current) return
+    let cancelled = false
+    let rafId: number
+
+    rafId = requestAnimationFrame(() => {
     import('cytoscape').then(({ default: cytoscape }) => {
+      try {
+      if (cancelled || !containerRef.current) return
+      const rect = containerRef.current.getBoundingClientRect()
+      if (rect.width === 0 || rect.height === 0) return
+
+      // Patch missing null-guard in overrideBypass — crashes iOS Safari with
+      // "undefined is not an object (evaluating 'v.color')" when an animation
+      // step runs for an unrecognised property name.
+      try {
+        const _tmp = (cytoscape as any)({ headless: true, elements: [] })
+        const styleProto = Object.getPrototypeOf(_tmp.style())
+        const origOverride = styleProto.overrideBypass
+        if (origOverride && !(origOverride as any)._patched) {
+          styleProto.overrideBypass = function(eles: any, name: string, value: any) {
+            if (!this.properties || !this.properties[name]) return
+            return origOverride.call(this, eles, name, value)
+          };
+          (styleProto.overrideBypass as any)._patched = true
+        }
+        _tmp.destroy()
+      } catch {}
+
       if (cyRef.current) cyRef.current.destroy()
 
       const elements = [
@@ -255,8 +289,18 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
         }
       })
       cyRef.current = cy
+      } catch (err) {
+        console.error('[GraphView] Cytoscape init failed:', err)
+      }
+    }).catch((err) => {
+      console.error('[GraphView] Cytoscape import failed:', err)
     })
-    return () => { if (cyRef.current) { cyRef.current.destroy(); cyRef.current = null } }
+    }) // end requestAnimationFrame
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(rafId)
+      if (cyRef.current) { cyRef.current.destroy(); cyRef.current = null }
+    }
   }, [data, conflictNodeIds, layout])
 
   // Fit graph when parent requests it (keyboard shortcut 'f')
@@ -499,7 +543,7 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
                       <select value={editStatus} onChange={e => setEditStatus(e.target.value as ClaimStatus)}
                         className="w-full text-xs rounded-md px-1.5 py-1 outline-none"
                         style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)' }}>
-                        {(['active', 'resolved', 'superseded'] as const).map(s => (
+                        {(['active', 'observed', 'resolved', 'superseded'] as const).map(s => (
                           <option key={s} value={s}>{STATUS_META[s].label}</option>
                         ))}
                       </select>

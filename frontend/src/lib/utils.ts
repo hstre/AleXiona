@@ -48,6 +48,7 @@ export const getTypeMeta = (t?: ClaimType | string): TypeMeta =>
 
 export const STATUS_META: Record<ClaimStatus, { label: string; color: string }> = {
   active:     { label: 'Active',     color: '#22c55e' },
+  observed:   { label: 'Observed',   color: '#3b82f6' },
   resolved:   { label: 'Resolved',   color: '#6b7280' },
   superseded: { label: 'Superseded', color: '#f59e0b' },
 }

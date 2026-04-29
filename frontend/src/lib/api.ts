@@ -1,30 +1,5 @@
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '')
 
-/** fetch() with an AbortController timeout (default 25 s). */
-async function fetchT(input: string, init?: RequestInit, timeoutMs = 25_000): Promise<Response> {
-  const ctrl = new AbortController()
-  const id   = setTimeout(() => ctrl.abort(), timeoutMs)
-  try {
-    return await fetch(input, { ...init, signal: ctrl.signal })
-  } catch (e: unknown) {
-    if (e instanceof DOMException && e.name === 'AbortError') {
-      throw new Error('Backend antwortet nicht – bitte 30–60 s warten und erneut versuchen (Render Free Tier startet kalt)')
-    }
-    throw e
-  } finally {
-    clearTimeout(id)
-  }
-}
-
-export async function checkHealth(): Promise<boolean> {
-  try {
-    const res = await fetchT(`${API_URL}/health`, undefined, 5_000)
-    return res.ok
-  } catch {
-    return false
-  }
-}
-
 /** Extract a human-readable message from a structured or plain-text error response. */
 async function parseError(res: Response): Promise<Error> {
   try {
@@ -48,8 +23,9 @@ export type ClaimType =
 export type SourceType =
   | 'clinician' | 'llm' | 'guideline'
   | 'imaging_model' | 'lab_system' | 'imported_document'
+  | 'patient_report' | 'home_device' | 'wearable' | 'caregiver_report'
 
-export type ClaimStatus = 'active' | 'resolved' | 'superseded'
+export type ClaimStatus = 'active' | 'resolved' | 'superseded' | 'observed'
 export type ClaimTrend  = 'improving' | 'worsening' | 'stable' | 'unknown'
 
 export type ConflictType     = 'competing_hypothesis' | 'negation' | 'evidence_mismatch' | 'timeline_gap' | 'therapy_without_indication' | 'stale_hypothesis' | 'contradictory_values' | 'temporal_inconsistency'
@@ -199,7 +175,7 @@ export type StreamEvent =
 export async function sendMessage(
   message: string, sessionId: string, history: ChatMessage[]
 ): Promise<ChatResponse> {
-  const res = await fetchT(`${API_URL}/api/chat`, {
+  const res = await fetch(`${API_URL}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message, session_id: sessionId, history }),
@@ -211,7 +187,7 @@ export async function sendMessage(
 export async function* streamMessage(
   message: string, sessionId: string, history: ChatMessage[]
 ): AsyncGenerator<StreamEvent> {
-  const res = await fetchT(`${API_URL}/api/chat/stream`, {
+  const res = await fetch(`${API_URL}/api/chat/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message, session_id: sessionId, history }),
@@ -242,7 +218,7 @@ export async function* streamMessage(
 }
 
 export async function getGraph(sessionId: string): Promise<GraphData> {
-  const res = await fetchT(`${API_URL}/api/graph/${sessionId}`)
+  const res = await fetch(`${API_URL}/api/graph/${sessionId}`)
   if (!res.ok) throw await parseError(res)
   return res.json()
 }
@@ -259,7 +235,7 @@ export interface ClaimPatch {
 }
 
 export async function patchClaim(claimId: string, fields: ClaimPatch): Promise<void> {
-  const res = await fetchT(`${API_URL}/api/graph/claim/${claimId}`, {
+  const res = await fetch(`${API_URL}/api/graph/claim/${claimId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(fields),
@@ -268,7 +244,7 @@ export async function patchClaim(claimId: string, fields: ClaimPatch): Promise<v
 }
 
 export async function deleteClaim(claimId: string): Promise<void> {
-  const res = await fetchT(`${API_URL}/api/graph/claim/${claimId}`, { method: 'DELETE' })
+  const res = await fetch(`${API_URL}/api/graph/claim/${claimId}`, { method: 'DELETE' })
   if (!res.ok) throw await parseError(res)
 }
 
@@ -285,7 +261,7 @@ export async function batchDelete(ids: string[]): Promise<void> {
 export async function runCounterfactual(
   sessionId: string, claimId: string
 ): Promise<CounterfactualResult> {
-  const res = await fetchT(`${API_URL}/api/graph/${sessionId}/counterfactual/${claimId}`, {
+  const res = await fetch(`${API_URL}/api/graph/${sessionId}/counterfactual/${claimId}`, {
     method: 'POST',
   })
   if (!res.ok) throw await parseError(res)
@@ -295,7 +271,7 @@ export async function runCounterfactual(
 export async function hypothesisCounterfactual(
   sessionId: string, hypothesis: string
 ): Promise<HypothesisCounterfactualResult> {
-  const res = await fetchT(`${API_URL}/api/graph/${sessionId}/counterfactual/hypothesis`, {
+  const res = await fetch(`${API_URL}/api/graph/${sessionId}/counterfactual/hypothesis`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ hypothesis }),
@@ -305,13 +281,13 @@ export async function hypothesisCounterfactual(
 }
 
 export async function listSessions(): Promise<SessionInfo[]> {
-  const res = await fetchT(`${API_URL}/api/sessions`)
+  const res = await fetch(`${API_URL}/api/sessions`)
   if (!res.ok) throw await parseError(res)
   return res.json()
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
-  const res = await fetchT(`${API_URL}/api/sessions/${sessionId}`, { method: 'DELETE' })
+  const res = await fetch(`${API_URL}/api/sessions/${sessionId}`, { method: 'DELETE' })
   if (!res.ok) throw await parseError(res)
 }
 
@@ -322,7 +298,7 @@ export async function seedDemo(
   lang:     'en' | 'de'   = 'en',
   scenario: DemoScenario  = 'cap',
 ): Promise<{ seeded: boolean; claim_count?: number; reason?: string }> {
-  const res = await fetchT(`${API_URL}/api/demo/seed/${sessionId}?lang=${lang}&scenario=${scenario}`, { method: 'POST' }, 60_000)
+  const res = await fetch(`${API_URL}/api/demo/seed/${sessionId}?lang=${lang}&scenario=${scenario}`, { method: 'POST' })
   if (!res.ok) throw await parseError(res)
   return res.json()
 }
@@ -336,7 +312,7 @@ export interface EntityGroup {
 }
 
 export async function getEntityDuplicates(sessionId: string): Promise<EntityGroup[]> {
-  const res = await fetchT(`${API_URL}/api/graph/${sessionId}/entity-duplicates`)
+  const res = await fetch(`${API_URL}/api/graph/${sessionId}/entity-duplicates`)
   if (!res.ok) throw await parseError(res)
   return res.json()
 }
@@ -344,7 +320,7 @@ export async function getEntityDuplicates(sessionId: string): Promise<EntityGrou
 export async function mergeEntities(
   sessionId: string, canonical: string, aliases: string[]
 ): Promise<{ merged: number }> {
-  const res = await fetchT(`${API_URL}/api/graph/${sessionId}/entities/merge`, {
+  const res = await fetch(`${API_URL}/api/graph/${sessionId}/entities/merge`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ canonical, aliases }),
@@ -356,7 +332,7 @@ export async function mergeEntities(
 // ── Session export / import ──────────────────────────────────────────────────
 
 export async function exportSession(sessionId: string): Promise<object> {
-  const res = await fetchT(`${API_URL}/api/graph/${sessionId}/export`)
+  const res = await fetch(`${API_URL}/api/graph/${sessionId}/export`)
   if (!res.ok) throw await parseError(res)
   return res.json()
 }
@@ -364,7 +340,7 @@ export async function exportSession(sessionId: string): Promise<object> {
 export async function importSession(
   sessionId: string, claims: object[]
 ): Promise<{ imported: number; skipped: number }> {
-  const res = await fetchT(`${API_URL}/api/graph/${sessionId}/import`, {
+  const res = await fetch(`${API_URL}/api/graph/${sessionId}/import`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ claims }),
@@ -389,7 +365,7 @@ export async function explainConflict(
   sessionId: string,
   conflict: Pick<Conflict, 'type' | 'severity' | 'message' | 'affected_claim_ids'>,
 ): Promise<string> {
-  const res = await fetchT(`${API_URL}/api/graph/${sessionId}/conflicts/explain`, {
+  const res = await fetch(`${API_URL}/api/graph/${sessionId}/conflicts/explain`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(conflict),
@@ -400,7 +376,7 @@ export async function explainConflict(
 }
 
 export async function addManualClaim(sessionId: string, claim: ManualClaim): Promise<void> {
-  const res = await fetchT(`${API_URL}/api/graph/${sessionId}/claims`, {
+  const res = await fetch(`${API_URL}/api/graph/${sessionId}/claims`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(claim),

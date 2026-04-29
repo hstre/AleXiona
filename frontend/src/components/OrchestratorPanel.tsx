@@ -111,11 +111,7 @@ export default function OrchestratorPanel({ sessionId }: Props) {
   if (error) return (
     <div style={{ padding: 24 }}>
       <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8,
-        padding: '12px 16px', color: '#991b1b', fontSize: 13, marginBottom: 8 }}>{error}</div>
-      <button onClick={load} style={{ fontSize: 12, padding: '6px 12px', borderRadius: 6,
-        background: 'var(--brand)', color: 'white', border: 'none', cursor: 'pointer' }}>
-        Erneut versuchen
-      </button>
+        padding: '12px 16px', color: '#991b1b', fontSize: 13 }}>{error}</div>
     </div>
   )
 
