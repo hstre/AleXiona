@@ -36,6 +36,14 @@ interface Props {
 
 const NODE_STYLES = [
   {
+    selector: '*',
+    style: {
+      'transition-property': 'none',
+      'transition-duration': '0s',
+      'transition-delay': '0s',
+    },
+  },
+  {
     selector: 'node[type="Entity"]',
     style: {
       'background-color': '#ffffff', 'border-color': '#1a7ab3', 'border-width': 2,
