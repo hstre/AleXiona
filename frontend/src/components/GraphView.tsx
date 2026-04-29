@@ -177,6 +177,24 @@ export default function GraphView({ data, onRefresh, conflictNodeIds, sessionId,
       if (cancelled || !containerRef.current) return
       const rect = containerRef.current.getBoundingClientRect()
       if (rect.width === 0 || rect.height === 0) return
+
+      // Patch missing null-guard in overrideBypass — crashes iOS Safari with
+      // "undefined is not an object (evaluating 'v.color')" when an animation
+      // step runs for an unrecognised property name.
+      try {
+        const _tmp = (cytoscape as any)({ headless: true, elements: [] })
+        const styleProto = Object.getPrototypeOf(_tmp.style())
+        const origOverride = styleProto.overrideBypass
+        if (origOverride && !(origOverride as any)._patched) {
+          styleProto.overrideBypass = function(eles: any, name: string, value: any) {
+            if (!this.properties || !this.properties[name]) return
+            return origOverride.call(this, eles, name, value)
+          };
+          (styleProto.overrideBypass as any)._patched = true
+        }
+        _tmp.destroy()
+      } catch {}
+
       if (cyRef.current) cyRef.current.destroy()
 
       const elements = [
