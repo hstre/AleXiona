@@ -109,7 +109,10 @@ class Neo4jClient:
                         spl_unit_id: $spl_unit_id,
                         spl_projection_id: $spl_projection_id,
                         spl_emission_rule: $spl_emission_rule,
-                        spl_h_norm: $spl_h_norm
+                        spl_h_norm: $spl_h_norm,
+                        mivp_cih: $mivp_cih,
+                        mivp_model: $mivp_model,
+                        mivp_profile_version: $mivp_profile_version
                     })
                     """,
                     id=cid, text=claim.text, session_id=session_id,
@@ -136,6 +139,9 @@ class Neo4jClient:
                     spl_projection_id=claim.spl_projection_id,
                     spl_emission_rule=claim.spl_emission_rule,
                     spl_h_norm=claim.spl_h_norm,
+                    mivp_cih=claim.mivp_cih,
+                    mivp_model=claim.mivp_model,
+                    mivp_profile_version=claim.mivp_profile_version,
                 )
 
                 for entity_name in claim.entities:
