@@ -8,7 +8,13 @@ from datetime import UTC, datetime
 from openai import AsyncOpenAI, OpenAI
 from pydantic import ValidationError
 
-from clinical_spl import run_dual_spl_pipeline, run_spl_pipeline
+import mivp
+from clinical_spl import (
+    _MATRIX_VERSION,
+    CLINICAL_THRESHOLDS,
+    run_dual_spl_pipeline,
+    run_spl_pipeline,
+)
 from lab_parser import parse_lab_value
 from models import (
     Alternative,
@@ -41,6 +47,33 @@ else:
 
 client       = OpenAI(**_client_kwargs)
 async_client = AsyncOpenAI(**_client_kwargs)
+
+# ── MIVP provenance (declared model + policy + runtime → Composite Instance Hash)
+_PROVIDER = "deepseek" if _DEEPSEEK_KEY else "openai"
+_EXTRACTION_TEMPERATURE = 0.1   # temperature used for claim extraction (extract_claims)
+
+
+def mivp_profile() -> dict:
+    """Current MIVP profile (model + policy + runtime → CIH), cached by config.
+
+    Read-only metadata; computed from the live extraction configuration so any
+    silent change to model, SPL policy or decoding params yields a different CIH.
+    """
+    thresholds = {
+        "tau_0": CLINICAL_THRESHOLDS.tau_0,
+        "tau_1": CLINICAL_THRESHOLDS.tau_1,
+        "tau_2": CLINICAL_THRESHOLDS.tau_2,
+        "tau_3": CLINICAL_THRESHOLDS.tau_3,
+        "tau_4": CLINICAL_THRESHOLDS.tau_4,
+        "matrix_version": _MATRIX_VERSION,
+    }
+    return mivp.current_profile(
+        provider=_PROVIDER,
+        model=MODEL,
+        extraction_prompt=EXTRACTION_PROMPT,
+        spl_thresholds=thresholds,
+        temperature=_EXTRACTION_TEMPERATURE,
+    )
 
 # ── Claim Extraction ─────────────────────────────────────────────────────────
 
@@ -320,6 +353,14 @@ def _apply_spl_to_claims(claims: list[Claim]) -> list[Claim]:
     Manual (clinician) claims are exempt — they carry spl_emission_rule="MANUAL"
     and bypass this function entirely (handled in the graph router).
     """
+    # MIVP stamp — identical for every LLM claim in this run (cached by config).
+    _prof = mivp_profile()
+    mivp_fields = {
+        "mivp_cih":             _prof["cih"],
+        "mivp_model":           _prof["model"],
+        "mivp_profile_version": _prof["profile_version"],
+    }
+
     result: list[Claim] = []
     for c in claims:
         try:
@@ -330,6 +371,7 @@ def _apply_spl_to_claims(claims: list[Claim]) -> list[Claim]:
             result.append(c.model_copy(update={
                 "spl_emission_rule": "E3",
                 "uncertainty_flag":  True,
+                **mivp_fields,
             }))
             continue
 
@@ -342,6 +384,7 @@ def _apply_spl_to_claims(claims: list[Claim]) -> list[Claim]:
             "spl_h_norm":        spl.h_norm,
             "spl_unit_id":       spl.unit_id,
             "spl_projection_id": spl.projection_id,
+            **mivp_fields,
         }
         if spl.force_uncertain:
             updates["uncertainty_flag"] = True

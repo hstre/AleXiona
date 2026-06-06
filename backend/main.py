@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 
-from routers import audit, chat, demo, graph, intake, sessions
+from routers import audit, chat, demo, graph, intake, mivp, sessions
 
 
 @asynccontextmanager
@@ -37,6 +37,7 @@ app.include_router(sessions.router)
 app.include_router(demo.router)
 app.include_router(intake.router)
 app.include_router(audit.router)
+app.include_router(mivp.router)
 
 
 @app.get("/health")
