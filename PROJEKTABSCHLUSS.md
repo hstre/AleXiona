@@ -12,6 +12,18 @@ Logik" gilt dort weiter für Orchestrierung und Scores. Was entfällt, ist die E
 epistemische Schicht darüber hinaus eine Prüfleistung erbringt. AleXiona war ohnehin nie ein
 Diagnosesystem, und ist es jetzt erst recht nicht.
 
+
+## Was hier **nicht** widerlegt wurde
+
+Die vier Messungen galten ausschliesslich DESis Entailment- und Governance-Schicht. Der klinische Evidenzgraph und seine deterministischen Scores
+kam in keiner davon vor — in keinem der vier Berichte findet sich dazu eine Zahl. Der Banner dieses
+Repositories behauptete zunächst pauschal, der zentrale Anspruch sei widerlegt; das war für dieses
+Repository falsch und ist korrigiert.
+
+**Nicht widerlegt** und **ungeprüft** sind verschiedene Zustände. Diese Unterscheidung sauber zu
+halten war der Zweck des ganzen Vorhabens; sie beim Abschluss selbst zu verletzen wäre der letzte
+Fehler in einer langen Reihe gewesen.
+
 ## Was gemessen wurde
 
 Der zentrale Anspruch von DESi lautete: eine deterministische Governance-Schicht liefert gegenüber

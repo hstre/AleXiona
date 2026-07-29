@@ -1,11 +1,14 @@
 # AleXiona — Clinical Evidence Graph
 
-> **⚠️ Dieses Projekt ist eingestellt (29. Juli 2026).** Der zentrale Anspruch wurde in vier
-> versiegelten Blindtests widerlegt. Details, Zahlen und eine Entschuldigung:
-> [`PROJEKTABSCHLUSS.md`](PROJEKTABSCHLUSS.md).
+> **⚠️ Dieses Repository wird nicht weiterentwickelt (29. Juli 2026)** — im Zuge des
+> DESi-Abschlusses. **Der klinische Evidenzgraph und seine deterministischen Scores war in keiner der vier Messungen Gegenstand: nicht widerlegt,
+> sondern ungeprüft.** Widerlegt wurde DESis Anspruch, aus solchen Strukturen ein epistemisches
+> Urteil zu gewinnen. Details: [`PROJEKTABSCHLUSS.md`](PROJEKTABSCHLUSS.md).
 >
-> **⚠️ This project is discontinued (29 July 2026).** Its central claim was refuted in four sealed
-> blind tests. Details, numbers and an apology: [`PROJEKTABSCHLUSS.md`](PROJEKTABSCHLUSS.md).
+> **⚠️ This repository is no longer developed (29 July 2026)**, as part of the DESi closure.
+> **The clinical evidence graph and its deterministic scores was not the subject of any of the four measurements: not refuted, but untested.**
+> What was refuted is DESi's claim to derive an epistemic judgement from such structures. Details:
+> [`PROJEKTABSCHLUSS.md`](PROJEKTABSCHLUSS.md).
 
 
 A clinical reasoning infrastructure demonstrator.
